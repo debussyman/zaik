@@ -24,6 +24,8 @@
             echo "Entering Zaik development shell with Elixir and Mix"
             echo "Elixir version: $(elixir --version)"
             echo "Mix version: $(mix --version)"
+            echo "To start the application: mix run"
+            echo "To run tests: mix test"
           '';
         };
       });
