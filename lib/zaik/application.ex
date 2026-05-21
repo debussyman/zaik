@@ -2,7 +2,7 @@ defmodule Zaik.Application do
   @moduledoc """
   The Zaik Application.
 
-  This module defines the application structure and supervision tree for the Zaik system.
+  This module defines the root supervision tree for the Zaik system.
   """
 
   use Application
@@ -10,11 +10,8 @@ defmodule Zaik.Application do
   @impl true
   def start(_type, _args) do
     children = [
-      # Start the clock service that provides periodic ticks
       Zaik.Clock,
-
-      # Start the hello world agent
-      Zaik.Agent.HelloWorld
+      Zaik.Agent.Supervisor
     ]
 
     opts = [strategy: :one_for_one, name: Zaik.Supervisor]

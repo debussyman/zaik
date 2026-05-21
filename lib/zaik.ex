@@ -1,7 +1,7 @@
 defmodule Zaik do
   @moduledoc """
   Zaik is a personal AI agent runtime inspired by OpenClaw, built with Elixir's actor system.
-  
+
   The system is designed to run multiple AI agents that can:
   - Process messages 
   - Handle periodic ticks

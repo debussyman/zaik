@@ -1,22 +1,16 @@
 defmodule ZaikTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
-  describe "Zaik module" do
-    test "starts and stops successfully" do
-      assert :ok == Zaik.start()
-      assert :ok == Zaik.stop()
+  describe "public API" do
+    test "hello delegates to the supervised hello world agent" do
+      assert Zaik.hello() == "Hello from HelloWorldAgent!"
     end
 
-    test "gets hello message" do
-      assert :ok == Zaik.start()
-      assert "Hello, World!" == Zaik.hello()
-      assert :ok == Zaik.stop()
-    end
+    test "send_message delegates to the supervised hello world agent" do
+      assert :ok = Zaik.send_message("Test message")
 
-    test "sends message successfully" do
-      assert :ok == Zaik.start()
-      assert :ok == Zaik.send_message("Test message")
-      assert :ok == Zaik.stop()
+      assert %{messages: ["Test message" | _], last_seen: %DateTime{}} =
+               Zaik.Agent.HelloWorld.state()
     end
   end
 end

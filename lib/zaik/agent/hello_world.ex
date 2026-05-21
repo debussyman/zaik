@@ -1,51 +1,72 @@
 defmodule Zaik.Agent.HelloWorld do
   @moduledoc """
-  A simple hello world agent to serve as the example agent in our system.
+  A simple hello world agent to serve as the first example agent in Zaik.
   """
 
   use GenServer
 
   # Client API
 
-  def start_link(opts) do
-    GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+  def start_link(opts \\ []) do
+    {server_opts, init_opts} = Keyword.split(opts, [:name])
+    server_opts = Keyword.put_new(server_opts, :name, __MODULE__)
+
+    GenServer.start_link(__MODULE__, init_opts, server_opts)
   end
 
-  def hello() do
-    GenServer.call(__MODULE__, :hello)
+  def hello(server \\ __MODULE__) do
+    GenServer.call(server, :hello)
   end
 
   def send_message(message) do
-    GenServer.cast(__MODULE__, {:message, message})
+    send_message(__MODULE__, message)
   end
 
-  # Server Callbacks
+  def send_message(server, message) do
+    GenServer.cast(server, {:message, message})
+  end
 
-  def init(_opts) do
-    # Initialize agent with empty state
+  def state(server \\ __MODULE__) do
+    GenServer.call(server, :state)
+  end
+
+  # Server callbacks
+
+  @impl true
+  def init(opts) do
     state = %{
-      name: "HelloWorldAgent",
+      name: Keyword.get(opts, :agent_name, "HelloWorldAgent"),
       messages: [],
-      last_seen: nil
+      last_seen: nil,
+      ticks: 0
     }
+
     {:ok, state}
   end
 
+  @impl true
   def handle_call(:hello, _from, state) do
     {:reply, "Hello from #{state.name}!", state}
   end
 
+  def handle_call(:state, _from, state) do
+    {:reply, state, state}
+  end
+
+  @impl true
   def handle_cast({:message, message}, state) do
-    # Add message to the history
-    updated_messages = [message | state.messages]
-    new_state = %{state | messages: updated_messages, last_seen: DateTime.utc_now()}
+    new_state = %{
+      state
+      | messages: [message | state.messages],
+        last_seen: DateTime.utc_now()
+    }
+
     {:noreply, new_state}
   end
 
+  @impl true
   def handle_info(:tick, state) do
-    # Handle periodic ticks
-    IO.puts("Tick from #{state.name}")
-    {:noreply, state}
+    {:noreply, %{state | ticks: state.ticks + 1}}
   end
 
   def handle_info(_msg, state) do
