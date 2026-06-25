@@ -11,6 +11,9 @@ defmodule Zaik.Application do
   def start(_type, _args) do
     children = [
       Zaik.Clock,
+      Zaik.TaskStore,
+      Zaik.SessionStore,
+      Zaik.TaskQueue,
       Zaik.Agent.Supervisor
     ]
 

@@ -17,6 +17,7 @@
             elixir
             erlang
             git
+            tmux
           ];
 
           shellHook = ''
