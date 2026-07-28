@@ -45,6 +45,64 @@ defmodule Zaik do
   end
 
   @doc """
+  Submit a task to the harness.
+  """
+  def submit_task(type, payload, opts \\ []) do
+    task = Zaik.Task.new(type, payload, opts)
+
+    # Store the task in the task store first
+    case Zaik.TaskStore.insert(task) do
+      {:ok, _} ->
+        # Add to session memory if session-scoped
+        if task.session_id do
+          # Append task to session's memory
+          Zaik.MemoryStore.append_task(task, task.session_id)
+        end
+
+        # Enqueue and dispatch
+        Zaik.TaskQueue.enqueue(task)
+        Zaik.Dispatcher.dispatch_now()
+        {:ok, task.id}
+
+      error ->
+        error
+    end
+  end
+
+  @doc """
+  Await completion of a task.
+  """
+  def await_task(task_id, timeout \\ 60_000) do
+    deadline = System.monotonic_time(:millisecond) + timeout
+    do_await_task(task_id, deadline)
+  end
+
+  @doc """
+  Cancel a queued task.
+  """
+  def cancel_task(task_id) do
+    case Zaik.TaskStore.get(task_id) do
+      {:ok, %Zaik.Task{status: :queued} = task} ->
+        Zaik.TaskQueue.remove(task_id)
+        Zaik.TaskStore.update(Zaik.Task.mark_cancelled(task))
+        {:ok, :cancelled}
+
+      {:ok, %Zaik.Task{status: :running}} ->
+        Zaik.Dispatcher.cancel_task(task_id)
+
+      {:ok, %Zaik.Task{status: status}}
+      when status in [:succeeded, :failed, :cancelled, :timed_out] ->
+        {:error, {:already_terminal, status}}
+
+      {:ok, %Zaik.Task{status: status}} ->
+        {:error, {:cannot_cancel, status}}
+
+      {:error, :not_found} ->
+        {:error, :not_found}
+    end
+  end
+
+  @doc """
   Fetch a task by ID.
   """
   def get_task(task_id) do
@@ -77,5 +135,32 @@ defmodule Zaik do
   """
   def send_message(message) do
     Zaik.Agent.HelloWorld.send_message(message)
+  end
+
+  defp do_await_task(task_id, deadline) do
+    case Zaik.TaskStore.get(task_id) do
+      {:ok, %Zaik.Task{status: :succeeded, result: result}} ->
+        {:ok, result}
+
+      {:ok, %Zaik.Task{status: :failed, error: error}} ->
+        {:error, {:task_failed, error}}
+
+      {:ok, %Zaik.Task{status: :cancelled}} ->
+        {:error, :cancelled}
+
+      {:ok, %Zaik.Task{status: :timed_out}} ->
+        {:error, :task_timed_out}
+
+      {:ok, _task} ->
+        if System.monotonic_time(:millisecond) >= deadline do
+          {:error, :timeout}
+        else
+          Process.sleep(20)
+          do_await_task(task_id, deadline)
+        end
+
+      {:error, :not_found} ->
+        {:error, :not_found}
+    end
   end
 end

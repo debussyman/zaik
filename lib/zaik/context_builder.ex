@@ -12,7 +12,7 @@ defmodule Zaik.ContextBuilder do
     with {:ok, entries} <- Zaik.SessionStore.get_branch(session_id) do
       context =
         entries
-        |> Enum.reject(&(&1["exclude_from_context"] == true))
+        |> Enum.reject(&excluded_from_context?/1)
         |> apply_summary_window()
         |> Enum.take(-limit)
 
@@ -20,15 +20,24 @@ defmodule Zaik.ContextBuilder do
     end
   end
 
-  defp apply_summary_window(entries) do
-    case Enum.find_index(Enum.reverse(entries), &(&1["type"] == "summary")) do
-      nil ->
-        entries
+  defp excluded_from_context?(%{"exclude_from_context" => true}), do: true
+  defp excluded_from_context?(_entry), do: false
 
-      reverse_index ->
-        index = length(entries) - reverse_index - 1
-        {before_and_summary, after_summary} = Enum.split(entries, index + 1)
-        [List.last(before_and_summary) | after_summary]
+  defp apply_summary_window(entries) do
+    case latest_summary_index(entries) do
+      nil -> entries
+      index -> Enum.drop(entries, index)
+    end
+  end
+
+  defp latest_summary_index(entries) do
+    entries
+    |> Enum.with_index()
+    |> Enum.filter(fn {entry, _index} -> entry["type"] == "summary" end)
+    |> List.last()
+    |> case do
+      nil -> nil
+      {_entry, index} -> index
     end
   end
 end

@@ -14,6 +14,9 @@ defmodule Zaik.Application do
       Zaik.TaskStore,
       Zaik.SessionStore,
       Zaik.TaskQueue,
+      {Registry, keys: :unique, name: Zaik.Agent.Registry},
+      Zaik.Agent.DynamicSupervisor,
+      Zaik.Dispatcher,
       Zaik.Agent.Supervisor
     ]
 
