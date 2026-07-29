@@ -45,6 +45,21 @@ defmodule Zaik do
   end
 
   @doc """
+  Return a structured runtime snapshot of the harness.
+  """
+  def snapshot, do: Zaik.Observability.snapshot()
+
+  @doc """
+  Return top-level harness health.
+  """
+  def health, do: Zaik.Observability.health()
+
+  @doc """
+  Return task counts by status.
+  """
+  def task_summary, do: Zaik.Observability.task_summary()
+
+  @doc """
   Submit a task to the harness.
   """
   def submit_task(type, payload, opts \\ []) do
@@ -113,7 +128,7 @@ defmodule Zaik do
   List tasks from the in-memory task store.
   """
   def list_tasks(opts \\ []) do
-    Zaik.TaskStore.list(opts)
+    Zaik.TaskStore.list(Zaik.TaskStore, opts)
   end
 
   @doc """

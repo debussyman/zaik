@@ -4,7 +4,8 @@ defmodule Zaik.TaskResolver do
   """
 
   @resolutions %{
-    echo: Zaik.Agent.Echo
+    echo: Zaik.Agent.Echo,
+    system_status: Zaik.Agent.SystemStatus
   }
 
   @doc """
