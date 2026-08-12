@@ -88,16 +88,17 @@ defmodule Zaik.Messaging.SignalClient do
   end
 
   defp send_message_cli(to, message, account) do
-    with {:ok, _account} <- require_value(account, :account),
+    with {:ok, account} <- require_value(account, :account),
          {:ok, _to} <- require_value(to, :recipient),
          {:ok, output} <-
-           run_cli(global_cli_args(account) ++ ["send", "--message-from-stdin", to],
-             input: message
-           ) do
+           run_cli(global_cli_args(account) ++ send_cli_args(account, to), input: message) do
       decoded = decode_cli_json_output(output)
       {:ok, if(decoded == [], do: output, else: decoded)}
     end
   end
+
+  defp send_cli_args(account, account), do: ["send", "--note-to-self", "--message-from-stdin"]
+  defp send_cli_args(_account, to), do: ["send", "--message-from-stdin", to]
 
   defp run_cli(args, opts \\ []) do
     cli_path = config().cli_path
