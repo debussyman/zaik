@@ -69,4 +69,12 @@ defmodule Zaik.Messaging.SignalPollerTest do
     assert Zaik.Messaging.SignalPoller.allowed_sender?(allowed, "+15551234567")
     refute Zaik.Messaging.SignalPoller.allowed_sender?(allowed, "+15557654321")
   end
+
+  test "suppresses unknown command responses over Signal" do
+    refute Zaik.Messaging.SignalPoller.respond_to_signal_message?(
+             "Unknown command.\n\nZaik commands:"
+           )
+
+    assert Zaik.Messaging.SignalPoller.respond_to_signal_message?("Zaik is ok.\nQueue: 0")
+  end
 end

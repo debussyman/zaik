@@ -71,6 +71,12 @@ defmodule Zaik.Messaging.SignalPoller do
     MapSet.member?(allowed_senders, sender)
   end
 
+  def respond_to_signal_message?(response) when is_binary(response) do
+    not String.starts_with?(response, "Unknown command.")
+  end
+
+  def respond_to_signal_message?(_response), do: false
+
   defp poll(state) do
     case state.client.receive(state.account) do
       {:ok, payload} ->
@@ -125,15 +131,25 @@ defmodule Zaik.Messaging.SignalPoller do
       context = %{channel: :signal, sender: message.sender, session_id: session.id}
       response = Zaik.CommandProcessor.process(message.body, context)
 
-      send_result = state.client.send_message(message.sender, response, state.account)
+      if respond_to_signal_message?(response) do
+        send_result = state.client.send_message(message.sender, response, state.account)
 
-      Zaik.MemoryStore.append_message(session.id, :agent, response,
-        metadata: %{channel: :signal, send_result: inspect(send_result)}
-      )
+        Zaik.MemoryStore.append_message(session.id, :agent, response,
+          metadata: %{channel: :signal, send_result: inspect(send_result)}
+        )
 
-      case send_result do
-        {:ok, _} -> :ok
-        {:error, reason} -> {:error, {:send_failed, reason}}
+        case send_result do
+          {:ok, _} -> :ok
+          {:error, reason} -> {:error, {:send_failed, reason}}
+        end
+      else
+        Zaik.SessionStore.append(session.id, %{
+          type: "signal_event",
+          event: "ignored_unknown_command",
+          content: message.body
+        })
+
+        :ok
       end
     end
   end
