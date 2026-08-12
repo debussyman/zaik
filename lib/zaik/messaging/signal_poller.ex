@@ -163,12 +163,17 @@ defmodule Zaik.Messaging.SignalPoller do
 
   defp normalize_message(raw) when is_map(raw) do
     envelope = Map.get(raw, "envelope", raw)
-    data_message = Map.get(envelope, "dataMessage") || Map.get(raw, "dataMessage") || %{}
+    sync_message = Map.get(envelope, "syncMessage") || Map.get(raw, "syncMessage") || %{}
+    sent_message = Map.get(sync_message, "sentMessage") || %{}
+
+    data_message =
+      Map.get(envelope, "dataMessage") || Map.get(raw, "dataMessage") || sent_message || %{}
 
     sender =
       first_present([
         Map.get(envelope, "sourceNumber"),
         Map.get(envelope, "source"),
+        Map.get(sent_message, "destination"),
         Map.get(raw, "sourceNumber"),
         Map.get(raw, "source"),
         Map.get(raw, "from")
@@ -177,6 +182,7 @@ defmodule Zaik.Messaging.SignalPoller do
     body =
       first_present([
         Map.get(data_message, "message"),
+        Map.get(sent_message, "message"),
         Map.get(envelope, "message"),
         Map.get(raw, "message"),
         Map.get(raw, "body"),
@@ -187,6 +193,7 @@ defmodule Zaik.Messaging.SignalPoller do
       first_present([
         Map.get(envelope, "timestamp"),
         Map.get(data_message, "timestamp"),
+        Map.get(sent_message, "timestamp"),
         Map.get(raw, "timestamp"),
         Map.get(raw, "id")
       ])

@@ -26,6 +26,25 @@ defmodule Zaik.Messaging.SignalPollerTest do
              Zaik.Messaging.SignalPoller.normalize_messages(payload)
   end
 
+  test "normalizes linked-device sync sent messages" do
+    payload = %{
+      "envelope" => %{
+        "sourceNumber" => "+15551234567",
+        "timestamp" => 456,
+        "syncMessage" => %{
+          "sentMessage" => %{
+            "destination" => "+15551234567",
+            "message" => "system",
+            "timestamp" => 456
+          }
+        }
+      }
+    }
+
+    assert [%{sender: "+15551234567", body: "system", timestamp: 456}] =
+             Zaik.Messaging.SignalPoller.normalize_messages(payload)
+  end
+
   test "decodes signal-cli newline-delimited JSON output" do
     output =
       [
