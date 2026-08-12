@@ -18,6 +18,7 @@
             erlang
             git
             tmux
+            signal-cli
           ];
 
           shellHook = ''

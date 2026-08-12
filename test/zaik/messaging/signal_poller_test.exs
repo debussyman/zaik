@@ -26,6 +26,24 @@ defmodule Zaik.Messaging.SignalPollerTest do
              Zaik.Messaging.SignalPoller.normalize_messages(payload)
   end
 
+  test "decodes signal-cli newline-delimited JSON output" do
+    output =
+      [
+        Jason.encode!(%{
+          "envelope" => %{
+            "sourceNumber" => "+15551234567",
+            "timestamp" => 123,
+            "dataMessage" => %{"message" => "health"}
+          }
+        }),
+        "non-json status line"
+      ]
+      |> Enum.join("\n")
+
+    assert [decoded] = Zaik.Messaging.SignalClient.decode_cli_json_output(output)
+    assert get_in(decoded, ["envelope", "sourceNumber"]) == "+15551234567"
+  end
+
   test "allowlist requires exact sender match" do
     allowed = MapSet.new(["+15551234567"])
 
