@@ -16,6 +16,7 @@ defmodule Zaik.Observability do
       queue: queue_summary(),
       tasks: task_summary(),
       dispatcher: dispatcher_summary(),
+      watchdog: watchdog_summary(),
       agents: agent_summary(),
       sessions: session_summary(limit: 5)
     }
@@ -50,7 +51,12 @@ defmodule Zaik.Observability do
   end
 
   def queue_summary do
-    %{size: safe_call(fn -> Zaik.TaskQueue.size() end, 0)}
+    entries = safe_call(fn -> Zaik.TaskQueue.entries() end, [])
+
+    %{
+      size: length(entries),
+      task_ids: Enum.map(entries, & &1.task_id)
+    }
   end
 
   def dispatcher_summary do
@@ -71,6 +77,21 @@ defmodule Zaik.Observability do
         running_count: 0,
         running_task_ids: []
       }
+    end
+  end
+
+  def watchdog_summary do
+    if process_alive?(Zaik.TaskWatchdog) do
+      state = safe_call(fn -> Zaik.TaskWatchdog.state() end, %{})
+
+      %{
+        alive?: true,
+        scan_interval_ms: Map.get(state, :scan_interval_ms),
+        last_scan_at: Map.get(state, :last_scan_at),
+        last_summary: Map.get(state, :last_summary)
+      }
+    else
+      %{alive?: false, scan_interval_ms: nil, last_scan_at: nil, last_summary: nil}
     end
   end
 

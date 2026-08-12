@@ -60,6 +60,16 @@ defmodule Zaik do
   def task_summary, do: Zaik.Observability.task_summary()
 
   @doc """
+  Run the task watchdog reconciliation immediately.
+  """
+  def watchdog_scan, do: Zaik.TaskWatchdog.scan_now()
+
+  @doc """
+  Return the task watchdog state.
+  """
+  def watchdog_state, do: Zaik.TaskWatchdog.state()
+
+  @doc """
   Submit a task to the harness.
   """
   def submit_task(type, payload, opts \\ []) do

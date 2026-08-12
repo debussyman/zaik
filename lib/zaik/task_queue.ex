@@ -30,6 +30,12 @@ defmodule Zaik.TaskQueue do
     GenServer.call(server, :size)
   end
 
+  def entries, do: entries(__MODULE__)
+  def entries(server), do: GenServer.call(server, :entries)
+
+  def contains?(task_id), do: contains?(__MODULE__, task_id)
+  def contains?(server, task_id), do: GenServer.call(server, {:contains?, task_id})
+
   def remove(server \\ __MODULE__, task_id) do
     GenServer.call(server, {:remove, task_id})
   end
@@ -67,6 +73,12 @@ defmodule Zaik.TaskQueue do
   end
 
   def handle_call(:size, _from, state), do: {:reply, length(state.entries), state}
+
+  def handle_call(:entries, _from, state), do: {:reply, state.entries, state}
+
+  def handle_call({:contains?, task_id}, _from, state) do
+    {:reply, Enum.any?(state.entries, &(&1.task_id == task_id)), state}
+  end
 
   def handle_call({:remove, task_id}, _from, state) do
     {removed, entries} = Enum.split_with(state.entries, &(&1.task_id == task_id))

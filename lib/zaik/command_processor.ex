@@ -35,6 +35,12 @@ defmodule Zaik.CommandProcessor do
       command?(text, "system") ->
         submit_system(context)
 
+      command?(text, "watchdog") ->
+        format_watchdog_state()
+
+      command?(text, "watchdog scan") ->
+        format_watchdog_scan()
+
       String.starts_with?(downcase(text), "tasks ") ->
         text |> rest_after("tasks") |> format_tasks()
 
@@ -68,6 +74,8 @@ defmodule Zaik.CommandProcessor do
     tasks queued|running|failed
     task <task_id>
     sessions
+    watchdog
+    watchdog scan
     submit echo <message>
     echo <message>
     system
@@ -172,6 +180,47 @@ defmodule Zaik.CommandProcessor do
 
         (["Recent sessions"] ++ lines) |> Enum.join("\n")
     end
+  end
+
+  defp format_watchdog_state do
+    case Zaik.watchdog_state() do
+      %{last_scan_at: nil, last_summary: summary} ->
+        "Watchdog has not scanned yet.\nLast summary: #{format_value(summary)}"
+
+      %{last_scan_at: scanned_at, last_summary: summary} ->
+        "Watchdog last scanned at #{format_time(scanned_at)}.\n" <>
+          format_watchdog_summary(summary)
+    end
+  rescue
+    _ -> "Watchdog is not available."
+  catch
+    :exit, _ -> "Watchdog is not available."
+  end
+
+  defp format_watchdog_scan do
+    Zaik.watchdog_scan()
+    |> format_watchdog_summary("Watchdog scan complete.")
+  rescue
+    error -> "Watchdog scan failed: #{Exception.message(error)}"
+  catch
+    :exit, reason -> "Watchdog scan failed: #{inspect(reason)}"
+  end
+
+  defp format_watchdog_summary(summary, header \\ "Watchdog summary.") when is_map(summary) do
+    """
+    #{header}
+    Requeued missing queued: #{Map.get(summary, :requeued_missing_queued_tasks, 0)}
+    Removed terminal queue entries: #{Map.get(summary, :removed_terminal_queue_entries, 0)}
+    Removed missing queue entries: #{Map.get(summary, :removed_missing_queue_entries, 0)}
+    Requeued stale assigned: #{Map.get(summary, :requeued_stale_assigned_tasks, 0)}
+    Failed stale assigned: #{Map.get(summary, :failed_stale_assigned_tasks, 0)}
+    Requeued orphaned running: #{Map.get(summary, :requeued_orphaned_running_tasks, 0)}
+    Failed orphaned running: #{Map.get(summary, :failed_orphaned_running_tasks, 0)}
+    Requeued stale running: #{Map.get(summary, :requeued_stale_running_tasks, 0)}
+    Failed stale running: #{Map.get(summary, :failed_stale_running_tasks, 0)}
+    Terminated terminal agents: #{Map.get(summary, :terminated_terminal_task_agents, 0)}
+    """
+    |> String.trim()
   end
 
   defp submit_echo(message, context) do

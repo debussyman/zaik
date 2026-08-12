@@ -48,5 +48,15 @@ defmodule Zaik.TaskQueueTest do
     assert {:error, :not_found} = Zaik.TaskQueue.remove(queue, task.id)
   end
 
+  test "exposes entries and contains checks", %{queue: queue} do
+    task = Zaik.Task.new(:echo, %{}, priority: 5)
+
+    refute Zaik.TaskQueue.contains?(queue, task.id)
+    assert :ok = Zaik.TaskQueue.enqueue(queue, task)
+    assert Zaik.TaskQueue.contains?(queue, task.id)
+    assert [%{task_id: task_id, priority: 5}] = Zaik.TaskQueue.entries(queue)
+    assert task_id == task.id
+  end
+
   defp unique_name(prefix), do: String.to_atom("#{prefix}_#{System.unique_integer([:positive])}")
 end
