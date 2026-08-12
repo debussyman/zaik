@@ -32,10 +32,15 @@ defmodule Zaik.CommandProcessorTest do
     assert response =~ "Schedulers:"
   end
 
+  test "ask without prompt returns usage" do
+    assert Zaik.CommandProcessor.process("ask ") =~ "Usage: ask <prompt>"
+  end
+
   test "unknown command returns help" do
     response = Zaik.CommandProcessor.process("do unsafe thing")
 
     assert response =~ "Unknown command"
     assert response =~ "Zaik commands:"
+    assert response =~ "ask <prompt>"
   end
 end

@@ -10,6 +10,16 @@ config :zaik, :watchdog,
   running_stale_after_ms: 120_000,
   dispatch_after_scan?: true
 
+config :zaik, :llm,
+  provider: :ollama,
+  ollama_url: "http://localhost:11434",
+  default_model: "qwen3-coder:30b",
+  num_ctx: 32_768,
+  num_predict: 512,
+  timeout_ms: 180_000,
+  keep_alive: "30m",
+  temperature: 0.2
+
 config :zaik, :signal,
   enabled: false,
   mode: :cli,

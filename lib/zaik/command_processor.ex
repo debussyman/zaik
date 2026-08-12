@@ -41,6 +41,18 @@ defmodule Zaik.CommandProcessor do
       command?(text, "watchdog scan") ->
         format_watchdog_scan()
 
+      command?(text, "ask") ->
+        submit_llm_prompt("", context)
+
+      command?(text, "submit llm") ->
+        submit_llm_prompt("", context)
+
+      String.starts_with?(downcase(text), "ask ") ->
+        text |> rest_after("ask") |> submit_llm_prompt(context)
+
+      String.starts_with?(downcase(text), "submit llm ") ->
+        text |> rest_after("submit llm") |> submit_llm_prompt(context)
+
       String.starts_with?(downcase(text), "tasks ") ->
         text |> rest_after("tasks") |> format_tasks()
 
@@ -76,6 +88,8 @@ defmodule Zaik.CommandProcessor do
     sessions
     watchdog
     watchdog scan
+    ask <prompt>
+    submit llm <prompt>
     submit echo <message>
     echo <message>
     system
@@ -250,6 +264,44 @@ defmodule Zaik.CommandProcessor do
     end
   end
 
+  defp submit_llm_prompt(prompt, context) do
+    prompt = String.trim(prompt)
+
+    if prompt == "" do
+      "Usage: ask <prompt>"
+    else
+      opts =
+        context
+        |> task_opts()
+        |> Keyword.put_new(:timeout_ms, Zaik.LLM.OllamaClient.config().timeout_ms)
+
+      payload = %{
+        prompt: prompt,
+        model: Zaik.LLM.OllamaClient.config().default_model,
+        num_predict: Zaik.LLM.OllamaClient.config().num_predict,
+        num_ctx: Zaik.LLM.OllamaClient.config().num_ctx,
+        temperature: Zaik.LLM.OllamaClient.config().temperature
+      }
+
+      case Zaik.submit_task(:llm_prompt, payload, opts) do
+        {:ok, task_id} ->
+          case Zaik.await_task(task_id, Zaik.LLM.OllamaClient.config().timeout_ms + 5_000) do
+            {:ok, result} ->
+              "LLM task #{task_id}.\n" <> format_llm_result(result)
+
+            {:error, :timeout} ->
+              "LLM task #{task_id} is still running."
+
+            {:error, reason} ->
+              "LLM task #{task_id} failed: #{format_value(reason)}"
+          end
+
+        {:error, reason} ->
+          "Failed to submit LLM task: #{format_value(reason)}"
+      end
+    end
+  end
+
   defp submit_system(context) do
     opts = task_opts(context)
 
@@ -309,6 +361,14 @@ defmodule Zaik.CommandProcessor do
   end
 
   defp format_system_result(result), do: format_value(result)
+
+  defp format_llm_result(%{response: response}) when is_binary(response),
+    do: String.trim(response)
+
+  defp format_llm_result(%{"response" => response}) when is_binary(response),
+    do: String.trim(response)
+
+  defp format_llm_result(result), do: format_value(result)
 
   defp format_value(nil), do: "-"
   defp format_value(value) when is_binary(value), do: value
