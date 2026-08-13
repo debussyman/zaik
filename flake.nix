@@ -19,6 +19,9 @@
             git
             tmux
             signal-cli
+            nodejs_22
+            pnpm
+            mosquitto
           ];
 
           shellHook = ''
