@@ -44,6 +44,9 @@ defmodule Zaik.CommandProcessor do
       command?(text, "home sensors") ->
         format_home_sensors()
 
+      command?(text, "home trends") ->
+        format_home_trends()
+
       command?(text, "presence") ->
         format_presence()
 
@@ -73,6 +76,14 @@ defmodule Zaik.CommandProcessor do
 
       String.starts_with?(downcase(text), "task ") ->
         text |> rest_after("task") |> format_task()
+
+      String.starts_with?(downcase(text), "sensor ") and
+          String.ends_with?(downcase(text), " trend") ->
+        text |> rest_after("sensor") |> remove_suffix("trend") |> format_sensor_trend()
+
+      String.starts_with?(downcase(text), "home sensor ") and
+          String.ends_with?(downcase(text), " trend") ->
+        text |> rest_after("home sensor") |> remove_suffix("trend") |> format_sensor_trend()
 
       String.starts_with?(downcase(text), "sensor ") ->
         text |> rest_after("sensor") |> format_sensor()
@@ -110,8 +121,10 @@ defmodule Zaik.CommandProcessor do
     home
     home devices
     home sensors
+    home trends
     presence
     sensor <device name>
+    sensor <device name> trend
     watchdog
     watchdog scan
     ask <prompt>
@@ -191,6 +204,44 @@ defmodule Zaik.CommandProcessor do
 
       devices ->
         (["Presence"] ++ Enum.map(devices, &format_presence_line/1)) |> Enum.join("\n")
+    end
+  end
+
+  defp format_home_trends do
+    case Zaik.home_devices() do
+      [] ->
+        "No home devices seen yet."
+
+      devices ->
+        trend_lines =
+          devices
+          |> Enum.map(&format_trend_for_device/1)
+          |> Enum.reject(&is_nil/1)
+
+        case trend_lines do
+          [] -> "I need more sensor history before I can describe home trends."
+          lines -> (["Home trends"] ++ lines) |> Enum.join("\n")
+        end
+    end
+  end
+
+  defp format_sensor_trend(query) do
+    query = String.trim(query)
+
+    if query == "" do
+      "Usage: sensor <device name> trend"
+    else
+      case Zaik.home_device(query) do
+        {:ok, device} ->
+          format_trend_for_device(device) ||
+            "I need more history for #{room_label(device.friendly_name)} before I can describe a trend."
+
+        {:error, :not_found} ->
+          "Sensor not found: #{query}"
+
+        {:error, {:ambiguous, names}} ->
+          "Sensor name is ambiguous: #{query}\nMatches: #{Enum.join(names, ", ")}"
+      end
     end
   end
 
@@ -521,6 +572,115 @@ defmodule Zaik.CommandProcessor do
   defp metadata_section([]), do: nil
   defp metadata_section(lines), do: "Metadata\n" <> Enum.join(lines, "\n")
 
+  defp format_trend_for_device(device) do
+    case Zaik.home_trend(device.friendly_name) do
+      {:ok, trend} -> format_trend(device, trend)
+      {:error, :insufficient_data} -> nil
+      {:error, _reason} -> nil
+    end
+  rescue
+    _ -> nil
+  catch
+    :exit, _ -> nil
+  end
+
+  defp format_trend(device, trend) do
+    room = room_label(device.friendly_name)
+    temperature = trend.temperature
+    humidity = trend.humidity
+    illuminance = trend.illuminance
+
+    [
+      trend_summary_sentence(room, temperature, humidity, illuminance),
+      temperature_trend_sentence(temperature, trend.window_seconds),
+      humidity_trend_sentence(humidity),
+      illuminance_trend_sentence(illuminance),
+      "Based on #{trend.readings_count} readings over #{format_window(trend.window_seconds)}."
+    ]
+    |> Enum.reject(&(&1 in [nil, ""]))
+    |> Enum.join(" ")
+  end
+
+  defp trend_summary_sentence(room, %{trend: :falling}, _humidity, _illuminance),
+    do: "#{room} is cooling."
+
+  defp trend_summary_sentence(room, %{trend: :rising}, _humidity, _illuminance),
+    do: "#{room} is warming."
+
+  defp trend_summary_sentence(room, _temperature, %{trend: :rising}, _illuminance),
+    do: "#{room} is getting more humid."
+
+  defp trend_summary_sentence(room, _temperature, %{trend: :falling}, _illuminance),
+    do: "#{room} is getting drier."
+
+  defp trend_summary_sentence(room, _temperature, _humidity, %{trend: :rising}),
+    do: "#{room} is getting brighter."
+
+  defp trend_summary_sentence(room, _temperature, _humidity, %{trend: :falling}),
+    do: "#{room} is getting darker."
+
+  defp trend_summary_sentence(room, _temperature, _humidity, _illuminance),
+    do: "#{room} is steady."
+
+  defp temperature_trend_sentence(nil, _window_seconds), do: nil
+
+  defp temperature_trend_sentence(%{current: current, delta: delta, trend: trend}, window_seconds) do
+    direction = delta_phrase(delta, "up", "down", &format_fahrenheit/1)
+
+    case trend do
+      :steady ->
+        "Temperature is steady at #{format_fahrenheit(current)}."
+
+      _ ->
+        "It is now #{format_fahrenheit(current)}, #{direction} over #{format_window(window_seconds)}."
+    end
+  end
+
+  defp humidity_trend_sentence(nil), do: nil
+
+  defp humidity_trend_sentence(%{current: current, delta: delta, trend: trend}) do
+    case trend do
+      :steady ->
+        "Humidity is steady at #{format_percent(current)}."
+
+      :rising ->
+        "Humidity is rising to #{format_percent(current)}, up #{format_percent(abs(delta))}."
+
+      :falling ->
+        "Humidity is falling to #{format_percent(current)}, down #{format_percent(abs(delta))}."
+    end
+  end
+
+  defp illuminance_trend_sentence(nil), do: nil
+
+  defp illuminance_trend_sentence(%{current: current, delta: delta, trend: trend}) do
+    case trend do
+      :steady ->
+        "Illuminance is steady at #{format_lux(current)}."
+
+      :rising ->
+        "The room is getting brighter at #{format_lux(current)}, up #{format_lux(abs(delta))}."
+
+      :falling ->
+        "The room is getting darker at #{format_lux(current)}, down #{format_lux(abs(delta))}."
+    end
+  end
+
+  defp delta_phrase(delta, rising_word, _falling_word, formatter) when delta >= 0,
+    do: "#{rising_word} #{formatter.(abs(delta))}"
+
+  defp delta_phrase(delta, _rising_word, falling_word, formatter),
+    do: "#{falling_word} #{formatter.(abs(delta))}"
+
+  defp format_window(1), do: "1 second"
+  defp format_window(seconds) when seconds < 120, do: "#{seconds} seconds"
+  defp format_window(seconds) when seconds < 3600, do: plural(round(seconds / 60), "minute")
+  defp format_window(seconds), do: plural(Float.round(seconds / 3600, 1), "hour")
+
+  defp plural(1, unit), do: "1 #{unit}"
+  defp plural(1.0, unit), do: "1 #{unit}"
+  defp plural(value, unit), do: "#{format_number(value)} #{unit}s"
+
   defp summary_sentence(device) do
     room = room_label(device.friendly_name)
     light = device.payload |> number_field("illuminance") |> light_description()
@@ -768,6 +928,13 @@ defmodule Zaik.CommandProcessor do
     text
     |> String.trim()
     |> String.slice(String.length(prefix)..-1//1)
+    |> String.trim()
+  end
+
+  defp remove_suffix(text, suffix) do
+    text
+    |> String.trim()
+    |> String.replace(~r/\s+#{Regex.escape(suffix)}\s*$/i, "")
     |> String.trim()
   end
 end

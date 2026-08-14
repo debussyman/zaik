@@ -76,6 +76,34 @@ defmodule Zaik.CommandProcessorTest do
     assert sensor =~ "The temperature is 79.3°F, humidity is 53.5%, and illuminance is 640 lux."
   end
 
+  test "sensor trend summarizes history" do
+    Zaik.Home.DeviceStore.reset()
+    Zaik.Home.HistoryStore.reset()
+
+    Zaik.Home.DeviceStore.upsert_device("Lily's room multi-sensor", %{"temperature" => 26.0})
+
+    now = DateTime.utc_now()
+
+    Zaik.Home.HistoryStore.record_device(
+      "Lily's room multi-sensor",
+      %{"temperature" => 27.0, "humidity" => 55, "illuminance" => 100},
+      %{},
+      observed_at: DateTime.add(now, -3500, :second)
+    )
+
+    Zaik.Home.HistoryStore.record_device(
+      "Lily's room multi-sensor",
+      %{"temperature" => 26.0, "humidity" => 54, "illuminance" => 200},
+      %{},
+      observed_at: now
+    )
+
+    response = Zaik.CommandProcessor.process("sensor lily trend")
+    assert response =~ "Lily's room is cooling."
+    assert response =~ "It is now 78.8°F, down 1.8°F"
+    assert response =~ "Based on 2 readings"
+  end
+
   test "unknown command returns help" do
     response = Zaik.CommandProcessor.process("do unsafe thing")
 

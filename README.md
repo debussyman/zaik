@@ -13,7 +13,8 @@ Zaik is a local-first personal agent harness built with Elixir/OTP. It provides 
 - Signal ingress/replies via linked-device `signal-cli`
 - Local Ollama prompt tasks
 - MQTT subscription to Zigbee2MQTT state
-- Home commands for latest Zigbee2MQTT device/sensor state
+- SQLite-backed home telemetry history in `~/.zaik/home/home.db`
+- Home commands for latest Zigbee2MQTT device/sensor state and trends
 - User-level systemd services for long-running Zaik and Zigbee2MQTT
 
 ## Development
@@ -79,6 +80,8 @@ Home state:
 Zaik.home_devices()
 Zaik.home_device("lily")
 Zaik.presence_devices()
+Zaik.home_trend("lily")
+Zaik.home_readings("lily", limit: 20)
 Zaik.mqtt_status()
 ```
 
@@ -98,8 +101,10 @@ sessions
 home
 home devices
 home sensors
+home trends
 presence
 sensor <device name>
+sensor <device name> trend
 watchdog
 watchdog scan
 ask <prompt>
@@ -116,6 +121,8 @@ home
 home devices
 presence
 sensor lily
+sensor lily trend
+home trends
 ```
 
 LLM command example:
@@ -184,6 +191,7 @@ Optional environment overrides:
 ZAIK_MQTT_HOST=localhost
 ZAIK_MQTT_PORT=1883
 ZAIK_ZIGBEE2MQTT_DATA_DIR=/home/ryan/.local/share/zigbee2mqtt/data
+ZAIK_HOME_HISTORY_DB=/home/ryan/.zaik/home/home.db
 ```
 
 Zaik also bootstraps latest Zigbee2MQTT state from:
@@ -195,6 +203,35 @@ Zaik also bootstraps latest Zigbee2MQTT state from:
 ```
 
 This makes `home`, `presence`, and `sensor ...` useful immediately after a Zaik restart even if device state MQTT messages are not retained.
+
+### Home telemetry history
+
+Zaik records structured sensor readings to SQLite:
+
+```text
+~/.zaik/home/home.db
+```
+
+The `readings` table stores normalized columns for common fields:
+
+```text
+temperature_c, humidity, illuminance, presence, pir_detection,
+battery, voltage, linkquality, target_distance, payload_json
+```
+
+Trend commands use this history, for example:
+
+```text
+sensor lily trend
+```
+
+Example response once at least two readings exist in the recent window:
+
+```text
+Lily's room is cooling. It is now 78.8°F, down 1.8°F over 1 hour. Humidity is steady at 54%. The room is getting brighter at 200 lux, up 100 lux. Based on 2 readings over 1 hour.
+```
+
+Tests use an in-memory SQLite database by default, so test runs do not mutate the real home telemetry database.
 
 ## Runtime services
 

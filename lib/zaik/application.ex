@@ -16,6 +16,7 @@ defmodule Zaik.Application do
         Zaik.SessionStore,
         Zaik.TaskQueue,
         Zaik.Home.DeviceStore,
+        home_history_child(),
         zigbee2mqtt_bootstrapper_child(),
         mqtt_child(),
         {Registry, keys: :unique, name: Zaik.Agent.Registry},
@@ -29,6 +30,14 @@ defmodule Zaik.Application do
 
     opts = [strategy: :one_for_one, name: Zaik.Supervisor]
     Supervisor.start_link(children, opts)
+  end
+
+  defp home_history_child do
+    config = Zaik.Home.HistoryStore.config()
+
+    if config.enabled do
+      {Zaik.Home.HistoryStore, Map.to_list(config)}
+    end
   end
 
   defp zigbee2mqtt_bootstrapper_child do

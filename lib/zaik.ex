@@ -80,6 +80,16 @@ defmodule Zaik do
   def mqtt_status, do: Zaik.MQTT.Client.status()
 
   @doc """
+  Analyze recent telemetry trend for a home device.
+  """
+  def home_trend(query, opts \\ []), do: Zaik.Home.Trends.analyze(query, opts)
+
+  @doc """
+  Return recent historical readings for a home device.
+  """
+  def home_readings(query, opts \\ []), do: Zaik.Home.HistoryStore.recent_readings(query, opts)
+
+  @doc """
   Run the task watchdog reconciliation immediately.
   """
   def watchdog_scan, do: Zaik.TaskWatchdog.scan_now()

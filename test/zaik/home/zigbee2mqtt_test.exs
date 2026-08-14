@@ -11,7 +11,8 @@ defmodule Zaik.Home.Zigbee2MQTTTest do
 
     assert {:ok, _device} =
              Zaik.Home.Zigbee2MQTT.handle_publish("zigbee2mqtt/Lily presence sensor", payload,
-               device_store: store
+               device_store: store,
+               history_store: nil
              )
 
     assert {:ok, device} = Zaik.Home.DeviceStore.get_device(store, "Lily presence sensor")
@@ -22,7 +23,8 @@ defmodule Zaik.Home.Zigbee2MQTTTest do
   test "ignores non-device bridge topics before decoding", %{store: store} do
     assert :ignored =
              Zaik.Home.Zigbee2MQTT.handle_publish("zigbee2mqtt/bridge/definitions", "not-json",
-               device_store: store
+               device_store: store,
+               history_store: nil
              )
 
     assert Zaik.Home.DeviceStore.list_devices(store) == []
@@ -58,7 +60,11 @@ defmodule Zaik.Home.Zigbee2MQTTTest do
     )
 
     assert {:ok, 1} =
-             Zaik.Home.Zigbee2MQTT.bootstrap_from_files(data_dir: data_dir, device_store: store)
+             Zaik.Home.Zigbee2MQTT.bootstrap_from_files(
+               data_dir: data_dir,
+               device_store: store,
+               history_store: nil
+             )
 
     assert {:ok, device} = Zaik.Home.DeviceStore.get_device(store, "Lily presence sensor")
     assert device.payload["presence"] == false
@@ -82,7 +88,8 @@ defmodule Zaik.Home.Zigbee2MQTTTest do
              Zaik.Home.Zigbee2MQTT.handle_publish(
                "zigbee2mqtt/bridge/devices",
                Jason.encode!(devices),
-               device_store: store
+               device_store: store,
+               history_store: nil
              )
 
     assert {:ok, device} = Zaik.Home.DeviceStore.get_device(store, "Lily presence sensor")

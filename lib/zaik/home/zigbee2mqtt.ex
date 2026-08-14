@@ -11,6 +11,7 @@ defmodule Zaik.Home.Zigbee2MQTT do
     %{
       base_topic: Keyword.get(configured, :base_topic, "zigbee2mqtt"),
       device_store: Keyword.get(configured, :device_store, Zaik.Home.DeviceStore),
+      history_store: Keyword.get(configured, :history_store, Zaik.Home.HistoryStore),
       bootstrap_state?: Keyword.get(configured, :bootstrap_state?, true),
       data_dir:
         System.get_env("ZAIK_ZIGBEE2MQTT_DATA_DIR") ||
@@ -86,6 +87,8 @@ defmodule Zaik.Home.Zigbee2MQTT do
               payload,
               metadata
             )
+
+            record_history(cfg.history_store, friendly_name, payload, metadata)
           end
         end)
 
@@ -99,7 +102,7 @@ defmodule Zaik.Home.Zigbee2MQTT do
     end
   end
 
-  defp route_publish(topic, decoded, %{base_topic: base_topic, device_store: store}) do
+  defp route_publish(topic, decoded, %{base_topic: base_topic, device_store: store} = cfg) do
     prefix = String.trim_trailing(base_topic, "/") <> "/"
 
     cond do
@@ -111,11 +114,12 @@ defmodule Zaik.Home.Zigbee2MQTT do
 
       true ->
         relative = String.replace_prefix(topic, prefix, "")
-        route_relative(relative, decoded, store, topic)
+        route_relative(relative, decoded, store, Map.get(cfg, :history_store), topic)
     end
   end
 
-  defp route_relative("bridge/devices", devices, store, _topic) when is_list(devices) do
+  defp route_relative("bridge/devices", devices, store, _history_store, _topic)
+       when is_list(devices) do
     devices
     |> Enum.reject(&coordinator?/1)
     |> Enum.each(fn device ->
@@ -141,9 +145,10 @@ defmodule Zaik.Home.Zigbee2MQTT do
     :ok
   end
 
-  defp route_relative("bridge/" <> _bridge_topic, _decoded, _store, _topic), do: :ignored
+  defp route_relative("bridge/" <> _bridge_topic, _decoded, _store, _history_store, _topic),
+    do: :ignored
 
-  defp route_relative(relative, decoded, store, topic) when is_map(decoded) do
+  defp route_relative(relative, decoded, store, history_store, topic) when is_map(decoded) do
     cond do
       relative == "" ->
         :ignored
@@ -162,11 +167,30 @@ defmodule Zaik.Home.Zigbee2MQTT do
           "topic" => topic
         }
 
-        Zaik.Home.DeviceStore.upsert_device(store, friendly_name, decoded, metadata)
+        with {:ok, device} <-
+               Zaik.Home.DeviceStore.upsert_device(store, friendly_name, decoded, metadata) do
+          record_history(history_store, device.friendly_name, device.payload, device.metadata)
+          {:ok, device}
+        end
     end
   end
 
-  defp route_relative(_relative, _decoded, _store, _topic), do: :ignored
+  defp route_relative(_relative, _decoded, _store, _history_store, _topic), do: :ignored
+
+  defp record_history(nil, _friendly_name, _payload, _metadata), do: :ok
+
+  defp record_history(history_store, friendly_name, payload, metadata) do
+    Zaik.Home.HistoryStore.record_device(history_store, friendly_name, payload, metadata)
+    :ok
+  rescue
+    error ->
+      Logger.debug("Failed to record home history: #{Exception.message(error)}")
+      :ok
+  catch
+    :exit, reason ->
+      Logger.debug("Failed to record home history: #{inspect(reason)}")
+      :ok
+  end
 
   defp coordinator?(device) do
     String.downcase(to_string(Map.get(device, "type", ""))) == "coordinator"

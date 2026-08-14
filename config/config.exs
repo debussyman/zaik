@@ -35,6 +35,10 @@ config :zaik, :zigbee2mqtt,
   bootstrap_state?: true,
   data_dir: "~/.local/share/zigbee2mqtt/data"
 
+config :zaik, :home_history,
+  enabled: true,
+  db_path: if(config_env() == :test, do: ":memory:", else: "~/.zaik/home/home.db")
+
 config :zaik, :signal,
   enabled: false,
   mode: :cli,
