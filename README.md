@@ -11,6 +11,7 @@ Zaik is a local-first personal agent harness built with Elixir/OTP. It provides 
 - Context building from session branches/messages
 - Observability snapshots, health summaries, and watchdog reconciliation
 - Signal ingress/replies via linked-device `signal-cli`
+- Telegram Bot API polling for a separate bot identity and multi-user chat
 - Natural-language chat routing with a small local Ollama intent model
 - Local Ollama prompt tasks
 - MQTT subscription to Zigbee2MQTT state
@@ -93,9 +94,11 @@ Zaik.home_readings("lily", limit: 20)
 Zaik.mqtt_status()
 ```
 
-## Text / Signal chat
+## Text / messaging chat
 
-Signal ingress goes through `Zaik.ChatRouter`: exact commands still work, and free-form messages are parsed by a small local intent model and dispatched to trusted Elixir handlers.
+Signal and Telegram ingress go through `Zaik.ChatRouter`: exact commands still work, and free-form messages are parsed by a small local intent model and dispatched to trusted Elixir handlers.
+
+Telegram is the preferred multi-person chat path because Zaik appears as its own bot identity instead of speaking as your linked Signal account.
 
 Natural-language examples:
 
@@ -172,7 +175,7 @@ ZAIK_SIGNAL_ALLOWED_SENDERS=+15555555555
 ZAIK_SIGNAL_POLL_INTERVAL_MS=5000
 ```
 
-For the systemd service, put these in:
+For the systemd service, put Signal settings in:
 
 ```text
 ~/.config/zaik/signal.env
@@ -183,6 +186,49 @@ Keep it private:
 ```bash
 chmod 600 ~/.config/zaik/signal.env
 ```
+
+### Telegram
+
+Zaik can also run as a Telegram bot using Bot API polling. This requires no public webhook.
+
+Create a bot:
+
+1. Open Telegram and message `@BotFather`.
+2. Run `/newbot` and follow the prompts.
+3. Save the bot token.
+4. Start a private chat with the bot and send any message.
+
+The systemd service also loads this optional Telegram env file:
+
+```text
+~/.config/zaik/telegram.env
+```
+
+Example:
+
+```sh
+ZAIK_TELEGRAM_ENABLED=true
+ZAIK_TELEGRAM_BOT_TOKEN=123456:replace_me
+ZAIK_TELEGRAM_BOT_USERNAME=your_bot_username
+ZAIK_TELEGRAM_ALLOWED_USER_IDS=111111111,222222222
+ZAIK_TELEGRAM_ALLOWED_CHAT_IDS=
+ZAIK_TELEGRAM_GROUP_TRIGGER=zaik
+```
+
+Keep it private:
+
+```bash
+chmod 600 ~/.config/zaik/telegram.env
+```
+
+Find your Telegram user/chat IDs from logs while testing, or use a bot like `@userinfobot`. For groups, add the bot to the group and allowlist the group chat ID. Group messages only trigger Zaik if addressed, e.g.:
+
+```text
+zaik how's Lily's room?
+@your_bot_username is Lily's room cooling?
+```
+
+Private one-on-one Telegram chats do not require a trigger.
 
 ### Ollama
 

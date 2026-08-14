@@ -8,6 +8,7 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory=/usr/src/debussyman/zaik
 EnvironmentFile=%h/.config/zaik/signal.env
+EnvironmentFile=-%h/.config/zaik/telegram.env
 ExecStart=/nix/var/nix/profiles/default/bin/nix --extra-experimental-features nix-command --extra-experimental-features flakes develop /usr/src/debussyman/zaik -c mix run --no-halt
 Restart=always
 RestartSec=5

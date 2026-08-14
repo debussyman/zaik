@@ -59,3 +59,14 @@ config :zaik, :signal,
   poll_interval_ms: 5_000,
   cli_path: "signal-cli",
   data_dir: nil
+
+config :zaik, :telegram,
+  enabled: false,
+  bot_token: nil,
+  bot_username: nil,
+  api_url: "https://api.telegram.org",
+  allowed_user_ids: [],
+  allowed_chat_ids: [],
+  poll_interval_ms: 1_000,
+  long_poll_timeout_seconds: 10,
+  group_trigger: "zaik"

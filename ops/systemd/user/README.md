@@ -3,7 +3,7 @@
 These user-level systemd units keep the local home-agent runtime alive:
 
 - `zigbee2mqtt.service` runs the Zigbee2MQTT checkout from `~/.local/share/zigbee2mqtt`.
-- `zaik.service` runs the Zaik OTP app with Signal ingress and MQTT home integration.
+- `zaik.service` runs the Zaik OTP app with Signal/Telegram ingress and MQTT home integration.
 
 Mosquitto is expected to run as a system service on `localhost:1883`.
 
@@ -19,9 +19,15 @@ ZAIK_SIGNAL_ALLOWED_SENDERS=+15555555555
 ZAIK_SIGNAL_POLL_INTERVAL_MS=5000
 ```
 
-Optional overrides:
+Optional Signal/Telegram/home overrides:
 
 ```sh
+ZAIK_TELEGRAM_ENABLED=false
+ZAIK_TELEGRAM_BOT_TOKEN=123456:replace_me
+ZAIK_TELEGRAM_BOT_USERNAME=your_bot_username
+ZAIK_TELEGRAM_ALLOWED_USER_IDS=111111111,222222222
+ZAIK_TELEGRAM_ALLOWED_CHAT_IDS=
+ZAIK_TELEGRAM_GROUP_TRIGGER=zaik
 ZAIK_MQTT_HOST=localhost
 ZAIK_MQTT_PORT=1883
 ZAIK_ZIGBEE2MQTT_DATA_DIR=/home/ryan/.local/share/zigbee2mqtt/data
