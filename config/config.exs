@@ -20,6 +20,21 @@ config :zaik, :llm,
   keep_alive: "30m",
   temperature: 0.2
 
+config :zaik, :mqtt,
+  enabled: true,
+  host: "localhost",
+  port: 1883,
+  client_id: "zaik",
+  topics: ["zigbee2mqtt/#"],
+  reconnect_interval_ms: 5_000,
+  connect_timeout_ms: 5_000
+
+config :zaik, :zigbee2mqtt,
+  base_topic: "zigbee2mqtt",
+  device_store: Zaik.Home.DeviceStore,
+  bootstrap_state?: true,
+  data_dir: "~/.local/share/zigbee2mqtt/data"
+
 config :zaik, :signal,
   enabled: false,
   mode: :cli,

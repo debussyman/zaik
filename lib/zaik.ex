@@ -60,6 +60,26 @@ defmodule Zaik do
   def task_summary, do: Zaik.Observability.task_summary()
 
   @doc """
+  Return latest known home devices.
+  """
+  def home_devices, do: Zaik.Home.DeviceStore.list_devices()
+
+  @doc """
+  Find a home device by exact name or unique case-insensitive substring.
+  """
+  def home_device(query), do: Zaik.Home.DeviceStore.find_device(query)
+
+  @doc """
+  Return latest known devices that expose a presence field.
+  """
+  def presence_devices, do: Zaik.Home.DeviceStore.presence_devices()
+
+  @doc """
+  Return MQTT client connection status.
+  """
+  def mqtt_status, do: Zaik.MQTT.Client.status()
+
+  @doc """
   Run the task watchdog reconciliation immediately.
   """
   def watchdog_scan, do: Zaik.TaskWatchdog.scan_now()

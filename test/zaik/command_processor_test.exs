@@ -36,6 +36,25 @@ defmodule Zaik.CommandProcessorTest do
     assert Zaik.CommandProcessor.process("ask ") =~ "Usage: ask <prompt>"
   end
 
+  test "home commands expose latest device state" do
+    Zaik.Home.DeviceStore.reset()
+
+    Zaik.Home.DeviceStore.upsert_device("Lily presence sensor", %{
+      "presence" => true,
+      "temperature" => 26.32,
+      "humidity" => 57.95,
+      "illuminance" => 129,
+      "battery" => 100
+    })
+
+    assert Zaik.CommandProcessor.process("home devices") =~ "Lily presence sensor"
+    assert Zaik.CommandProcessor.process("presence") =~ "presence=true"
+
+    sensor = Zaik.CommandProcessor.process("sensor lily")
+    assert sensor =~ "Sensor Lily presence sensor"
+    assert sensor =~ "temperature: 26.32"
+  end
+
   test "unknown command returns help" do
     response = Zaik.CommandProcessor.process("do unsafe thing")
 

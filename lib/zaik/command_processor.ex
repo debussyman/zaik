@@ -32,6 +32,21 @@ defmodule Zaik.CommandProcessor do
       command?(text, "sessions") ->
         format_sessions()
 
+      command?(text, "home") ->
+        format_home()
+
+      command?(text, "home status") ->
+        format_home()
+
+      command?(text, "home devices") ->
+        format_home_devices()
+
+      command?(text, "home sensors") ->
+        format_home_sensors()
+
+      command?(text, "presence") ->
+        format_presence()
+
       command?(text, "system") ->
         submit_system(context)
 
@@ -58,6 +73,12 @@ defmodule Zaik.CommandProcessor do
 
       String.starts_with?(downcase(text), "task ") ->
         text |> rest_after("task") |> format_task()
+
+      String.starts_with?(downcase(text), "sensor ") ->
+        text |> rest_after("sensor") |> format_sensor()
+
+      String.starts_with?(downcase(text), "home sensor ") ->
+        text |> rest_after("home sensor") |> format_sensor()
 
       String.starts_with?(downcase(text), "submit echo ") ->
         text |> rest_after("submit echo") |> submit_echo(context)
@@ -86,6 +107,11 @@ defmodule Zaik.CommandProcessor do
     tasks queued|running|failed
     task <task_id>
     sessions
+    home
+    home devices
+    home sensors
+    presence
+    sensor <device name>
     watchdog
     watchdog scan
     ask <prompt>
@@ -115,6 +141,76 @@ defmodule Zaik.CommandProcessor do
   defp format_queue do
     queue = Zaik.Observability.queue_summary()
     "Queue: #{queue.size}"
+  end
+
+  defp format_home do
+    devices = Zaik.home_devices()
+    presence_devices = Zaik.presence_devices()
+    mqtt = Zaik.mqtt_status()
+
+    present = Enum.count(presence_devices, &(Map.get(&1.payload, "presence") == true))
+
+    """
+    Home
+    MQTT: #{if mqtt.connected?, do: "connected", else: "disconnected"}
+    Devices: #{length(devices)}
+    Presence sensors: #{length(presence_devices)}
+    Present: #{present}
+    """
+    |> String.trim()
+  rescue
+    _ -> "Home integration is not available."
+  catch
+    :exit, _ -> "Home integration is not available."
+  end
+
+  defp format_home_devices do
+    case Zaik.home_devices() do
+      [] ->
+        "No home devices seen yet."
+
+      devices ->
+        (["Home devices"] ++ Enum.map(devices, &format_device_summary/1)) |> Enum.join("\n")
+    end
+  end
+
+  defp format_home_sensors do
+    case Zaik.home_devices() do
+      [] ->
+        "No home sensors seen yet."
+
+      devices ->
+        (["Home sensors"] ++ Enum.map(devices, &format_device_sensor_line/1)) |> Enum.join("\n")
+    end
+  end
+
+  defp format_presence do
+    case Zaik.presence_devices() do
+      [] ->
+        "No presence sensors seen yet."
+
+      devices ->
+        (["Presence"] ++ Enum.map(devices, &format_presence_line/1)) |> Enum.join("\n")
+    end
+  end
+
+  defp format_sensor(query) do
+    query = String.trim(query)
+
+    if query == "" do
+      "Usage: sensor <device name>"
+    else
+      case Zaik.home_device(query) do
+        {:ok, device} ->
+          format_device_detail(device)
+
+        {:error, :not_found} ->
+          "Sensor not found: #{query}"
+
+        {:error, {:ambiguous, names}} ->
+          "Sensor name is ambiguous: #{query}\nMatches: #{Enum.join(names, ", ")}"
+      end
+    end
   end
 
   defp format_tasks(nil) do
@@ -370,8 +466,137 @@ defmodule Zaik.CommandProcessor do
 
   defp format_llm_result(result), do: format_value(result)
 
+  defp format_device_summary(device) do
+    "- #{device.friendly_name}: #{device_short_state(device)} updated=#{format_time(device.updated_at)}"
+  end
+
+  defp format_device_sensor_line(device) do
+    "- #{device.friendly_name}: #{sensor_values(device.payload)}"
+  end
+
+  defp format_presence_line(device) do
+    presence = Map.get(device.payload, "presence")
+    distance = Map.get(device.payload, "target_distance")
+
+    suffix =
+      if is_nil(distance) do
+        ""
+      else
+        " distance=#{distance}"
+      end
+
+    "- #{device.friendly_name}: presence=#{presence}#{suffix} updated=#{format_time(device.updated_at)}"
+  end
+
+  defp format_device_detail(device) do
+    payload_keys = [
+      "presence",
+      "pir_detection",
+      "target_distance",
+      "temperature",
+      "humidity",
+      "illuminance",
+      "battery",
+      "voltage",
+      "linkquality",
+      "motion_sensitivity",
+      "absence_delay_timer",
+      "presence_detection_options"
+    ]
+
+    payload_lines =
+      payload_keys
+      |> Enum.filter(&Map.has_key?(device.payload, &1))
+      |> Enum.map(fn key -> "#{key}: #{format_value(Map.fetch!(device.payload, key))}" end)
+
+    other_field_count = max(map_size(device.payload) - length(payload_lines), 0)
+
+    payload_lines =
+      if other_field_count > 0 do
+        payload_lines ++ ["Other fields: #{other_field_count}"]
+      else
+        payload_lines
+      end
+
+    metadata_keys = [
+      "description",
+      "manufacturer",
+      "model_id",
+      "ieee_address",
+      "power_source",
+      "source",
+      "topic"
+    ]
+
+    metadata_lines =
+      metadata_keys
+      |> Enum.filter(&(Map.get(device.metadata, &1) not in [nil, ""]))
+      |> Enum.map(fn key -> "#{key}: #{format_value(Map.fetch!(device.metadata, key))}" end)
+
+    sections = [
+      "Sensor #{device.friendly_name}",
+      "Updated: #{format_time(device.updated_at)}",
+      "State",
+      Enum.join(payload_lines, "\n"),
+      metadata_section(metadata_lines)
+    ]
+
+    sections
+    |> Enum.reject(&(&1 in [nil, ""]))
+    |> Enum.join("\n")
+  end
+
+  defp metadata_section([]), do: nil
+  defp metadata_section(lines), do: "Metadata\n" <> Enum.join(lines, "\n")
+
+  defp device_short_state(device) do
+    payload = device.payload
+
+    [
+      field(payload, "presence", &"presence=#{&1}"),
+      field(payload, "temperature", &"temp=#{&1}°C"),
+      field(payload, "humidity", &"humidity=#{&1}%"),
+      field(payload, "illuminance", &"lux=#{&1}"),
+      field(payload, "battery", &"battery=#{&1}%"),
+      field(payload, "linkquality", &"linkquality=#{&1}")
+    ]
+    |> Enum.reject(&is_nil/1)
+    |> case do
+      [] -> "state seen"
+      parts -> Enum.join(parts, " ")
+    end
+  end
+
+  defp sensor_values(payload) do
+    [
+      field(payload, "presence", &"presence=#{&1}"),
+      field(payload, "pir_detection", &"pir=#{&1}"),
+      field(payload, "target_distance", &"distance=#{&1}"),
+      field(payload, "temperature", &"temp=#{&1}°C"),
+      field(payload, "humidity", &"humidity=#{&1}%"),
+      field(payload, "illuminance", &"lux=#{&1}"),
+      field(payload, "battery", &"battery=#{&1}%")
+    ]
+    |> Enum.reject(&is_nil/1)
+    |> case do
+      [] -> "state seen"
+      parts -> Enum.join(parts, " ")
+    end
+  end
+
+  defp field(payload, key, formatter) do
+    case Map.fetch(payload, key) do
+      {:ok, value} -> formatter.(value)
+      :error -> nil
+    end
+  end
+
   defp format_value(nil), do: "-"
   defp format_value(value) when is_binary(value), do: value
+
+  defp format_value(value) when is_map(value) or is_list(value),
+    do: inspect(value, limit: 5, printable_limit: 200)
+
   defp format_value(value), do: inspect(value, limit: 20)
 
   defp format_time(nil), do: "-"
