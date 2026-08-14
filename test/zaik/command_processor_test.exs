@@ -41,18 +41,39 @@ defmodule Zaik.CommandProcessorTest do
 
     Zaik.Home.DeviceStore.upsert_device("Lily presence sensor", %{
       "presence" => true,
+      "pir_detection" => false,
+      "target_distance" => 0,
       "temperature" => 26.32,
       "humidity" => 57.95,
-      "illuminance" => 129,
+      "illuminance" => 305,
       "battery" => 100
     })
 
-    assert Zaik.CommandProcessor.process("home devices") =~ "Lily presence sensor"
+    home_devices = Zaik.CommandProcessor.process("home devices")
+    assert home_devices =~ "Lily presence sensor"
+    assert home_devices =~ "79.4°F"
+
     assert Zaik.CommandProcessor.process("presence") =~ "presence=true"
 
     sensor = Zaik.CommandProcessor.process("sensor lily")
-    assert sensor =~ "Sensor Lily presence sensor"
-    assert sensor =~ "temperature: 26.32"
+    assert String.starts_with?(sensor, "Lily's room is bright and hot.")
+    assert sensor =~ "The temperature is 79.4°F, humidity is 58%, and illuminance is 305 lux."
+    assert sensor =~ "Presence is detected, PIR motion is inactive, and target distance is 0."
+    assert sensor =~ "Sensor: Lily presence sensor."
+  end
+
+  test "sensor summary handles possessive room names" do
+    Zaik.Home.DeviceStore.reset()
+
+    Zaik.Home.DeviceStore.upsert_device("Lily's room multi-sensor", %{
+      "temperature" => 26.28,
+      "humidity" => 53.5,
+      "illuminance" => 640
+    })
+
+    sensor = Zaik.CommandProcessor.process("sensor lily")
+    assert String.starts_with?(sensor, "Lily's room is bright and hot.")
+    assert sensor =~ "The temperature is 79.3°F, humidity is 53.5%, and illuminance is 640 lux."
   end
 
   test "unknown command returns help" do

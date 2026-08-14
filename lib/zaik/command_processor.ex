@@ -489,35 +489,6 @@ defmodule Zaik.CommandProcessor do
   end
 
   defp format_device_detail(device) do
-    payload_keys = [
-      "presence",
-      "pir_detection",
-      "target_distance",
-      "temperature",
-      "humidity",
-      "illuminance",
-      "battery",
-      "voltage",
-      "linkquality",
-      "motion_sensitivity",
-      "absence_delay_timer",
-      "presence_detection_options"
-    ]
-
-    payload_lines =
-      payload_keys
-      |> Enum.filter(&Map.has_key?(device.payload, &1))
-      |> Enum.map(fn key -> "#{key}: #{format_value(Map.fetch!(device.payload, key))}" end)
-
-    other_field_count = max(map_size(device.payload) - length(payload_lines), 0)
-
-    payload_lines =
-      if other_field_count > 0 do
-        payload_lines ++ ["Other fields: #{other_field_count}"]
-      else
-        payload_lines
-      end
-
     metadata_keys = [
       "description",
       "manufacturer",
@@ -533,15 +504,16 @@ defmodule Zaik.CommandProcessor do
       |> Enum.filter(&(Map.get(device.metadata, &1) not in [nil, ""]))
       |> Enum.map(fn key -> "#{key}: #{format_value(Map.fetch!(device.metadata, key))}" end)
 
-    sections = [
-      "Sensor #{device.friendly_name}",
-      "Updated: #{format_time(device.updated_at)}",
-      "State",
-      Enum.join(payload_lines, "\n"),
+    [
+      summary_sentence(device),
+      measurement_sentence(device.payload),
+      presence_sentence(device.payload),
+      battery_sentence(device.payload),
+      settings_sentence(device.payload),
+      "Sensor: #{device.friendly_name}.",
+      "Updated: #{format_time(device.updated_at)}.",
       metadata_section(metadata_lines)
     ]
-
-    sections
     |> Enum.reject(&(&1 in [nil, ""]))
     |> Enum.join("\n")
   end
@@ -549,33 +521,112 @@ defmodule Zaik.CommandProcessor do
   defp metadata_section([]), do: nil
   defp metadata_section(lines), do: "Metadata\n" <> Enum.join(lines, "\n")
 
+  defp summary_sentence(device) do
+    room = room_label(device.friendly_name)
+    light = device.payload |> number_field("illuminance") |> light_description()
+    temperature = device.payload |> fahrenheit_field("temperature") |> temperature_description()
+
+    descriptors = Enum.reject([light, temperature], &is_nil/1)
+
+    case descriptors do
+      [] -> "#{room} has recent sensor readings."
+      [descriptor] -> "#{room} is #{descriptor}."
+      [first, second | _] -> "#{room} is #{first} and #{second}."
+    end
+  end
+
+  defp measurement_sentence(payload) do
+    measurements =
+      [
+        format_measurement(
+          fahrenheit_field(payload, "temperature"),
+          "temperature",
+          &format_fahrenheit/1
+        ),
+        format_measurement(number_field(payload, "humidity"), "humidity", &format_percent/1),
+        format_measurement(number_field(payload, "illuminance"), "illuminance", &format_lux/1)
+      ]
+      |> Enum.reject(&is_nil/1)
+
+    case measurements do
+      [] -> nil
+      [single] -> "The #{single}."
+      [first, second] -> "The #{first} and #{second}."
+      [first, second, third] -> "The #{first}, #{second}, and #{third}."
+    end
+  end
+
+  defp presence_sentence(payload) do
+    presence = Map.get(payload, "presence")
+    pir = Map.get(payload, "pir_detection")
+    distance = number_field(payload, "target_distance")
+
+    cond do
+      is_boolean(presence) and is_boolean(pir) and not is_nil(distance) ->
+        "Presence is #{presence_phrase(presence)}, PIR motion is #{boolean_phrase(pir)}, and target distance is #{format_number(distance)}."
+
+      is_boolean(presence) ->
+        "Presence is #{presence_phrase(presence)}."
+
+      true ->
+        nil
+    end
+  end
+
+  defp battery_sentence(payload) do
+    battery = number_field(payload, "battery")
+    voltage = number_field(payload, "voltage")
+
+    cond do
+      battery && voltage ->
+        "Battery is #{format_number(battery)}% at #{format_number(voltage)} mV."
+
+      battery ->
+        "Battery is #{format_number(battery)}%."
+
+      voltage ->
+        "Battery voltage is #{format_number(voltage)} mV."
+
+      true ->
+        nil
+    end
+  end
+
+  defp settings_sentence(payload) do
+    sensitivity = Map.get(payload, "motion_sensitivity")
+    delay = number_field(payload, "absence_delay_timer")
+    detection = Map.get(payload, "presence_detection_options")
+
+    parts =
+      [
+        if(sensitivity, do: "motion sensitivity is #{sensitivity}"),
+        if(delay, do: "absence delay is #{format_number(delay)} seconds"),
+        if(detection, do: "presence detection is #{detection}")
+      ]
+      |> Enum.reject(&is_nil/1)
+
+    case parts do
+      [] -> nil
+      [single] -> "Configuration: #{single}."
+      _ -> "Configuration: #{Enum.join(parts, ", ")}."
+    end
+  end
+
   defp device_short_state(device) do
     payload = device.payload
 
-    [
-      field(payload, "presence", &"presence=#{&1}"),
-      field(payload, "temperature", &"temp=#{&1}°C"),
-      field(payload, "humidity", &"humidity=#{&1}%"),
-      field(payload, "illuminance", &"lux=#{&1}"),
-      field(payload, "battery", &"battery=#{&1}%"),
-      field(payload, "linkquality", &"linkquality=#{&1}")
-    ]
+    [summary_sentence(device), measurement_sentence(payload)]
     |> Enum.reject(&is_nil/1)
-    |> case do
-      [] -> "state seen"
-      parts -> Enum.join(parts, " ")
-    end
+    |> Enum.join(" ")
   end
 
   defp sensor_values(payload) do
     [
       field(payload, "presence", &"presence=#{&1}"),
-      field(payload, "pir_detection", &"pir=#{&1}"),
-      field(payload, "target_distance", &"distance=#{&1}"),
-      field(payload, "temperature", &"temp=#{&1}°C"),
-      field(payload, "humidity", &"humidity=#{&1}%"),
-      field(payload, "illuminance", &"lux=#{&1}"),
-      field(payload, "battery", &"battery=#{&1}%")
+      field_value(fahrenheit_field(payload, "temperature"), "temp", &format_fahrenheit/1),
+      field(payload, "humidity", &"humidity=#{format_number(&1)}%"),
+      field(payload, "illuminance", &"illuminance=#{format_number(&1)} lux"),
+      field(payload, "battery", &"battery=#{format_number(&1)}%")
     ]
     |> Enum.reject(&is_nil/1)
     |> case do
@@ -590,6 +641,113 @@ defmodule Zaik.CommandProcessor do
       :error -> nil
     end
   end
+
+  defp field_value(nil, _label, _formatter), do: nil
+  defp field_value(value, label, formatter), do: "#{label}=#{formatter.(value)}"
+
+  defp format_measurement(nil, _name, _formatter), do: nil
+  defp format_measurement(value, name, formatter), do: "#{name} is #{formatter.(value)}"
+
+  defp fahrenheit_field(payload, key) do
+    case number_field(payload, key) do
+      nil -> nil
+      celsius -> celsius * 9 / 5 + 32
+    end
+  end
+
+  defp number_field(payload, key) do
+    case Map.fetch(payload, key) do
+      {:ok, value} -> parse_number(value)
+      :error -> nil
+    end
+  end
+
+  defp parse_number(value) when is_integer(value) or is_float(value), do: value
+
+  defp parse_number(value) when is_binary(value) do
+    case Float.parse(value) do
+      {number, ""} -> number
+      _ -> nil
+    end
+  end
+
+  defp parse_number(_value), do: nil
+
+  defp room_label(friendly_name) do
+    base =
+      friendly_name
+      |> String.replace(~r/[_-]+/, " ")
+      |> String.replace(~r/\b(fp300|presence sensor|multi sensor|sensor|presence)\b/i, "")
+      |> String.replace(~r/\s+/, " ")
+      |> String.trim()
+      |> titleize()
+
+    downcased = String.downcase(base)
+
+    cond do
+      base == "" ->
+        "This room"
+
+      String.ends_with?(downcased, "'s room") ->
+        base |> String.replace_suffix(" Room", " room")
+
+      String.ends_with?(downcased, " room") ->
+        "The " <> String.downcase(base)
+
+      String.match?(base, ~r/^[A-Z][a-z]+$/) ->
+        "#{possessive(base)} room"
+
+      true ->
+        "The #{String.downcase(base)}"
+    end
+  end
+
+  defp titleize(value) do
+    value
+    |> String.split(~r/\s+/, trim: true)
+    |> Enum.map_join(" ", fn word -> String.capitalize(String.downcase(word)) end)
+  end
+
+  defp possessive(value) do
+    if String.ends_with?(String.downcase(value), "s"), do: value <> "'", else: value <> "'s"
+  end
+
+  defp light_description(nil), do: nil
+  defp light_description(lux) when lux >= 300, do: "bright"
+  defp light_description(lux) when lux >= 100, do: "moderately bright"
+  defp light_description(lux) when lux >= 30, do: "dim"
+  defp light_description(_lux), do: "dark"
+
+  defp temperature_description(nil), do: nil
+  defp temperature_description(fahrenheit) when fahrenheit >= 78, do: "hot"
+  defp temperature_description(fahrenheit) when fahrenheit >= 72, do: "warm"
+  defp temperature_description(fahrenheit) when fahrenheit >= 66, do: "comfortable"
+  defp temperature_description(fahrenheit) when fahrenheit >= 60, do: "cool"
+  defp temperature_description(_fahrenheit), do: "cold"
+
+  defp presence_phrase(true), do: "detected"
+  defp presence_phrase(false), do: "not detected"
+
+  defp boolean_phrase(true), do: "active"
+  defp boolean_phrase(false), do: "inactive"
+
+  defp format_fahrenheit(value), do: "#{format_number(value)}°F"
+  defp format_percent(value), do: "#{format_number(value)}%"
+  defp format_lux(value), do: "#{format_number(value)} lux"
+
+  defp format_number(value) when is_integer(value), do: Integer.to_string(value)
+
+  defp format_number(value) when is_float(value) do
+    rounded = Float.round(value, 1)
+
+    if rounded == trunc(rounded) do
+      Integer.to_string(trunc(rounded))
+    else
+      :erlang.float_to_binary(rounded, decimals: 1)
+    end
+  end
+
+  defp format_number(value), do: to_string(value)
 
   defp format_value(nil), do: "-"
   defp format_value(value) when is_binary(value), do: value
