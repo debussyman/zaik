@@ -59,7 +59,11 @@ defmodule Zaik.CommandProcessorTest do
     assert String.starts_with?(sensor, "Lily's room is bright and hot.")
     assert sensor =~ "The temperature is 79.4°F, humidity is 58%, and illuminance is 305 lux."
     assert sensor =~ "Presence is detected, PIR motion is inactive, and target distance is 0."
-    assert sensor =~ "Sensor: Lily presence sensor."
+    refute sensor =~ "Battery is"
+    refute sensor =~ "Configuration:"
+    refute sensor =~ "Sensor:"
+    refute sensor =~ "Metadata"
+    assert sensor |> String.split("\n") |> length() == 3
   end
 
   test "sensor summary handles possessive room names" do

@@ -540,37 +540,14 @@ defmodule Zaik.CommandProcessor do
   end
 
   defp format_device_detail(device) do
-    metadata_keys = [
-      "description",
-      "manufacturer",
-      "model_id",
-      "ieee_address",
-      "power_source",
-      "source",
-      "topic"
-    ]
-
-    metadata_lines =
-      metadata_keys
-      |> Enum.filter(&(Map.get(device.metadata, &1) not in [nil, ""]))
-      |> Enum.map(fn key -> "#{key}: #{format_value(Map.fetch!(device.metadata, key))}" end)
-
     [
       summary_sentence(device),
       measurement_sentence(device.payload),
-      presence_sentence(device.payload),
-      battery_sentence(device.payload),
-      settings_sentence(device.payload),
-      "Sensor: #{device.friendly_name}.",
-      "Updated: #{format_time(device.updated_at)}.",
-      metadata_section(metadata_lines)
+      presence_sentence(device.payload)
     ]
     |> Enum.reject(&(&1 in [nil, ""]))
     |> Enum.join("\n")
   end
-
-  defp metadata_section([]), do: nil
-  defp metadata_section(lines), do: "Metadata\n" <> Enum.join(lines, "\n")
 
   defp format_trend_for_device(device) do
     case Zaik.home_trend(device.friendly_name) do
@@ -730,45 +707,6 @@ defmodule Zaik.CommandProcessor do
 
       true ->
         nil
-    end
-  end
-
-  defp battery_sentence(payload) do
-    battery = number_field(payload, "battery")
-    voltage = number_field(payload, "voltage")
-
-    cond do
-      battery && voltage ->
-        "Battery is #{format_number(battery)}% at #{format_number(voltage)} mV."
-
-      battery ->
-        "Battery is #{format_number(battery)}%."
-
-      voltage ->
-        "Battery voltage is #{format_number(voltage)} mV."
-
-      true ->
-        nil
-    end
-  end
-
-  defp settings_sentence(payload) do
-    sensitivity = Map.get(payload, "motion_sensitivity")
-    delay = number_field(payload, "absence_delay_timer")
-    detection = Map.get(payload, "presence_detection_options")
-
-    parts =
-      [
-        if(sensitivity, do: "motion sensitivity is #{sensitivity}"),
-        if(delay, do: "absence delay is #{format_number(delay)} seconds"),
-        if(detection, do: "presence detection is #{detection}")
-      ]
-      |> Enum.reject(&is_nil/1)
-
-    case parts do
-      [] -> nil
-      [single] -> "Configuration: #{single}."
-      _ -> "Configuration: #{Enum.join(parts, ", ")}."
     end
   end
 
