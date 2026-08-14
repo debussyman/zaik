@@ -13,19 +13,23 @@ defmodule Zaik.LLM.OllamaClient do
     messages = Keyword.get(opts, :messages, [%{role: "user", content: prompt}])
     model = Keyword.get(opts, :model, config().default_model)
 
-    payload = %{
-      model: model,
-      messages: messages,
-      stream: false,
-      keep_alive: Keyword.get(opts, :keep_alive, config().keep_alive),
-      options: %{
-        num_ctx: Keyword.get(opts, :num_ctx, config().num_ctx),
-        num_predict: Keyword.get(opts, :num_predict, config().num_predict),
-        temperature: Keyword.get(opts, :temperature, config().temperature)
+    payload =
+      %{
+        model: model,
+        messages: messages,
+        stream: false,
+        keep_alive: Keyword.get(opts, :keep_alive, config().keep_alive),
+        options: %{
+          num_ctx: Keyword.get(opts, :num_ctx, config().num_ctx),
+          num_predict: Keyword.get(opts, :num_predict, config().num_predict),
+          temperature: Keyword.get(opts, :temperature, config().temperature)
+        }
       }
-    }
+      |> maybe_put(:format, Keyword.get(opts, :format))
+      |> maybe_put(:think, Keyword.get(opts, :think))
 
-    with {:ok, decoded} <- post_json("/api/chat", payload) do
+    with {:ok, decoded} <-
+           post_json("/api/chat", payload, Keyword.get(opts, :timeout_ms, config().timeout_ms)) do
       content = get_in(decoded, ["message", "content"])
 
       if is_binary(content) do
@@ -45,19 +49,27 @@ defmodule Zaik.LLM.OllamaClient do
   def generate(prompt, opts \\ []) when is_binary(prompt) do
     model = Keyword.get(opts, :model, config().default_model)
 
-    payload = %{
-      model: model,
-      prompt: prompt,
-      stream: false,
-      keep_alive: Keyword.get(opts, :keep_alive, config().keep_alive),
-      options: %{
-        num_ctx: Keyword.get(opts, :num_ctx, config().num_ctx),
-        num_predict: Keyword.get(opts, :num_predict, config().num_predict),
-        temperature: Keyword.get(opts, :temperature, config().temperature)
+    payload =
+      %{
+        model: model,
+        prompt: prompt,
+        stream: false,
+        keep_alive: Keyword.get(opts, :keep_alive, config().keep_alive),
+        options: %{
+          num_ctx: Keyword.get(opts, :num_ctx, config().num_ctx),
+          num_predict: Keyword.get(opts, :num_predict, config().num_predict),
+          temperature: Keyword.get(opts, :temperature, config().temperature)
+        }
       }
-    }
+      |> maybe_put(:format, Keyword.get(opts, :format))
+      |> maybe_put(:think, Keyword.get(opts, :think))
 
-    with {:ok, decoded} <- post_json("/api/generate", payload) do
+    with {:ok, decoded} <-
+           post_json(
+             "/api/generate",
+             payload,
+             Keyword.get(opts, :timeout_ms, config().timeout_ms)
+           ) do
       response = Map.get(decoded, "response")
 
       if is_binary(response) do
@@ -98,12 +110,14 @@ defmodule Zaik.LLM.OllamaClient do
     }
   end
 
-  defp post_json(path, payload) do
+  defp maybe_put(map, _key, nil), do: map
+  defp maybe_put(map, key, value), do: Map.put(map, key, value)
+
+  defp post_json(path, payload, timeout) do
     ensure_http_started()
     url = config().ollama_url |> String.trim_trailing("/") |> Kernel.<>(path)
     body = Jason.encode!(payload)
     headers = [{~c"content-type", ~c"application/json"}]
-    timeout = config().timeout_ms
 
     case :httpc.request(
            :post,

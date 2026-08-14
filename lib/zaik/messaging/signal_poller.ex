@@ -129,7 +129,7 @@ defmodule Zaik.Messaging.SignalPoller do
              }
            ) do
       context = %{channel: :signal, sender: message.sender, session_id: session.id}
-      response = Zaik.CommandProcessor.process(message.body, context)
+      response = Zaik.ChatRouter.process(message.body, context)
 
       if respond_to_signal_message?(response) do
         send_result = state.client.send_message(message.sender, response, state.account)

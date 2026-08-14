@@ -20,6 +20,17 @@ config :zaik, :llm,
   keep_alive: "30m",
   temperature: 0.2
 
+config :zaik, :intent,
+  enabled: true,
+  provider: :ollama,
+  model: "qwen3:4b",
+  num_ctx: 2048,
+  num_predict: 160,
+  timeout_ms: 30_000,
+  keep_alive: "30m",
+  temperature: 0.0,
+  confidence_threshold: 0.4
+
 config :zaik, :mqtt,
   enabled: true,
   host: "localhost",

@@ -11,6 +11,7 @@ Zaik is a local-first personal agent harness built with Elixir/OTP. It provides 
 - Context building from session branches/messages
 - Observability snapshots, health summaries, and watchdog reconciliation
 - Signal ingress/replies via linked-device `signal-cli`
+- Natural-language chat routing with a small local Ollama intent model
 - Local Ollama prompt tasks
 - MQTT subscription to Zigbee2MQTT state
 - SQLite-backed home telemetry history in `~/.zaik/home/home.db`
@@ -74,6 +75,13 @@ Zaik.list_sessions()
 Zaik.get_session_context(session_id)
 ```
 
+Natural chat:
+
+```elixir
+Zaik.ChatRouter.process("Is Lily's room cooling off?")
+Zaik.Intent.Parser.parse("Is anyone in Lily's room?")
+```
+
 Home state:
 
 ```elixir
@@ -85,9 +93,24 @@ Zaik.home_readings("lily", limit: 20)
 Zaik.mqtt_status()
 ```
 
-## Text / Signal commands
+## Text / Signal chat
 
-These commands work through `Zaik.CommandProcessor` and through the Signal poller when Signal ingress is enabled:
+Signal ingress goes through `Zaik.ChatRouter`: exact commands still work, and free-form messages are parsed by a small local intent model and dispatched to trusted Elixir handlers.
+
+Natural-language examples:
+
+```text
+How's Lily's room?
+Is Lily's room getting colder?
+Has her room cooled off in the last hour?
+Is anyone in Lily's room right now?
+How bright is it in Lily's room?
+What's going on at home?
+Is Zaik healthy?
+Do a watchdog scan
+```
+
+Explicit commands are still supported through `Zaik.CommandProcessor`:
 
 ```text
 help
@@ -166,14 +189,59 @@ chmod 600 ~/.config/zaik/signal.env
 Defaults are configured for local Ollama:
 
 ```text
-URL:   http://localhost:11434
-Model: qwen3-coder:30b
+URL:          http://localhost:11434
+Prompt model: qwen3-coder:30b
+Intent model: qwen3:4b
+```
+
+The intent model is used only for structured routing. It returns JSON like:
+
+```json
+{
+  "intent": "home_sensor_trend",
+  "device_query": "lily",
+  "fields": ["temperature"],
+  "time_window": "last hour",
+  "confidence": 0.95
+}
+```
+
+Pull the intent model if needed:
+
+```bash
+ollama pull qwen3:4b
+```
+
+Important Ollama settings for the intent parser:
+
+```text
+format: json
+think: false
+temperature: 0
+num_ctx: 2048
+num_predict: 160
+```
+
+Optional environment overrides:
+
+```sh
+ZAIK_INTENT_ENABLED=true
+ZAIK_INTENT_MODEL=qwen3:4b
+ZAIK_INTENT_NUM_CTX=2048
+ZAIK_INTENT_NUM_PREDICT=160
+ZAIK_INTENT_KEEP_ALIVE=30m
 ```
 
 Useful smoke test through Zaik:
 
 ```bash
 nix develop -c mix run -e 'IO.puts(Zaik.CommandProcessor.process("ask say zaik ollama ok"))'
+```
+
+Intent parser smoke test:
+
+```bash
+nix develop -c mix run -e 'IO.inspect(Zaik.Intent.Parser.parse("Is Lily room cooling?"))'
 ```
 
 ### MQTT / Zigbee2MQTT

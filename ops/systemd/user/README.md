@@ -26,6 +26,8 @@ ZAIK_MQTT_HOST=localhost
 ZAIK_MQTT_PORT=1883
 ZAIK_ZIGBEE2MQTT_DATA_DIR=/home/ryan/.local/share/zigbee2mqtt/data
 ZAIK_HOME_HISTORY_DB=/home/ryan/.zaik/home/home.db
+ZAIK_INTENT_MODEL=qwen3:4b
+ZAIK_INTENT_KEEP_ALIVE=30m
 ```
 
 ## Install / update
