@@ -1,60 +1,328 @@
 # Zaik
 
-Zaik is a personal AI agent runtime inspired by OpenClaw, built with Elixir's actor system.
+Zaik is a local-first personal agent harness built with Elixir/OTP. It provides a supervised task runtime, filesystem-backed session memory, Signal chat ingress, local Ollama LLM tasks, and MQTT/Zigbee2MQTT home-state integration.
 
-## Overview
+## Current capabilities
 
-This system demonstrates the core capabilities of an agent-based architecture using Elixir's GenServer and OTP primitives. The architecture includes:
-
-- An agent supervisor that manages multiple agent instances
-- A clock service that provides periodic tick messages
-- A base agent behavior for defining custom agent functionality
-- A hello world agent example
-
-## Features
-
-- Actor-based architecture using GenServer
-- Periodic ticking system for time-based processing
-- Message-passing between agents
-- State persistence for agents
-- Supervisor tree for system management
-
-## Installation
-
-If [available in Hex](https://hex.pm/docs/publish), the package can be installed
-by adding `zaik` to your list of dependencies in `mix.exs`:
-
-```elixir
-def deps do
-  [
-    {:zaik, "~> 0.1.0"}
-  ]
-end
-```
-
-## Usage
-
-```elixir
-# Start the system
-Zaik.start()
-
-# Get a greeting from the hello world agent
-Zaik.hello()
-
-# Send a message to the hello world agent
-Zaik.send_message("Hello, Zaik!")
-
-# Stop the system
-Zaik.stop()
-```
+- OTP supervision tree for the runtime and agents
+- Dynamic supervised task execution with retry/cancel/await APIs
+- In-memory task queue and task store
+- Filesystem-backed session memory under `~/.zaik/sessions`
+- Context building from session branches/messages
+- Observability snapshots, health summaries, and watchdog reconciliation
+- Signal ingress/replies via linked-device `signal-cli`
+- Local Ollama prompt tasks
+- MQTT subscription to Zigbee2MQTT state
+- Home commands for latest Zigbee2MQTT device/sensor state
+- User-level systemd services for long-running Zaik and Zigbee2MQTT
 
 ## Development
 
-To run the application and interact with agents:
+Enter the Nix dev shell:
 
-1. Create a new Elixir project
-2. Add `zaik` as a dependency
-3. Start the application with `Zaik.start()`
+```bash
+nix develop
+```
+
+Run tests:
+
+```bash
+nix develop -c mix test
+```
+
+Run the app in the foreground:
+
+```bash
+nix develop -c mix run --no-halt
+```
+
+Run a one-off command processor smoke test:
+
+```bash
+nix develop -c mix run -e 'IO.puts(Zaik.CommandProcessor.process("health"))'
+```
+
+## Public Elixir API
+
+Task harness:
+
+```elixir
+{:ok, task_id} = Zaik.submit_task(:echo, %{message: "hello"})
+{:ok, result} = Zaik.await_task(task_id)
+Zaik.cancel_task(task_id)
+Zaik.get_task(task_id)
+Zaik.list_tasks(status: :running)
+Zaik.queue_size()
+```
+
+Observability:
+
+```elixir
+Zaik.snapshot()
+Zaik.health()
+Zaik.task_summary()
+Zaik.watchdog_scan()
+Zaik.watchdog_state()
+```
+
+Sessions/context:
+
+```elixir
+Zaik.create_session(scope: "local")
+Zaik.list_sessions()
+Zaik.get_session_context(session_id)
+```
+
+Home state:
+
+```elixir
+Zaik.home_devices()
+Zaik.home_device("lily")
+Zaik.presence_devices()
+Zaik.mqtt_status()
+```
+
+## Text / Signal commands
+
+These commands work through `Zaik.CommandProcessor` and through the Signal poller when Signal ingress is enabled:
+
+```text
+help
+health
+snapshot
+queue
+tasks
+tasks queued|running|failed
+task <task_id>
+sessions
+home
+home devices
+home sensors
+presence
+sensor <device name>
+watchdog
+watchdog scan
+ask <prompt>
+submit llm <prompt>
+submit echo <message>
+echo <message>
+system
+```
+
+Home command examples:
+
+```text
+home
+home devices
+presence
+sensor lily
+```
+
+LLM command example:
+
+```text
+ask summarize the current home state
+```
+
+## Runtime configuration
+
+Main config lives in `config/config.exs`. Runtime-sensitive values should be supplied via environment variables or private local files, not committed.
+
+### Signal
+
+Zaik uses `signal-cli` as a linked Signal device.
+
+Environment variables used by the service:
+
+```sh
+ZAIK_SIGNAL_ENABLED=true
+ZAIK_SIGNAL_MODE=cli
+ZAIK_SIGNAL_ACCOUNT=+15555555555
+ZAIK_SIGNAL_ALLOWED_SENDERS=+15555555555
+ZAIK_SIGNAL_POLL_INTERVAL_MS=5000
+```
+
+For the systemd service, put these in:
+
+```text
+~/.config/zaik/signal.env
+```
+
+Keep it private:
+
+```bash
+chmod 600 ~/.config/zaik/signal.env
+```
+
+### Ollama
+
+Defaults are configured for local Ollama:
+
+```text
+URL:   http://localhost:11434
+Model: qwen3-coder:30b
+```
+
+Useful smoke test through Zaik:
+
+```bash
+nix develop -c mix run -e 'IO.puts(Zaik.CommandProcessor.process("ask say zaik ollama ok"))'
+```
+
+### MQTT / Zigbee2MQTT
+
+Zaik subscribes to Zigbee2MQTT via the Nix-provided Mosquitto CLI tools:
+
+```text
+MQTT broker: localhost:1883
+Base topic:  zigbee2mqtt
+```
+
+Optional environment overrides:
+
+```sh
+ZAIK_MQTT_HOST=localhost
+ZAIK_MQTT_PORT=1883
+ZAIK_ZIGBEE2MQTT_DATA_DIR=/home/ryan/.local/share/zigbee2mqtt/data
+```
+
+Zaik also bootstraps latest Zigbee2MQTT state from:
+
+```text
+~/.local/share/zigbee2mqtt/data/state.json
+~/.local/share/zigbee2mqtt/data/configuration.yaml
+~/.local/share/zigbee2mqtt/data/database.db
+```
+
+This makes `home`, `presence`, and `sensor ...` useful immediately after a Zaik restart even if device state MQTT messages are not retained.
+
+## Runtime services
+
+Service templates are tracked in:
+
+```text
+ops/systemd/user/
+```
+
+Installed local units:
+
+```text
+~/.config/systemd/user/zigbee2mqtt.service
+~/.config/systemd/user/zaik.service
+```
+
+Mosquitto runs as a system service. Zaik and Zigbee2MQTT run as user services.
+
+### Install / update service units
+
+```bash
+mkdir -p ~/.config/systemd/user
+cp ops/systemd/user/zigbee2mqtt.service ~/.config/systemd/user/
+cp ops/systemd/user/zaik.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now zigbee2mqtt.service
+systemctl --user enable --now zaik.service
+```
+
+Start user services at boot before login:
+
+```bash
+sudo loginctl enable-linger "$USER"
+loginctl show-user "$USER" -p Linger
+```
+
+Expected:
+
+```text
+Linger=yes
+```
+
+### Useful commands
+
+Check service status:
+
+```bash
+systemctl --user status zigbee2mqtt.service zaik.service
+systemctl status mosquitto
+```
+
+Follow logs:
+
+```bash
+journalctl --user -u zigbee2mqtt.service -f
+journalctl --user -u zaik.service -f
+journalctl -u mosquitto -f
+```
+
+Restart after code/config changes:
+
+```bash
+systemctl --user restart zaik.service
+systemctl --user restart zigbee2mqtt.service
+```
+
+Stop/start manually:
+
+```bash
+systemctl --user stop zaik.service zigbee2mqtt.service
+systemctl --user start zigbee2mqtt.service zaik.service
+```
+
+Check enabled/active state:
+
+```bash
+systemctl --user is-enabled zigbee2mqtt.service zaik.service
+systemctl --user is-active zigbee2mqtt.service zaik.service
+systemctl is-enabled mosquitto
+systemctl is-active mosquitto
+```
+
+Inspect running processes:
+
+```bash
+ps -ef | grep -E '[m]osquitto|[z]igbee2mqtt|[p]npm start|[b]eam.smp|[m]osquitto_sub'
+```
+
+Zigbee2MQTT frontend:
+
+```text
+http://192.168.1.1:8081/
+```
+
+MQTT topic watch:
+
+```bash
+mosquitto_sub -t 'zigbee2mqtt/#' -v
+```
+
+## Project layout
+
+```text
+lib/zaik.ex                         Public API
+lib/zaik/application.ex             OTP supervision tree
+lib/zaik/task*.ex                   Task model/store/queue/watchdog
+lib/zaik/dispatcher.ex              Dynamic task dispatcher
+lib/zaik/agent/*.ex                 Task runner and workloads
+lib/zaik/session*.ex                Filesystem-backed sessions
+lib/zaik/context_builder.ex         Session context assembly
+lib/zaik/command_processor.ex       Text/Signal command routing
+lib/zaik/messaging/*.ex             Signal CLI ingress/replies
+lib/zaik/llm/*.ex                   Ollama client/workload
+lib/zaik/mqtt/*.ex                  MQTT subscription wrapper
+lib/zaik/home/*.ex                  Zigbee2MQTT state parsing/store/bootstrap
+ops/systemd/user/*.service          User service templates
+```
+
+## Git hygiene
+
+Local development/runtime files should stay untracked:
+
+```text
+.envrc
+.direnv/
+~/.config/zaik/signal.env
+~/.local/share/zigbee2mqtt/
+```
 
 ## License
 

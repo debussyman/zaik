@@ -27,7 +27,7 @@ ZAIK_MQTT_PORT=1883
 ZAIK_ZIGBEE2MQTT_DATA_DIR=/home/ryan/.local/share/zigbee2mqtt/data
 ```
 
-## Install
+## Install / update
 
 ```sh
 mkdir -p ~/.config/systemd/user
@@ -41,13 +41,64 @@ systemctl --user enable --now zaik.service
 To start at boot without an interactive login, enable lingering:
 
 ```sh
-loginctl enable-linger "$USER"
+sudo loginctl enable-linger "$USER"
+loginctl show-user "$USER" -p Linger
 ```
 
-## Operate
+Expected:
+
+```text
+Linger=yes
+```
+
+## Useful commands
+
+Check service status:
 
 ```sh
 systemctl --user status zigbee2mqtt.service zaik.service
+systemctl status mosquitto
+```
+
+Follow logs:
+
+```sh
 journalctl --user -u zigbee2mqtt.service -f
 journalctl --user -u zaik.service -f
+journalctl -u mosquitto -f
+```
+
+Restart after code/config changes:
+
+```sh
+systemctl --user restart zaik.service
+systemctl --user restart zigbee2mqtt.service
+```
+
+Stop/start manually:
+
+```sh
+systemctl --user stop zaik.service zigbee2mqtt.service
+systemctl --user start zigbee2mqtt.service zaik.service
+```
+
+Check enabled/active state:
+
+```sh
+systemctl --user is-enabled zigbee2mqtt.service zaik.service
+systemctl --user is-active zigbee2mqtt.service zaik.service
+systemctl is-enabled mosquitto
+systemctl is-active mosquitto
+```
+
+Inspect relevant processes:
+
+```sh
+ps -ef | grep -E '[m]osquitto|[z]igbee2mqtt|[p]npm start|[b]eam.smp|[m]osquitto_sub'
+```
+
+Watch raw Zigbee2MQTT topics:
+
+```sh
+mosquitto_sub -t 'zigbee2mqtt/#' -v
 ```
