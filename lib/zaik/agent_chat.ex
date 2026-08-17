@@ -21,13 +21,13 @@ defmodule Zaik.AgentChat do
         System.get_env("ZAIK_AGENT_MODEL") || Keyword.get(configured, :model, @default_model),
       num_ctx: env_integer("ZAIK_AGENT_NUM_CTX") || Keyword.get(configured, :num_ctx, 4096),
       num_predict:
-        env_integer("ZAIK_AGENT_NUM_PREDICT") || Keyword.get(configured, :num_predict, 700),
+        env_integer("ZAIK_AGENT_NUM_PREDICT") || Keyword.get(configured, :num_predict, 900),
       timeout_ms:
         env_integer("ZAIK_AGENT_TIMEOUT_MS") || Keyword.get(configured, :timeout_ms, 45_000),
       keep_alive:
         System.get_env("ZAIK_AGENT_KEEP_ALIVE") || Keyword.get(configured, :keep_alive, "30m"),
       temperature:
-        env_float("ZAIK_AGENT_TEMPERATURE") || Keyword.get(configured, :temperature, 0.1),
+        env_float("ZAIK_AGENT_TEMPERATURE") || Keyword.get(configured, :temperature, 0.0),
       max_tool_calls:
         env_integer("ZAIK_AGENT_MAX_TOOL_CALLS") ||
           Keyword.get(configured, :max_tool_calls, @default_max_tool_calls)
@@ -100,14 +100,14 @@ defmodule Zaik.AgentChat do
 
     tool_message = %{
       role: "user",
-      content:
-        Jason.encode!(%{
-          type: "tool_result",
-          tool: "sql_query",
-          database: db,
-          query: query,
-          result: normalize_tool_result(tool_result)
-        })
+      content: """
+      SQL TOOL RESULT
+      database: #{db}
+      query: #{query}
+      result_json: #{Jason.encode!(normalize_tool_result(tool_result))}
+
+      Use this SQL TOOL RESULT to answer the user's question. Your next response must be JSON with type "final" unless result_json has ok=false and you need one corrected SQL query.
+      """
     }
 
     assistant_message = %{
@@ -115,41 +115,72 @@ defmodule Zaik.AgentChat do
       content: Jason.encode!(%{type: "tool_call", tool: "sql_query", args: args})
     }
 
-    loop(client, sql_tool, messages ++ [assistant_message, tool_message], cfg, tool_count + 1)
+    final_instruction = %{
+      role: "system",
+      content:
+        "You have received the tool_result. Your next response MUST be JSON with type \"final\" and an answer grounded only in that tool_result. Do not call another tool unless the tool_result contains an error."
+    }
+
+    loop(
+      client,
+      sql_tool,
+      messages ++ [assistant_message, tool_message, final_instruction],
+      cfg,
+      tool_count + 1
+    )
   end
 
   defp base_messages(text, context) do
     [
       %{role: "system", content: system_prompt()},
-      %{role: "user", content: conversation_context(context)},
+      %{role: "system", content: conversation_context(context)},
       %{role: "user", content: text}
     ]
   end
 
-  defp system_prompt do
+  def system_prompt do
     """
-    You are Zaik, a read-only conversational home and operations analyst.
+    You are Zaik, a read-only conversational home and operations analyst with one tool: sql_query.
 
-    You may answer directly only when the answer is obvious from the conversation.
-    For facts about the home, tasks, sessions, messages, LLM calls, or watchdog
-    state, call the sql_query tool first and answer only from tool results.
+    CRITICAL OUTPUT CONTRACT:
+    - Return exactly one valid JSON object and nothing else.
+    - The top-level JSON key "type" MUST be either "tool_call" or "final".
+    - NEVER output type "tool_result" or "conversation_context". Those are sent to you by Elixir only.
+    - Do not invent rows, readings, timestamps, messages, or task records.
+    - Do not echo the user message as a key.
+    - Do not include markdown, comments, code fences, or trailing text.
+    - If you need data, return a tool_call. If Elixir has already sent you a tool_result and it is sufficient, return final.
 
-    You cannot control devices, write files, execute shell commands, publish MQTT,
-    or mutate databases. If asked to control something, say confirmation/control
-    tools are not enabled yet.
+    DECISION POLICY:
+    - Questions about what users asked, chat history, sessions, tasks, failures, LLM calls, or watchdog scans MUST call sql_query with database "ops".
+    - For questions like "what have we asked you today?", query zaik_messages in database "ops". There is no home_messages table.
+    - Questions about Lily's room, home sensors, temperature, humidity, brightness, presence, or historical readings MUST call sql_query with database "home".
+    - You may answer directly only for pure conversation or when the answer is already in a prior tool_result.
+    - You cannot control devices, write files, execute shell commands, publish MQTT, or mutate databases. If asked to control something, return final explaining confirmation/control tools are not enabled yet.
 
-    Return ONLY valid JSON in one of these shapes:
-
+    VALID JSON SHAPES:
     {"type":"tool_call","tool":"sql_query","args":{"database":"home","query":"SELECT ...","limit":200}}
     {"type":"tool_call","tool":"sql_query","args":{"database":"ops","query":"SELECT ...","limit":200}}
-    {"type":"final","answer":"natural language answer"}
+    {"type":"final","answer":"natural language answer grounded in tool results"}
 
-    #{Zaik.Analytics.SQLTool.schema(:home)}
+    EXAMPLES:
+    User: what have we asked you today?
+    Assistant: {"type":"tool_call","tool":"sql_query","args":{"database":"ops","query":"SELECT created_at, channel, sender_id, chat_id, content FROM zaik_messages WHERE role = 'user' AND substr(created_at, 1, 10) = date('now') ORDER BY created_at ASC LIMIT 20","limit":20}}
+
+    User: what tasks failed recently?
+    Assistant: {"type":"tool_call","tool":"sql_query","args":{"database":"ops","query":"SELECT id, type, status, completed_at, error_json FROM zaik_tasks WHERE status IN ('failed', 'timed_out', 'cancelled') ORDER BY COALESCE(completed_at, updated_at) DESC LIMIT 10","limit":10}}
+
+    User: has Lily's room been warm recently?
+    Assistant: {"type":"tool_call","tool":"sql_query","args":{"database":"home","query":"SELECT recorded_at, temperature_f, humidity, illuminance, presence FROM home_readings WHERE lower(device_name) LIKE '%lily%' ORDER BY recorded_at DESC LIMIT 20","limit":20}}
+
+    When Elixir sends a later user message beginning with "SQL TOOL RESULT", summarize only the rows returned by that SQL TOOL RESULT. Do not output tool_result yourself.
 
     #{Zaik.Analytics.SQLTool.schema(:ops)}
 
-    SQL rules: use only SELECT or WITH SELECT. Query only the documented views.
-    Prefer small LIMITs. Use datetime('now', '-1 hour') style time windows when useful.
+    #{Zaik.Analytics.SQLTool.schema(:home)}
+
+    SQL rules: use only SELECT or WITH SELECT. Query only the documented views. Never invent table/view names.
+    Prefer small LIMITs. Use date('now') for today and datetime('now', '-1 hour') style windows when useful.
     For Lily's room, match device_name with lower(device_name) LIKE '%lily%'.
     Boolean fields are 1=true, 0=false.
     """
@@ -163,33 +194,116 @@ defmodule Zaik.AgentChat do
         _ -> []
       end
 
-    Jason.encode!(%{
-      type: "conversation_context",
-      session_id: session_id,
-      recent_messages: Enum.map(recent, &summarize_entry/1)
-    })
+    format_conversation_context(session_id, recent)
   rescue
-    _ -> Jason.encode!(%{type: "conversation_context", recent_messages: []})
+    _ -> "Conversation context: no recent messages."
   catch
-    :exit, _ -> Jason.encode!(%{type: "conversation_context", recent_messages: []})
+    :exit, _ -> "Conversation context: no recent messages."
   end
 
   defp conversation_context(context) do
-    Jason.encode!(%{type: "conversation_context", context: context, recent_messages: []})
+    "Conversation context: #{inspect(context, limit: 20)}. No recent messages were loaded."
   end
 
-  defp summarize_entry(%{"type" => "message", "role" => role, "content" => content}) do
-    %{role: role, content: content}
+  defp format_conversation_context(_session_id, []),
+    do: "Conversation context: no recent messages."
+
+  defp format_conversation_context(session_id, entries) do
+    lines =
+      entries
+      |> Enum.map(&summarize_entry/1)
+      |> Enum.map(fn {role, content} -> "- #{role}: #{content}" end)
+
+    Enum.join(["Conversation context for session #{session_id}:" | lines], "\n")
   end
+
+  defp summarize_entry(%{"type" => "message", "role" => role, "content" => content}),
+    do: {role, content}
 
   defp summarize_entry(entry),
-    do: %{type: entry["type"], content: entry["content"] || entry["summary"]}
+    do: {entry["type"] || "entry", entry["content"] || entry["summary"] || ""}
 
   defp decode_action(response) when is_binary(response) do
-    response
-    |> String.trim()
-    |> strip_code_fence()
-    |> Jason.decode()
+    with {:ok, decoded} <-
+           response
+           |> String.trim()
+           |> strip_code_fence()
+           |> Jason.decode() do
+      {:ok, normalize_action(decoded)}
+    end
+  end
+
+  defp normalize_action(%{"type" => "final", "answer" => answer} = action) when is_binary(answer),
+    do: action
+
+  defp normalize_action(%{"type" => "final", "text" => text}) when is_binary(text),
+    do: %{"type" => "final", "answer" => text}
+
+  defp normalize_action(%{"type" => "conversation_message", "content" => content})
+       when is_binary(content),
+       do: %{"type" => "final", "answer" => content}
+
+  defp normalize_action(%{"role" => "assistant", "content" => content}) when is_binary(content),
+    do: %{"type" => "final", "answer" => content}
+
+  defp normalize_action(%{"type" => type, "args" => args} = action)
+       when type in ["tool_call", "tool_request"] and is_map(args) do
+    tool = Map.get(action, "tool") || Map.get(action, "tool_name") || Map.get(action, "name")
+    normalize_tool_call(tool, args)
+  end
+
+  defp normalize_action(%{"type" => type, "arguments" => args} = action)
+       when type in ["tool_call", "tool_request"] and is_map(args) do
+    tool = Map.get(action, "tool") || Map.get(action, "tool_name") || Map.get(action, "name")
+    normalize_tool_call(tool, args)
+  end
+
+  defp normalize_action(%{"name" => "tool_call", "arguments" => args}) when is_map(args),
+    do: normalize_tool_call("sql_query", args)
+
+  defp normalize_action(%{"tool" => tool, "query" => query} = action) when is_binary(query),
+    do: normalize_tool_call(tool, action)
+
+  defp normalize_action(%{"tool_name" => tool, "query" => query} = action) when is_binary(query),
+    do: normalize_tool_call(tool, action)
+
+  defp normalize_action(%{"query" => query} = action) when is_binary(query),
+    do: normalize_tool_call("sql_query", action)
+
+  defp normalize_action(action), do: action
+
+  defp normalize_tool_call(tool, args) when is_map(args) do
+    query = Map.get(args, "query")
+
+    if sql_tool_name?(tool) and is_binary(query) do
+      %{
+        "type" => "tool_call",
+        "tool" => "sql_query",
+        "args" => %{
+          "database" => infer_database(query, Map.get(args, "database")),
+          "query" => query,
+          "limit" => Map.get(args, "limit", 200)
+        }
+      }
+    else
+      %{"type" => "invalid_tool_call", "tool" => tool, "args" => args}
+    end
+  end
+
+  defp sql_tool_name?(tool) when tool in ["sql_query", "sql_database_query", "query_database"],
+    do: true
+
+  defp sql_tool_name?(_tool), do: false
+
+  defp infer_database(query, requested) do
+    downcased = String.downcase(query)
+
+    cond do
+      String.contains?(downcased, "zaik_") -> "ops"
+      String.contains?(downcased, "home_") -> "home"
+      requested in ["ops", "home"] -> requested
+      true -> "ops"
+    end
   end
 
   defp strip_code_fence("```json" <> rest),

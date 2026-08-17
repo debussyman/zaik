@@ -6,7 +6,7 @@ defmodule Zaik.AgentChatTest do
       messages = Keyword.fetch!(opts, :messages)
 
       response =
-        if Enum.any?(messages, &String.contains?(&1.content, "tool_result")) do
+        if Enum.any?(messages, &tool_result_message?/1) do
           Jason.encode!(%{
             "type" => "final",
             "answer" => "Lily's room has been warm based on the readings."
@@ -26,6 +26,13 @@ defmodule Zaik.AgentChatTest do
 
       {:ok, %{model: "fake", response: response, done: true, raw: %{}}}
     end
+
+    defp tool_result_message?(%{role: "user", content: content}) do
+      String.starts_with?(content, "SQL TOOL RESULT") or
+        String.starts_with?(String.trim_leading(content), "SQL TOOL RESULT")
+    end
+
+    defp tool_result_message?(_message), do: false
   end
 
   defmodule FakeSQLTool do

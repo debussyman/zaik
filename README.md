@@ -342,7 +342,21 @@ zaik_llm_calls
 zaik_watchdog_scans
 ```
 
-The model may generate SQL for these views only through `Zaik.Analytics.SQLTool`; Elixir validates SELECT-only access, denies mutating keywords, restricts views, and caps rows.
+The model may generate SQL for these views only through `Zaik.Analytics.SQLTool`; Elixir validates SELECT-only access, denies mutating keywords, restricts views, and caps rows. Common operational questions are intentionally handled through the same model-driven tool loop rather than hardcoded answer paths.
+
+Live agent evals exercise tool planning against a canned SQL tool:
+
+```bash
+nix develop -c mix zaik.agent_eval --timeout-ms 120000
+```
+
+Current eval cases cover:
+
+```text
+what have we asked you today?
+what tasks failed recently?
+has Lily's room been warm recently?
+```
 
 Optional environment overrides:
 
@@ -351,6 +365,8 @@ ZAIK_TELEMETRY_ENABLED=true
 ZAIK_TELEMETRY_DB=/home/ryan/.zaik/zaik.db
 ZAIK_AGENT_CHAT_ENABLED=true
 ZAIK_AGENT_MODEL=qwen3-coder:30b
+ZAIK_AGENT_NUM_PREDICT=900
+ZAIK_AGENT_TEMPERATURE=0
 ZAIK_AGENT_MAX_TOOL_CALLS=3
 ```
 

@@ -35,10 +35,10 @@ config :zaik, :agent_chat,
   enabled: true,
   model: "qwen3-coder:30b",
   num_ctx: 4096,
-  num_predict: 700,
+  num_predict: 900,
   timeout_ms: 45_000,
   keep_alive: "30m",
-  temperature: 0.1,
+  temperature: 0.0,
   max_tool_calls: 3
 
 config :zaik, :mqtt,
