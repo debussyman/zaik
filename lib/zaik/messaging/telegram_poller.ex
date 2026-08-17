@@ -228,8 +228,22 @@ defmodule Zaik.Messaging.TelegramPoller do
     downcased = String.downcase(trimmed)
     trigger = trigger |> to_string() |> String.trim() |> String.downcase()
     mention = bot_username && "@" <> String.downcase(String.trim(bot_username))
+    slash_trigger = if trigger == "", do: nil, else: "/" <> trigger
+    slash_mention = if mention && trigger != "", do: slash_trigger <> mention, else: nil
 
     cond do
+      slash_mention && String.starts_with?(downcased, slash_mention) ->
+        {:ok,
+         trimmed
+         |> String.slice(String.length(slash_mention)..-1//1)
+         |> strip_addressing_separator()}
+
+      slash_trigger && String.starts_with?(downcased, slash_trigger) ->
+        {:ok,
+         trimmed
+         |> String.slice(String.length(slash_trigger)..-1//1)
+         |> strip_addressing_separator()}
+
       mention && String.starts_with?(downcased, mention) ->
         {:ok,
          trimmed

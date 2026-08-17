@@ -77,6 +77,18 @@ defmodule Zaik.Messaging.TelegramPollerTest do
                state
              )
 
+    assert {:ok, "How's Lily's room?"} =
+             Zaik.Messaging.TelegramPoller.addressed_text(
+               %{chat_type: "group", text: "/zaik How's Lily's room?"},
+               state
+             )
+
+    assert {:ok, "How's Lily's room?"} =
+             Zaik.Messaging.TelegramPoller.addressed_text(
+               %{chat_type: "supergroup", text: "/zaik@zaik_bot How's Lily's room?"},
+               state
+             )
+
     assert :ignore =
              Zaik.Messaging.TelegramPoller.addressed_text(
                %{chat_type: "group", text: "normal conversation"},
