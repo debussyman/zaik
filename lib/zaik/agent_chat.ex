@@ -105,8 +105,6 @@ defmodule Zaik.AgentChat do
       database: #{db}
       query: #{query}
       result_json: #{Jason.encode!(normalize_tool_result(tool_result))}
-
-      Use this SQL TOOL RESULT to answer the user's question. Your next response must be JSON with type "final" unless result_json has ok=false and you need one corrected SQL query.
       """
     }
 
@@ -115,25 +113,66 @@ defmodule Zaik.AgentChat do
       content: Jason.encode!(%{type: "tool_call", tool: "sql_query", args: args})
     }
 
-    final_instruction = %{
-      role: "system",
-      content:
-        "You have received the tool_result. Your next response MUST be JSON with type \"final\" and an answer grounded only in that tool_result. Do not call another tool unless the tool_result contains an error."
-    }
+    case tool_result do
+      {:ok, _result} ->
+        final_answer(client, messages ++ [assistant_message, tool_message], cfg)
 
-    loop(
-      client,
-      sql_tool,
-      messages ++ [assistant_message, tool_message, final_instruction],
-      cfg,
-      tool_count + 1
-    )
+      {:error, _reason} ->
+        correction_instruction = %{
+          role: "system",
+          content:
+            "The SQL TOOL RESULT contains an error. Return one corrected sql_query tool_call JSON object."
+        }
+
+        loop(
+          client,
+          sql_tool,
+          messages ++ [assistant_message, tool_message, correction_instruction],
+          cfg,
+          tool_count + 1
+        )
+    end
+  end
+
+  defp final_answer(client, messages, cfg) do
+    final_messages =
+      [
+        %{
+          role: "system",
+          content: """
+          FINAL ANSWER MODE.
+          You have already received SQL TOOL RESULT data.
+          Return exactly one JSON object: {"type":"final","answer":"..."}
+          Answer only from the SQL TOOL RESULT rows. Do not call tools. Do not output raw JSON rows unless the user asks for raw data.
+          """
+        }
+      ] ++ messages
+
+    with {:ok, result} <-
+           client.chat("",
+             messages: final_messages,
+             model: cfg.model,
+             num_ctx: cfg.num_ctx,
+             num_predict: cfg.num_predict,
+             temperature: cfg.temperature,
+             keep_alive: cfg.keep_alive,
+             format: "json",
+             think: false,
+             timeout_ms: cfg.timeout_ms,
+             purpose: :agent_chat_final
+           ),
+         {:ok, %{"type" => "final", "answer" => answer}} when is_binary(answer) <-
+           decode_action(result.response) do
+      {:ok, String.trim(answer)}
+    else
+      {:ok, action} -> {:error, {:invalid_agent_action, action}}
+      {:error, reason} -> {:error, reason}
+    end
   end
 
   defp base_messages(text, context) do
     [
-      %{role: "system", content: system_prompt()},
-      %{role: "system", content: conversation_context(context)},
+      %{role: "system", content: planner_prompt(context, text)},
       %{role: "user", content: text}
     ]
   end
@@ -153,7 +192,12 @@ defmodule Zaik.AgentChat do
 
     DECISION POLICY:
     - Questions about what users asked, chat history, sessions, tasks, failures, LLM calls, or watchdog scans MUST call sql_query with database "ops".
-    - For questions like "what have we asked you today?", query zaik_messages in database "ops". There is no home_messages table.
+    - If the prompt asks what I/we/users asked Zaik and does not explicitly mention tasks/jobs/failures, zaik_messages is mandatory and zaik_tasks is wrong. There is no home_messages table.
+    - Use the CURRENT REQUEST CONTEXT message to resolve identity:
+      - "I", "me", "my" means the current sender_id. For privacy, when sender_id is known, I/me/my message-history queries MUST filter by sender_id.
+      - "we", "us", "this chat", "this group" means the current chat_id/conversation. For privacy, when chat_id is known, we/us/group message-history queries MUST filter by chat_id.
+      - "you" means Zaik. For "what did we/I ask you", retrieve user-authored messages with role = 'user'.
+    - In zaik_messages, role is the user/agent discriminator. sender_id is a real Telegram/Signal sender id, never the word 'user'. channel is a real channel like 'telegram' or 'signal', never 'main'.
     - Questions about Lily's room, home sensors, temperature, humidity, brightness, presence, or historical readings MUST call sql_query with database "home".
     - You may answer directly only for pure conversation or when the answer is already in a prior tool_result.
     - You cannot control devices, write files, execute shell commands, publish MQTT, or mutate databases. If asked to control something, return final explaining confirmation/control tools are not enabled yet.
@@ -164,9 +208,6 @@ defmodule Zaik.AgentChat do
     {"type":"final","answer":"natural language answer grounded in tool results"}
 
     EXAMPLES:
-    User: what have we asked you today?
-    Assistant: {"type":"tool_call","tool":"sql_query","args":{"database":"ops","query":"SELECT created_at, channel, sender_id, chat_id, content FROM zaik_messages WHERE role = 'user' AND substr(created_at, 1, 10) = date('now') ORDER BY created_at ASC LIMIT 20","limit":20}}
-
     User: what tasks failed recently?
     Assistant: {"type":"tool_call","tool":"sql_query","args":{"database":"ops","query":"SELECT id, type, status, completed_at, error_json FROM zaik_tasks WHERE status IN ('failed', 'timed_out', 'cancelled') ORDER BY COALESCE(completed_at, updated_at) DESC LIMIT 10","limit":10}}
 
@@ -187,34 +228,88 @@ defmodule Zaik.AgentChat do
     |> String.trim()
   end
 
-  defp conversation_context(%{session_id: session_id}) when is_binary(session_id) do
+  defp planner_prompt(context, text) do
+    system_prompt() <>
+      "\n\n" <>
+      conversation_context(context) <>
+      "\n\n" <>
+      prompt_identity_hint(context, text) <>
+      "\n\nPLANNER MODE: If the user asks about data in home or ops memory, return a sql_query tool_call. Do not answer from memory or examples."
+  end
+
+  defp prompt_identity_hint(context, text) do
+    normalized = String.downcase(text || "")
+    sender_id = context_value(context, :sender_id) || context_value(context, :sender)
+    chat_id = context_value(context, :chat_id)
+
+    cond do
+      Regex.match?(~r/\b(we|us|our|this chat|this group)\b/, normalized) and not is_nil(chat_id) ->
+        "USER PROMPT IDENTITY HINT: This prompt uses WE/US/OUR/THIS CHAT. For zaik_messages SQL, use role = 'user' AND chat_id = #{sql_literal_hint(chat_id)}. Do not use sender_id alone for this prompt."
+
+      Regex.match?(~r/\b(i|me|my)\b/, normalized) and not is_nil(sender_id) ->
+        "USER PROMPT IDENTITY HINT: This prompt uses I/ME/MY. For zaik_messages SQL, use role = 'user' AND sender_id = #{sql_literal_hint(sender_id)}."
+
+      true ->
+        "USER PROMPT IDENTITY HINT: No specific sender/chat pronoun override."
+    end
+  end
+
+  defp conversation_context(context) when is_map(context) do
+    session_id = context_value(context, :session_id)
+
     recent =
-      case Zaik.MemoryStore.recent(session_id, 8) do
-        {:ok, entries} -> entries
-        _ -> []
+      if is_binary(session_id) do
+        case Zaik.MemoryStore.recent(session_id, 8) do
+          {:ok, entries} -> entries
+          _ -> []
+        end
+      else
+        []
       end
 
-    format_conversation_context(session_id, recent)
+    format_request_context(context, recent)
   rescue
-    _ -> "Conversation context: no recent messages."
+    _ -> format_request_context(context, [])
   catch
-    :exit, _ -> "Conversation context: no recent messages."
+    :exit, _ -> format_request_context(context, [])
   end
 
-  defp conversation_context(context) do
-    "Conversation context: #{inspect(context, limit: 20)}. No recent messages were loaded."
+  defp conversation_context(_context), do: format_request_context(%{}, [])
+
+  defp format_request_context(context, entries) do
+    channel = context_value(context, :channel)
+    sender_id = context_value(context, :sender_id) || context_value(context, :sender)
+    chat_id = context_value(context, :chat_id)
+    chat_type = context_value(context, :chat_type)
+    session_id = context_value(context, :session_id)
+
+    identity_lines = [
+      "CURRENT REQUEST CONTEXT:",
+      "channel: #{format_context_value(channel)}",
+      "sender_id: #{format_context_value(sender_id)}",
+      "chat_id: #{format_context_value(chat_id)}",
+      "chat_type: #{format_context_value(chat_type)}",
+      "session_id: #{format_context_value(session_id)}",
+      "",
+      "Identity SQL rules:",
+      "- For questions using I/me/my, filter zaik_messages with role = 'user' and sender_id = #{sql_literal_hint(sender_id)} when sender_id is known.",
+      "- For questions using we/us/this chat/this group, filter zaik_messages with role = 'user' and chat_id = #{sql_literal_hint(chat_id)} when chat_id is known. In group chats, WE means chat_id, not sender_id; using sender_id alone for WE is wrong.",
+      "- For questions about what users asked Zaik, use role = 'user'. For what Zaik answered, use role = 'agent'.",
+      "- Never use sender_id = 'user', channel = 'main', or scope = 'user'."
+    ]
+
+    recent_lines =
+      case entries do
+        [] -> ["", "Recent session messages: none loaded."]
+        _ -> ["", "Recent session messages:" | Enum.map(entries, &format_recent_entry/1)]
+      end
+
+    Enum.join(identity_lines ++ recent_lines, "\n")
   end
 
-  defp format_conversation_context(_session_id, []),
-    do: "Conversation context: no recent messages."
-
-  defp format_conversation_context(session_id, entries) do
-    lines =
-      entries
-      |> Enum.map(&summarize_entry/1)
-      |> Enum.map(fn {role, content} -> "- #{role}: #{content}" end)
-
-    Enum.join(["Conversation context for session #{session_id}:" | lines], "\n")
+  defp format_recent_entry(entry) do
+    {role, content} = summarize_entry(entry)
+    "- #{role}: #{content}"
   end
 
   defp summarize_entry(%{"type" => "message", "role" => role, "content" => content}),
@@ -222,6 +317,19 @@ defmodule Zaik.AgentChat do
 
   defp summarize_entry(entry),
     do: {entry["type"] || "entry", entry["content"] || entry["summary"] || ""}
+
+  defp context_value(context, key) when is_map(context) do
+    Map.get(context, key) || Map.get(context, to_string(key))
+  end
+
+  defp format_context_value(nil), do: "unknown"
+  defp format_context_value(value) when is_atom(value), do: to_string(value)
+  defp format_context_value(value), do: to_string(value)
+
+  defp sql_literal_hint(nil), do: "<unknown>"
+  defp sql_literal_hint(value), do: "'#{escape_sql_literal(to_string(value))}'"
+
+  defp escape_sql_literal(value), do: String.replace(value, "'", "''")
 
   defp decode_action(response) when is_binary(response) do
     with {:ok, decoded} <-
@@ -238,6 +346,12 @@ defmodule Zaik.AgentChat do
 
   defp normalize_action(%{"type" => "final", "text" => text}) when is_binary(text),
     do: %{"type" => "final", "answer" => text}
+
+  defp normalize_action(%{"type" => "final", "content" => content}) when is_binary(content),
+    do: %{"type" => "final", "answer" => content}
+
+  defp normalize_action(%{"type" => "final", "response" => response}) when is_binary(response),
+    do: %{"type" => "final", "answer" => response}
 
   defp normalize_action(%{"type" => "conversation_message", "content" => content})
        when is_binary(content),
@@ -258,8 +372,15 @@ defmodule Zaik.AgentChat do
     normalize_tool_call(tool, args)
   end
 
-  defp normalize_action(%{"name" => "tool_call", "arguments" => args}) when is_map(args),
-    do: normalize_tool_call("sql_query", args)
+  defp normalize_action(%{"name" => tool, "arguments" => args}) when is_map(args),
+    do: normalize_tool_call(tool, args)
+
+  defp normalize_action(%{"tool_call" => %{"name" => tool, "arguments" => args}})
+       when is_map(args),
+       do: normalize_tool_call(tool, args)
+
+  defp normalize_action(%{"tool_call" => %{"tool" => tool, "args" => args}}) when is_map(args),
+    do: normalize_tool_call(tool, args)
 
   defp normalize_action(%{"tool" => tool, "query" => query} = action) when is_binary(query),
     do: normalize_tool_call(tool, action)
@@ -269,6 +390,9 @@ defmodule Zaik.AgentChat do
 
   defp normalize_action(%{"query" => query} = action) when is_binary(query),
     do: normalize_tool_call("sql_query", action)
+
+  defp normalize_action(%{"sql_query" => query}) when is_binary(query),
+    do: normalize_tool_call("sql_query", %{"query" => query})
 
   defp normalize_action(action), do: action
 

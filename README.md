@@ -344,6 +344,14 @@ zaik_watchdog_scans
 
 The model may generate SQL for these views only through `Zaik.Analytics.SQLTool`; Elixir validates SELECT-only access, denies mutating keywords, restricts views, and caps rows. Common operational questions are intentionally handled through the same model-driven tool loop rather than hardcoded answer paths.
 
+Agent prompts include current request identity so SQL can distinguish:
+
+```text
+I/me/my  -> current sender_id
+we/us    -> current chat_id / group conversation
+you      -> Zaik; use role='user' for things users asked Zaik
+```
+
 Live agent evals exercise tool planning against a canned SQL tool:
 
 ```bash
