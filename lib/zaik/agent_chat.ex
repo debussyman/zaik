@@ -9,7 +9,7 @@ defmodule Zaik.AgentChat do
 
   require Logger
 
-  @default_model "qwen3:4b"
+  @default_model "qwen3-coder:30b"
   @default_max_tool_calls 3
 
   def config do

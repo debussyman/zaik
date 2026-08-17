@@ -243,7 +243,9 @@ Prompt model: qwen3-coder:30b
 Intent model: qwen3:4b
 ```
 
-The intent model is used only for structured routing. It returns JSON like:
+The intent model is used only for lightweight structured routing. The separate conversational agent fallback defaults to `qwen3-coder:30b` because tool-planning JSON is more demanding than simple intent classification.
+
+The intent parser returns JSON like:
 
 ```json
 {
@@ -348,7 +350,7 @@ Optional environment overrides:
 ZAIK_TELEMETRY_ENABLED=true
 ZAIK_TELEMETRY_DB=/home/ryan/.zaik/zaik.db
 ZAIK_AGENT_CHAT_ENABLED=true
-ZAIK_AGENT_MODEL=qwen3:4b
+ZAIK_AGENT_MODEL=qwen3-coder:30b
 ZAIK_AGENT_MAX_TOOL_CALLS=3
 ```
 

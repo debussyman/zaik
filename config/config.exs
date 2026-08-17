@@ -33,7 +33,7 @@ config :zaik, :intent,
 
 config :zaik, :agent_chat,
   enabled: true,
-  model: "qwen3:4b",
+  model: "qwen3-coder:30b",
   num_ctx: 4096,
   num_predict: 700,
   timeout_ms: 45_000,

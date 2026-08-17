@@ -81,15 +81,21 @@ defmodule Zaik.ChatRouter do
     do: route_agent_chat(text, context, opts)
 
   defp route_agent_chat(text, context, opts) do
-    if Keyword.get(opts, :agent_chat_enabled, true) do
-      agent_opts = Keyword.get(opts, :agent_chat_opts, [])
+    case Zaik.Analytics.OperationalAnswers.answer(text) do
+      {:ok, response} ->
+        response
 
-      case Zaik.AgentChat.respond(text, context, agent_opts) do
-        {:ok, response} -> response
-        {:error, _reason} -> fallback_response()
-      end
-    else
-      fallback_response()
+      :unknown ->
+        if Keyword.get(opts, :agent_chat_enabled, true) do
+          agent_opts = Keyword.get(opts, :agent_chat_opts, [])
+
+          case Zaik.AgentChat.respond(text, context, agent_opts) do
+            {:ok, response} -> response
+            {:error, _reason} -> fallback_response()
+          end
+        else
+          fallback_response()
+        end
     end
   end
 
