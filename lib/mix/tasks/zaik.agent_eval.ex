@@ -19,7 +19,7 @@ defmodule Mix.Tasks.Zaik.AgentEval do
 
     {opts, _argv, _invalid} =
       OptionParser.parse(args,
-        strict: [model: :string, timeout_ms: :integer],
+        strict: [model: :string, timeout_ms: :integer, show_prompts: :boolean],
         aliases: [m: :model]
       )
 
@@ -29,7 +29,12 @@ defmodule Mix.Tasks.Zaik.AgentEval do
       status = if result.passed?, do: "PASS", else: "FAIL"
       Mix.shell().info("#{status} #{result.name}")
       Mix.shell().info("  prompt: #{result.prompt}")
-      Mix.shell().info("  response: #{inspect(result.response, limit: 2_000)}")
+      response_limit = if Keyword.get(opts, :show_prompts, false), do: :infinity, else: 2_000
+      Mix.shell().info("  response: #{inspect(result.response, limit: response_limit)}")
+
+      if Keyword.get(opts, :show_prompts, false) do
+        Mix.shell().info("  planner prompt:\n#{result.planner_prompt}")
+      end
 
       Enum.each(result.tool_calls, fn call ->
         Mix.shell().info("  tool: db=#{inspect(Keyword.get(call.opts, :db))} query=#{call.query}")

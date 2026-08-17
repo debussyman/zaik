@@ -115,7 +115,7 @@ defmodule Zaik.AgentChat do
 
     case tool_result do
       {:ok, _result} ->
-        final_answer(client, messages ++ [assistant_message, tool_message], cfg)
+        final_answer(client, user_text_from(messages), tool_message, cfg)
 
       {:error, _reason} ->
         correction_instruction = %{
@@ -134,19 +134,12 @@ defmodule Zaik.AgentChat do
     end
   end
 
-  defp final_answer(client, messages, cfg) do
-    final_messages =
-      [
-        %{
-          role: "system",
-          content: """
-          FINAL ANSWER MODE.
-          You have already received SQL TOOL RESULT data.
-          Return exactly one JSON object: {"type":"final","answer":"..."}
-          Answer only from the SQL TOOL RESULT rows. Do not call tools. Do not output raw JSON rows unless the user asks for raw data.
-          """
-        }
-      ] ++ messages
+  defp final_answer(client, user_text, tool_message, cfg) do
+    final_messages = [
+      %{role: "system", content: Zaik.AgentChat.Prompts.final()},
+      %{role: "user", content: "Original user question: #{user_text}"},
+      tool_message
+    ]
 
     with {:ok, result} <-
            client.chat("",
@@ -170,166 +163,24 @@ defmodule Zaik.AgentChat do
     end
   end
 
+  defp user_text_from(messages) do
+    messages
+    |> Enum.filter(&(&1.role == "user"))
+    |> List.last()
+    |> case do
+      %{content: content} -> content
+      _ -> ""
+    end
+  end
+
   defp base_messages(text, context) do
     [
-      %{role: "system", content: planner_prompt(context, text)},
+      %{role: "system", content: Zaik.AgentChat.Prompts.planner(text, context)},
       %{role: "user", content: text}
     ]
   end
 
-  def system_prompt do
-    """
-    You are Zaik, a read-only conversational home and operations analyst with one tool: sql_query.
-
-    CRITICAL OUTPUT CONTRACT:
-    - Return exactly one valid JSON object and nothing else.
-    - The top-level JSON key "type" MUST be either "tool_call" or "final".
-    - NEVER output type "tool_result" or "conversation_context". Those are sent to you by Elixir only.
-    - Do not invent rows, readings, timestamps, messages, or task records.
-    - Do not echo the user message as a key.
-    - Do not include markdown, comments, code fences, or trailing text.
-    - If you need data, return a tool_call. If Elixir has already sent you a tool_result and it is sufficient, return final.
-
-    DECISION POLICY:
-    - Questions about what users asked, chat history, sessions, tasks, failures, LLM calls, or watchdog scans MUST call sql_query with database "ops".
-    - If the prompt asks what I/we/users asked Zaik and does not explicitly mention tasks/jobs/failures, zaik_messages is mandatory and zaik_tasks is wrong. There is no home_messages table.
-    - Use the CURRENT REQUEST CONTEXT message to resolve identity:
-      - "I", "me", "my" means the current sender_id. For privacy, when sender_id is known, I/me/my message-history queries MUST filter by sender_id.
-      - "we", "us", "this chat", "this group" means the current chat_id/conversation. For privacy, when chat_id is known, we/us/group message-history queries MUST filter by chat_id.
-      - "you" means Zaik. For "what did we/I ask you", retrieve user-authored messages with role = 'user'.
-    - In zaik_messages, role is the user/agent discriminator. sender_id is a real Telegram/Signal sender id, never the word 'user'. channel is a real channel like 'telegram' or 'signal', never 'main'.
-    - Questions about Lily's room, home sensors, temperature, humidity, brightness, presence, or historical readings MUST call sql_query with database "home".
-    - You may answer directly only for pure conversation or when the answer is already in a prior tool_result.
-    - You cannot control devices, write files, execute shell commands, publish MQTT, or mutate databases. If asked to control something, return final explaining confirmation/control tools are not enabled yet.
-
-    VALID JSON SHAPES:
-    {"type":"tool_call","tool":"sql_query","args":{"database":"home","query":"SELECT ...","limit":200}}
-    {"type":"tool_call","tool":"sql_query","args":{"database":"ops","query":"SELECT ...","limit":200}}
-    {"type":"final","answer":"natural language answer grounded in tool results"}
-
-    EXAMPLES:
-    User: what tasks failed recently?
-    Assistant: {"type":"tool_call","tool":"sql_query","args":{"database":"ops","query":"SELECT id, type, status, completed_at, error_json FROM zaik_tasks WHERE status IN ('failed', 'timed_out', 'cancelled') ORDER BY COALESCE(completed_at, updated_at) DESC LIMIT 10","limit":10}}
-
-    User: has Lily's room been warm recently?
-    Assistant: {"type":"tool_call","tool":"sql_query","args":{"database":"home","query":"SELECT recorded_at, temperature_f, humidity, illuminance, presence FROM home_readings WHERE lower(device_name) LIKE '%lily%' ORDER BY recorded_at DESC LIMIT 20","limit":20}}
-
-    When Elixir sends a later user message beginning with "SQL TOOL RESULT", summarize only the rows returned by that SQL TOOL RESULT. Do not output tool_result yourself.
-
-    #{Zaik.Analytics.SQLTool.schema(:ops)}
-
-    #{Zaik.Analytics.SQLTool.schema(:home)}
-
-    SQL rules: use only SELECT or WITH SELECT. Query only the documented views. Never invent table/view names.
-    Prefer small LIMITs. Use date('now') for today and datetime('now', '-1 hour') style windows when useful.
-    For Lily's room, match device_name with lower(device_name) LIKE '%lily%'.
-    Boolean fields are 1=true, 0=false.
-    """
-    |> String.trim()
-  end
-
-  defp planner_prompt(context, text) do
-    system_prompt() <>
-      "\n\n" <>
-      conversation_context(context) <>
-      "\n\n" <>
-      prompt_identity_hint(context, text) <>
-      "\n\nPLANNER MODE: If the user asks about data in home or ops memory, return a sql_query tool_call. Do not answer from memory or examples."
-  end
-
-  defp prompt_identity_hint(context, text) do
-    normalized = String.downcase(text || "")
-    sender_id = context_value(context, :sender_id) || context_value(context, :sender)
-    chat_id = context_value(context, :chat_id)
-
-    cond do
-      Regex.match?(~r/\b(we|us|our|this chat|this group)\b/, normalized) and not is_nil(chat_id) ->
-        "USER PROMPT IDENTITY HINT: This prompt uses WE/US/OUR/THIS CHAT. For zaik_messages SQL, use role = 'user' AND chat_id = #{sql_literal_hint(chat_id)}. Do not use sender_id alone for this prompt."
-
-      Regex.match?(~r/\b(i|me|my)\b/, normalized) and not is_nil(sender_id) ->
-        "USER PROMPT IDENTITY HINT: This prompt uses I/ME/MY. For zaik_messages SQL, use role = 'user' AND sender_id = #{sql_literal_hint(sender_id)}."
-
-      true ->
-        "USER PROMPT IDENTITY HINT: No specific sender/chat pronoun override."
-    end
-  end
-
-  defp conversation_context(context) when is_map(context) do
-    session_id = context_value(context, :session_id)
-
-    recent =
-      if is_binary(session_id) do
-        case Zaik.MemoryStore.recent(session_id, 8) do
-          {:ok, entries} -> entries
-          _ -> []
-        end
-      else
-        []
-      end
-
-    format_request_context(context, recent)
-  rescue
-    _ -> format_request_context(context, [])
-  catch
-    :exit, _ -> format_request_context(context, [])
-  end
-
-  defp conversation_context(_context), do: format_request_context(%{}, [])
-
-  defp format_request_context(context, entries) do
-    channel = context_value(context, :channel)
-    sender_id = context_value(context, :sender_id) || context_value(context, :sender)
-    chat_id = context_value(context, :chat_id)
-    chat_type = context_value(context, :chat_type)
-    session_id = context_value(context, :session_id)
-
-    identity_lines = [
-      "CURRENT REQUEST CONTEXT:",
-      "channel: #{format_context_value(channel)}",
-      "sender_id: #{format_context_value(sender_id)}",
-      "chat_id: #{format_context_value(chat_id)}",
-      "chat_type: #{format_context_value(chat_type)}",
-      "session_id: #{format_context_value(session_id)}",
-      "",
-      "Identity SQL rules:",
-      "- For questions using I/me/my, filter zaik_messages with role = 'user' and sender_id = #{sql_literal_hint(sender_id)} when sender_id is known.",
-      "- For questions using we/us/this chat/this group, filter zaik_messages with role = 'user' and chat_id = #{sql_literal_hint(chat_id)} when chat_id is known. In group chats, WE means chat_id, not sender_id; using sender_id alone for WE is wrong.",
-      "- For questions about what users asked Zaik, use role = 'user'. For what Zaik answered, use role = 'agent'.",
-      "- Never use sender_id = 'user', channel = 'main', or scope = 'user'."
-    ]
-
-    recent_lines =
-      case entries do
-        [] -> ["", "Recent session messages: none loaded."]
-        _ -> ["", "Recent session messages:" | Enum.map(entries, &format_recent_entry/1)]
-      end
-
-    Enum.join(identity_lines ++ recent_lines, "\n")
-  end
-
-  defp format_recent_entry(entry) do
-    {role, content} = summarize_entry(entry)
-    "- #{role}: #{content}"
-  end
-
-  defp summarize_entry(%{"type" => "message", "role" => role, "content" => content}),
-    do: {role, content}
-
-  defp summarize_entry(entry),
-    do: {entry["type"] || "entry", entry["content"] || entry["summary"] || ""}
-
-  defp context_value(context, key) when is_map(context) do
-    Map.get(context, key) || Map.get(context, to_string(key))
-  end
-
-  defp format_context_value(nil), do: "unknown"
-  defp format_context_value(value) when is_atom(value), do: to_string(value)
-  defp format_context_value(value), do: to_string(value)
-
-  defp sql_literal_hint(nil), do: "<unknown>"
-  defp sql_literal_hint(value), do: "'#{escape_sql_literal(to_string(value))}'"
-
-  defp escape_sql_literal(value), do: String.replace(value, "'", "''")
+  def system_prompt, do: Zaik.AgentChat.Prompts.planner("", %{})
 
   defp decode_action(response) when is_binary(response) do
     with {:ok, decoded} <-

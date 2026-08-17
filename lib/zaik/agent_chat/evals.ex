@@ -157,8 +157,10 @@ defmodule Zaik.AgentChat.Evals do
   defp run_case(case_def, model, timeout_ms) do
     Process.put(:zaik_agent_eval_tool_calls, [])
 
+    context = Map.get(case_def, :context, %{})
+
     response =
-      Zaik.AgentChat.respond(case_def.prompt, Map.get(case_def, :context, %{}),
+      Zaik.AgentChat.respond(case_def.prompt, context,
         sql_tool: CannedSQLTool,
         config: %{enabled: true, model: model, timeout_ms: timeout_ms, max_tool_calls: 3}
       )
@@ -170,6 +172,7 @@ defmodule Zaik.AgentChat.Evals do
       name: case_def.name,
       prompt: case_def.prompt,
       response: response,
+      planner_prompt: Zaik.AgentChat.Prompts.planner(case_def.prompt, context),
       tool_calls: calls,
       checks: checks,
       passed?: Enum.all?(checks, & &1.passed?)

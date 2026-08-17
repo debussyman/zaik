@@ -356,6 +356,7 @@ Live agent evals exercise tool planning against a canned SQL tool:
 
 ```bash
 nix develop -c mix zaik.agent_eval --timeout-ms 120000
+nix develop -c mix zaik.agent_eval --model qwen3:8b --show-prompts --timeout-ms 120000
 ```
 
 Current eval cases cover:
