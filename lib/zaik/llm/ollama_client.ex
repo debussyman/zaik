@@ -28,22 +28,28 @@ defmodule Zaik.LLM.OllamaClient do
       |> maybe_put(:format, Keyword.get(opts, :format))
       |> maybe_put(:think, Keyword.get(opts, :think))
 
-    with {:ok, decoded} <-
-           post_json("/api/chat", payload, Keyword.get(opts, :timeout_ms, config().timeout_ms)) do
-      content = get_in(decoded, ["message", "content"])
+    started = System.monotonic_time(:millisecond)
 
-      if is_binary(content) do
-        {:ok,
-         %{
-           model: Map.get(decoded, "model", model),
-           response: content,
-           done: Map.get(decoded, "done"),
-           raw: decoded
-         }}
-      else
-        {:error, {:invalid_ollama_response, decoded}}
+    result =
+      with {:ok, decoded} <-
+             post_json("/api/chat", payload, Keyword.get(opts, :timeout_ms, config().timeout_ms)) do
+        content = get_in(decoded, ["message", "content"])
+
+        if is_binary(content) do
+          {:ok,
+           %{
+             model: Map.get(decoded, "model", model),
+             response: content,
+             done: Map.get(decoded, "done"),
+             raw: decoded
+           }}
+        else
+          {:error, {:invalid_ollama_response, decoded}}
+        end
       end
-    end
+
+    record_llm_call(:chat, model, result, started, opts)
+    result
   end
 
   def generate(prompt, opts \\ []) when is_binary(prompt) do
@@ -64,26 +70,32 @@ defmodule Zaik.LLM.OllamaClient do
       |> maybe_put(:format, Keyword.get(opts, :format))
       |> maybe_put(:think, Keyword.get(opts, :think))
 
-    with {:ok, decoded} <-
-           post_json(
-             "/api/generate",
-             payload,
-             Keyword.get(opts, :timeout_ms, config().timeout_ms)
-           ) do
-      response = Map.get(decoded, "response")
+    started = System.monotonic_time(:millisecond)
 
-      if is_binary(response) do
-        {:ok,
-         %{
-           model: Map.get(decoded, "model", model),
-           response: response,
-           done: Map.get(decoded, "done"),
-           raw: decoded
-         }}
-      else
-        {:error, {:invalid_ollama_response, decoded}}
+    result =
+      with {:ok, decoded} <-
+             post_json(
+               "/api/generate",
+               payload,
+               Keyword.get(opts, :timeout_ms, config().timeout_ms)
+             ) do
+        response = Map.get(decoded, "response")
+
+        if is_binary(response) do
+          {:ok,
+           %{
+             model: Map.get(decoded, "model", model),
+             response: response,
+             done: Map.get(decoded, "done"),
+             raw: decoded
+           }}
+        else
+          {:error, {:invalid_ollama_response, decoded}}
+        end
       end
-    end
+
+    record_llm_call(:generate, model, result, started, opts)
+    result
   end
 
   def config do
@@ -112,6 +124,37 @@ defmodule Zaik.LLM.OllamaClient do
 
   defp maybe_put(map, _key, nil), do: map
   defp maybe_put(map, key, value), do: Map.put(map, key, value)
+
+  defp record_llm_call(kind, requested_model, result, started, opts) do
+    duration_ms = System.monotonic_time(:millisecond) - started
+    purpose = Keyword.get(opts, :purpose, kind)
+
+    attrs =
+      case result do
+        {:ok, response} ->
+          %{
+            purpose: to_string(purpose),
+            model: response.model || requested_model,
+            success: true,
+            duration_ms: duration_ms,
+            response_length: String.length(response.response || ""),
+            raw: response.raw,
+            metadata: %{kind: kind}
+          }
+
+        {:error, reason} ->
+          %{
+            purpose: to_string(purpose),
+            model: requested_model,
+            success: false,
+            duration_ms: duration_ms,
+            error: inspect(reason),
+            metadata: %{kind: kind}
+          }
+      end
+
+    Zaik.TelemetryStore.safe_record_llm_call(attrs)
+  end
 
   defp post_json(path, payload, timeout) do
     ensure_http_started()

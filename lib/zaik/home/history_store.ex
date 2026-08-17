@@ -231,6 +231,33 @@ defmodule Zaik.Home.HistoryStore do
 
     CREATE INDEX IF NOT EXISTS readings_time_idx
       ON readings(observed_at);
+
+    CREATE VIEW IF NOT EXISTS home_devices AS
+      SELECT id, friendly_name, source, topic, metadata_json, inserted_at, updated_at
+      FROM devices;
+
+    CREATE VIEW IF NOT EXISTS home_readings AS
+      SELECT r.id,
+             r.device_id,
+             d.friendly_name AS device_name,
+             d.friendly_name AS room,
+             r.observed_at AS recorded_at,
+             r.temperature_c,
+             CASE
+               WHEN r.temperature_c IS NULL THEN NULL
+               ELSE r.temperature_c * 9.0 / 5.0 + 32.0
+             END AS temperature_f,
+             r.humidity,
+             r.illuminance,
+             r.presence,
+             r.pir_detection,
+             r.battery,
+             r.voltage,
+             r.linkquality,
+             r.target_distance,
+             r.payload_json
+      FROM readings r
+      JOIN devices d ON d.id = r.device_id;
     """)
   end
 

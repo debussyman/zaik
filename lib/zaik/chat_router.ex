@@ -29,51 +29,73 @@ defmodule Zaik.ChatRouter do
 
     case parser.parse(text, parser_opts) do
       {:ok, intent} ->
-        dispatch_intent(intent, text, context)
+        dispatch_intent(intent, text, context, opts)
 
       {:error, reason} ->
         Logger.debug("Intent parsing failed: #{inspect(reason)}")
-
-        "I'm not sure how to route that yet. Try asking about home, Lily's room, Zaik health, or use `help`."
+        route_agent_chat(text, context, opts)
     end
   end
 
-  def dispatch_intent(%{intent: :home_status}, _text, context),
+  def dispatch_intent(intent, text, context, opts \\ [])
+
+  def dispatch_intent(%{intent: :home_status}, _text, context, _opts),
     do: Zaik.CommandProcessor.process("home", context)
 
-  def dispatch_intent(%{intent: :home_sensor_status, device_query: nil}, _text, context),
+  def dispatch_intent(%{intent: :home_sensor_status, device_query: nil}, _text, context, _opts),
     do: Zaik.CommandProcessor.process("home sensors", context)
 
-  def dispatch_intent(%{intent: :home_sensor_status, device_query: query}, _text, context),
+  def dispatch_intent(%{intent: :home_sensor_status, device_query: query}, _text, context, _opts),
     do: Zaik.CommandProcessor.process("sensor #{query}", context)
 
-  def dispatch_intent(%{intent: :home_sensor_trend, device_query: nil}, _text, context),
+  def dispatch_intent(%{intent: :home_sensor_trend, device_query: nil}, _text, context, _opts),
     do: Zaik.CommandProcessor.process("home trends", context)
 
-  def dispatch_intent(%{intent: :home_sensor_trend, device_query: query}, _text, context),
+  def dispatch_intent(%{intent: :home_sensor_trend, device_query: query}, _text, context, _opts),
     do: Zaik.CommandProcessor.process("sensor #{query} trend", context)
 
-  def dispatch_intent(%{intent: :home_presence_status, device_query: nil}, _text, context),
+  def dispatch_intent(%{intent: :home_presence_status, device_query: nil}, _text, context, _opts),
     do: Zaik.CommandProcessor.process("presence", context)
 
-  def dispatch_intent(%{intent: :home_presence_status, device_query: query}, _text, context),
-    do: Zaik.CommandProcessor.process("sensor #{query}", context)
+  def dispatch_intent(
+        %{intent: :home_presence_status, device_query: query},
+        _text,
+        context,
+        _opts
+      ),
+      do: Zaik.CommandProcessor.process("sensor #{query}", context)
 
-  def dispatch_intent(%{intent: :system_health}, _text, context),
+  def dispatch_intent(%{intent: :system_health}, _text, context, _opts),
     do: Zaik.CommandProcessor.process("health", context)
 
-  def dispatch_intent(%{intent: :watchdog_scan}, _text, context),
+  def dispatch_intent(%{intent: :watchdog_scan}, _text, context, _opts),
     do: Zaik.CommandProcessor.process("watchdog scan", context)
 
-  def dispatch_intent(%{intent: :llm_general_question}, text, context),
+  def dispatch_intent(%{intent: :llm_general_question}, text, context, _opts),
     do: Zaik.CommandProcessor.process("ask #{text}", context)
 
-  def dispatch_intent(%{intent: :unknown}, _text, _context),
-    do:
-      "I'm not sure how to help with that yet. Try asking about home, Lily's room, Zaik health, or use `help`."
+  def dispatch_intent(%{intent: :unknown}, text, context, opts),
+    do: route_agent_chat(text, context, opts)
 
-  def dispatch_intent(_intent, _text, _context),
-    do: "I'm not sure how to route that yet. Try `help`."
+  def dispatch_intent(_intent, text, context, opts),
+    do: route_agent_chat(text, context, opts)
+
+  defp route_agent_chat(text, context, opts) do
+    if Keyword.get(opts, :agent_chat_enabled, true) do
+      agent_opts = Keyword.get(opts, :agent_chat_opts, [])
+
+      case Zaik.AgentChat.respond(text, context, agent_opts) do
+        {:ok, response} -> response
+        {:error, _reason} -> fallback_response()
+      end
+    else
+      fallback_response()
+    end
+  end
+
+  defp fallback_response,
+    do:
+      "I'm not sure how to route that yet. Try asking about home, Lily's room, Zaik health, or use `help`."
 
   defp explicit_command_response?(response) when is_binary(response),
     do: not String.starts_with?(response, "Unknown command.")

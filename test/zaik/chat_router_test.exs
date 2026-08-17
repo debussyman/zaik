@@ -68,7 +68,11 @@ defmodule Zaik.ChatRouterTest do
   end
 
   test "unknown intents get a helpful chat response" do
-    response = Zaik.ChatRouter.process("florp the blorb", %{}, parser: UnknownParser)
+    response =
+      Zaik.ChatRouter.process("florp the blorb", %{},
+        parser: UnknownParser,
+        agent_chat_enabled: false
+      )
 
     assert response =~ "I'm not sure"
   end

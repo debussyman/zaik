@@ -90,6 +90,17 @@ defmodule Zaik do
   def home_readings(query, opts \\ []), do: Zaik.Home.HistoryStore.recent_readings(query, opts)
 
   @doc """
+  Run a safe read-only analytics SQL query against Zaik views.
+  """
+  def sql_query(sql, opts \\ []), do: Zaik.Analytics.SQLTool.run(sql, opts)
+
+  @doc """
+  Ask the bounded read-only conversational agent.
+  """
+  def agent_chat(text, context \\ %{}, opts \\ []),
+    do: Zaik.AgentChat.respond(text, context, opts)
+
+  @doc """
   Run the task watchdog reconciliation immediately.
   """
   def watchdog_scan, do: Zaik.TaskWatchdog.scan_now()

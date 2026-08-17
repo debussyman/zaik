@@ -31,6 +31,16 @@ config :zaik, :intent,
   temperature: 0.0,
   confidence_threshold: 0.4
 
+config :zaik, :agent_chat,
+  enabled: true,
+  model: "qwen3:4b",
+  num_ctx: 4096,
+  num_predict: 700,
+  timeout_ms: 45_000,
+  keep_alive: "30m",
+  temperature: 0.1,
+  max_tool_calls: 3
+
 config :zaik, :mqtt,
   enabled: true,
   host: "localhost",
@@ -49,6 +59,10 @@ config :zaik, :zigbee2mqtt,
 config :zaik, :home_history,
   enabled: true,
   db_path: if(config_env() == :test, do: ":memory:", else: "~/.zaik/home/home.db")
+
+config :zaik, :telemetry_store,
+  enabled: true,
+  db_path: if(config_env() == :test, do: ":memory:", else: "~/.zaik/zaik.db")
 
 config :zaik, :signal,
   enabled: false,

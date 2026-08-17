@@ -13,6 +13,7 @@ Zaik is a local-first personal agent harness built with Elixir/OTP. It provides 
 - Signal ingress/replies via linked-device `signal-cli`
 - Telegram Bot API polling for a separate bot identity and multi-user chat
 - Natural-language chat routing with a small local Ollama intent model
+- Read-only conversational agent mode with supervised SQL tools over home/ops telemetry
 - Local Ollama prompt tasks
 - MQTT subscription to Zigbee2MQTT state
 - SQLite-backed home telemetry history in `~/.zaik/home/home.db`
@@ -97,6 +98,8 @@ Zaik.mqtt_status()
 ## Text / messaging chat
 
 Signal and Telegram ingress go through `Zaik.ChatRouter`: exact commands still work, and free-form messages are parsed by a small local intent model and dispatched to trusted Elixir handlers.
+
+For simple high-confidence requests, Zaik still uses deterministic Elixir command handlers. For more analytical/follow-up questions, Zaik can use `Zaik.AgentChat`: a bounded read-only agent loop where the model asks Elixir to run safe SQL tools over documented SQLite views, then answers from the tool results.
 
 Telegram is the preferred multi-person chat path because Zaik appears as its own bot identity instead of speaking as your linked Signal account.
 
@@ -318,6 +321,43 @@ Zaik also bootstraps latest Zigbee2MQTT state from:
 
 This makes `home`, `presence`, and `sensor ...` useful immediately after a Zaik restart even if device state MQTT messages are not retained.
 
+### Operational telemetry / conversational SQL memory
+
+Zaik records queryable operational telemetry to SQLite:
+
+```text
+~/.zaik/zaik.db
+```
+
+Read-only views exposed to the agent and analytics tools:
+
+```text
+zaik_tasks
+zaik_task_events
+zaik_sessions
+zaik_messages
+zaik_llm_calls
+zaik_watchdog_scans
+```
+
+The model may generate SQL for these views only through `Zaik.Analytics.SQLTool`; Elixir validates SELECT-only access, denies mutating keywords, restricts views, and caps rows.
+
+Optional environment overrides:
+
+```sh
+ZAIK_TELEMETRY_ENABLED=true
+ZAIK_TELEMETRY_DB=/home/ryan/.zaik/zaik.db
+ZAIK_AGENT_CHAT_ENABLED=true
+ZAIK_AGENT_MODEL=qwen3:4b
+ZAIK_AGENT_MAX_TOOL_CALLS=3
+```
+
+Useful local SQL smoke test:
+
+```bash
+nix develop -c mix run -e 'IO.inspect(Zaik.Analytics.SQLTool.run("SELECT status, count(*) AS count FROM zaik_tasks GROUP BY status", db: :ops))'
+```
+
 ### Home telemetry history
 
 Zaik records structured sensor readings to SQLite:
@@ -331,6 +371,13 @@ The `readings` table stores normalized columns for common fields:
 ```text
 temperature_c, humidity, illuminance, presence, pir_detection,
 battery, voltage, linkquality, target_distance, payload_json
+```
+
+Read-only views for the agent/analytics layer:
+
+```text
+home_devices
+home_readings
 ```
 
 Trend commands use this history, for example:

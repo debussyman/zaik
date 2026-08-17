@@ -69,6 +69,7 @@ defmodule Zaik.SessionStore do
     }
 
     :ok = File.write(session.path, Jason.encode!(header) <> "\n")
+    Zaik.TelemetryStore.safe_record_session(session)
     {:reply, {:ok, session}, put_session(state, session)}
   end
 
@@ -108,6 +109,7 @@ defmodule Zaik.SessionStore do
          {:ok, normalized} <- normalize_entry(entry, session.current_leaf_id),
          :ok <- File.write(session.path, Jason.encode!(normalized) <> "\n", [:append]) do
       updated = %{session | current_leaf_id: normalized["id"], updated_at: DateTime.utc_now()}
+      Zaik.TelemetryStore.safe_record_session_entry(updated, normalized)
       {:reply, {:ok, normalized["id"]}, put_session(state, updated)}
     else
       error -> {:reply, normalize_error(error), state}

@@ -43,6 +43,7 @@ defmodule Zaik.TaskStore do
     if Map.has_key?(state.tasks, task.id) do
       {:reply, {:error, :already_exists}, state}
     else
+      Zaik.TelemetryStore.safe_record_task(task, :insert)
       {:reply, {:ok, task}, put_task(state, task)}
     end
   end
@@ -56,6 +57,7 @@ defmodule Zaik.TaskStore do
 
   def handle_call({:update, task}, _from, state) do
     if Map.has_key?(state.tasks, task.id) do
+      Zaik.TelemetryStore.safe_record_task(task, :update)
       {:reply, {:ok, task}, put_task(state, task)}
     else
       {:reply, {:error, :not_found}, state}
@@ -85,6 +87,7 @@ defmodule Zaik.TaskStore do
     case Map.fetch(state.tasks, task_id) do
       {:ok, task} ->
         updated = fun.(task)
+        Zaik.TelemetryStore.safe_record_task(updated, :status_change)
         {:reply, {:ok, updated}, put_task(state, updated)}
 
       :error ->

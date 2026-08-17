@@ -12,6 +12,7 @@ defmodule Zaik.Application do
     children =
       [
         Zaik.Clock,
+        telemetry_store_child(),
         Zaik.TaskStore,
         Zaik.SessionStore,
         Zaik.TaskQueue,
@@ -31,6 +32,14 @@ defmodule Zaik.Application do
 
     opts = [strategy: :one_for_one, name: Zaik.Supervisor]
     Supervisor.start_link(children, opts)
+  end
+
+  defp telemetry_store_child do
+    config = Zaik.TelemetryStore.config()
+
+    if config.enabled do
+      {Zaik.TelemetryStore, Map.to_list(config)}
+    end
   end
 
   defp home_history_child do

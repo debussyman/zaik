@@ -62,7 +62,8 @@ defmodule Zaik.Intent.Parser do
                keep_alive: cfg.keep_alive,
                format: "json",
                think: false,
-               timeout_ms: cfg.timeout_ms
+               timeout_ms: cfg.timeout_ms,
+               purpose: :intent_parser
              ),
            {:ok, decoded} <- decode_intent(result.response),
            {:ok, normalized} <- normalize_intent(decoded) do

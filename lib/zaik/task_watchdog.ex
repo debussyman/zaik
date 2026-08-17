@@ -72,6 +72,8 @@ defmodule Zaik.TaskWatchdog do
       safe_dispatch()
     end
 
+    Zaik.TelemetryStore.safe_record_watchdog_scan(summary)
+
     {summary, %{state | last_scan_at: DateTime.utc_now(), last_summary: summary}}
   end
 
