@@ -101,6 +101,36 @@ defmodule Zaik do
     do: Zaik.AgentChat.respond(text, context, opts)
 
   @doc """
+  Return scheduled job state.
+  """
+  def scheduler_state, do: Zaik.Scheduler.state()
+
+  @doc """
+  Run a scheduled job immediately.
+  """
+  def run_scheduled_job(name), do: Zaik.Scheduler.run_now(name)
+
+  @doc """
+  List pending proposals that require human confirmation.
+  """
+  def proposals(status \\ :pending), do: Zaik.Proposals.list(status)
+
+  @doc """
+  Fetch a proposal by ID.
+  """
+  def proposal(id), do: Zaik.Proposals.get(id)
+
+  @doc """
+  Approve a pending proposal without executing it.
+  """
+  def approve_proposal(id, decided_by \\ nil), do: Zaik.Proposals.approve(id, decided_by)
+
+  @doc """
+  Reject a pending proposal.
+  """
+  def reject_proposal(id, decided_by \\ nil), do: Zaik.Proposals.reject(id, decided_by)
+
+  @doc """
   Run the task watchdog reconciliation immediately.
   """
   def watchdog_scan, do: Zaik.TaskWatchdog.scan_now()

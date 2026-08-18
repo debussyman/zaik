@@ -15,7 +15,8 @@ defmodule Zaik.Analytics.SQLTool do
                "zaik_sessions",
                "zaik_messages",
                "zaik_llm_calls",
-               "zaik_watchdog_scans"
+               "zaik_watchdog_scans",
+               "zaik_proposals"
              ])
 
   @home_views MapSet.new(["home_devices", "home_readings"])
@@ -42,6 +43,9 @@ defmodule Zaik.Analytics.SQLTool do
       error_json, metadata_json, created_at)
 
     zaik_watchdog_scans(id, scanned_at, summary_json)
+
+    zaik_proposals(id, status, type, title, body, action_json, metadata_json,
+      created_by, decided_by, created_at, decided_at)
     """
     |> String.trim()
   end

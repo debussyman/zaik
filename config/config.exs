@@ -41,6 +41,28 @@ config :zaik, :agent_chat,
   temperature: 0.0,
   max_tool_calls: 3
 
+config :zaik, :self_improvement,
+  candidate_model: "qwen3:4b-instruct",
+  reference_model: "qwen3-coder:30b",
+  timeout_ms: 120_000,
+  notify_telegram_chat_id: nil
+
+config :zaik, :scheduler,
+  enabled: config_env() != :test,
+  jobs: [
+    %{
+      name: :agent_chat_self_improvement,
+      module: Zaik.AgentChat.SelfImprovementJob,
+      schedule: {:daily, "03:00:00"},
+      enabled:
+        System.get_env("ZAIK_SELF_IMPROVEMENT_ENABLED")
+        |> to_string()
+        |> String.downcase()
+        |> then(&(&1 in ["1", "true", "yes", "on"])),
+      opts: []
+    }
+  ]
+
 config :zaik, :mqtt,
   enabled: true,
   host: "localhost",

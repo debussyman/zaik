@@ -24,6 +24,7 @@ defmodule Zaik.Application do
         Zaik.Agent.DynamicSupervisor,
         Zaik.Dispatcher,
         watchdog_child(),
+        scheduler_child(),
         Zaik.Agent.Supervisor,
         signal_poller_child(),
         telegram_poller_child()
@@ -71,6 +72,14 @@ defmodule Zaik.Application do
 
     if Keyword.get(config, :enabled, true) do
       {Zaik.TaskWatchdog, config}
+    end
+  end
+
+  defp scheduler_child do
+    config = Zaik.Scheduler.config()
+
+    if config.enabled do
+      {Zaik.Scheduler, Map.to_list(config)}
     end
   end
 

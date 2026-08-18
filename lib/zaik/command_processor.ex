@@ -59,6 +59,15 @@ defmodule Zaik.CommandProcessor do
       command?(text, "watchdog scan") ->
         format_watchdog_scan()
 
+      command?(text, "scheduler") ->
+        format_scheduler()
+
+      command?(text, "proposals") ->
+        format_proposals(:pending)
+
+      command?(text, "proposals all") ->
+        format_proposals(:all)
+
       command?(text, "ask") ->
         submit_llm_prompt("", context)
 
@@ -76,6 +85,18 @@ defmodule Zaik.CommandProcessor do
 
       String.starts_with?(downcase(text), "task ") ->
         text |> rest_after("task") |> format_task()
+
+      String.starts_with?(downcase(text), "scheduler run ") ->
+        text |> rest_after("scheduler run") |> run_scheduled_job()
+
+      String.starts_with?(downcase(text), "proposal ") ->
+        text |> rest_after("proposal") |> format_proposal()
+
+      String.starts_with?(downcase(text), "approve ") ->
+        text |> rest_after("approve") |> decide_proposal(:approve, context)
+
+      String.starts_with?(downcase(text), "reject ") ->
+        text |> rest_after("reject") |> decide_proposal(:reject, context)
 
       String.starts_with?(downcase(text), "sensor ") and
           String.ends_with?(downcase(text), " trend") ->
@@ -127,6 +148,13 @@ defmodule Zaik.CommandProcessor do
     sensor <device name> trend
     watchdog
     watchdog scan
+    scheduler
+    scheduler run <job_name>
+    proposals
+    proposals all
+    proposal <proposal_id>
+    approve <proposal_id>
+    reject <proposal_id>
     ask <prompt>
     submit llm <prompt>
     submit echo <message>
@@ -384,6 +412,119 @@ defmodule Zaik.CommandProcessor do
     |> String.trim()
   end
 
+  defp format_scheduler do
+    state = Zaik.scheduler_state()
+
+    job_lines =
+      state.jobs
+      |> Enum.map(fn job ->
+        timer = if job.name in state.timers, do: "scheduled", else: "not scheduled"
+        last_run = Map.get(state.last_runs, job.name) |> format_time()
+
+        "- #{job.name}: enabled=#{job.enabled} #{timer} schedule=#{inspect(job.schedule)} last_run=#{last_run}"
+      end)
+
+    case job_lines do
+      [] -> "No scheduled jobs configured."
+      lines -> (["Scheduler"] ++ lines) |> Enum.join("\n")
+    end
+  rescue
+    _ -> "Scheduler is not available."
+  catch
+    :exit, _ -> "Scheduler is not available."
+  end
+
+  defp run_scheduled_job(job_name) do
+    requested = String.trim(job_name)
+    state = Zaik.scheduler_state()
+
+    case Enum.find(state.jobs, &(to_string(&1.name) == requested)) do
+      nil ->
+        "Scheduled job not found: #{job_name}"
+
+      job ->
+        case Zaik.run_scheduled_job(job.name) do
+          :ok -> "Started scheduled job #{job.name}."
+          {:error, reason} -> "Failed to start scheduled job #{job.name}: #{format_value(reason)}"
+        end
+    end
+  rescue
+    _ -> "Scheduler is not available."
+  catch
+    :exit, _ -> "Scheduler is not available."
+  end
+
+  defp format_proposals(status) do
+    case Zaik.proposals(status) do
+      {:ok, []} ->
+        if status in [:all, "all"], do: "No proposals.", else: "No pending proposals."
+
+      {:ok, proposals} ->
+        header = if status in [:all, "all"], do: "Proposals", else: "Pending proposals"
+        ([header] ++ Enum.map(proposals, &format_proposal_line/1)) |> Enum.join("\n")
+
+      {:error, reason} ->
+        "Failed to list proposals: #{format_value(reason)}"
+    end
+  end
+
+  defp format_proposal(id) do
+    id = String.trim(id)
+
+    case Zaik.proposal(id) do
+      {:ok, proposal} ->
+        """
+        Proposal #{proposal.id}
+        Status: #{proposal.status}
+        Type: #{proposal.type}
+        Title: #{proposal.title}
+        Created: #{format_time(proposal.created_at)}
+        Decided: #{format_time(proposal.decided_at)}
+
+        #{proposal.body}
+
+        Action: #{format_value(proposal.action)}
+        """
+        |> String.trim()
+
+      {:error, :not_found} ->
+        "Proposal not found: #{id}"
+
+      {:error, reason} ->
+        "Failed to load proposal #{id}: #{format_value(reason)}"
+    end
+  end
+
+  defp decide_proposal(id, decision, context) do
+    id = String.trim(id)
+    actor = actor_from_context(context)
+
+    result =
+      case decision do
+        :approve -> Zaik.approve_proposal(id, actor)
+        :reject -> Zaik.reject_proposal(id, actor)
+      end
+
+    case result do
+      {:ok, proposal} ->
+        verb = if decision == :approve, do: "Approved", else: "Rejected"
+        "#{verb} proposal #{proposal.id}. No changes were applied automatically."
+
+      {:error, :not_found} ->
+        "Proposal not found: #{id}"
+
+      {:error, :already_decided} ->
+        "Proposal #{id} has already been decided."
+
+      {:error, reason} ->
+        "Failed to decide proposal #{id}: #{format_value(reason)}"
+    end
+  end
+
+  defp format_proposal_line(proposal) do
+    "- #{proposal.id} [#{proposal.status}] #{proposal.title} created=#{format_time(proposal.created_at)}"
+  end
+
   defp submit_echo(message, context) do
     message = String.trim(message)
 
@@ -474,6 +615,16 @@ defmodule Zaik.CommandProcessor do
     do: [session_id: session_id]
 
   defp task_opts(_context), do: []
+
+  defp actor_from_context(context) when is_map(context) do
+    value =
+      Map.get(context, :sender_id) || Map.get(context, "sender_id") || Map.get(context, :sender) ||
+        Map.get(context, "sender")
+
+    if is_nil(value), do: nil, else: to_string(value)
+  end
+
+  defp actor_from_context(_context), do: nil
 
   defp parse_status(status_text) do
     case status_text |> String.trim() |> String.downcase() do

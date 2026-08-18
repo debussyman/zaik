@@ -60,6 +60,24 @@ defmodule Zaik.TelemetryStore do
   def record_watchdog_scan(server, summary) when is_map(summary),
     do: GenServer.call(server, {:record_watchdog_scan, summary})
 
+  def create_proposal(attrs) when is_map(attrs), do: create_proposal(__MODULE__, attrs)
+
+  def create_proposal(server, attrs) when is_map(attrs),
+    do: GenServer.call(server, {:create_proposal, attrs})
+
+  def list_proposals(status \\ nil), do: list_proposals(__MODULE__, status)
+  def list_proposals(server, status), do: GenServer.call(server, {:list_proposals, status})
+
+  def get_proposal(id), do: get_proposal(__MODULE__, id)
+  def get_proposal(server, id), do: GenServer.call(server, {:get_proposal, id})
+
+  def decide_proposal(id, decision, decided_by \\ nil),
+    do: decide_proposal(__MODULE__, id, decision, decided_by)
+
+  def decide_proposal(server, id, decision, decided_by)
+      when decision in [:approved, :rejected, "approved", "rejected"],
+      do: GenServer.call(server, {:decide_proposal, id, decision, decided_by})
+
   def query(sql, params \\ [], opts \\ []), do: query(__MODULE__, sql, params, opts)
 
   def query(server, sql, params, opts) when is_binary(sql) and is_list(params) and is_list(opts),
@@ -135,6 +153,22 @@ defmodule Zaik.TelemetryStore do
 
   def handle_call({:record_watchdog_scan, summary}, _from, state) do
     {:reply, insert_watchdog_scan(state.conn, summary), state}
+  end
+
+  def handle_call({:create_proposal, attrs}, _from, state) do
+    {:reply, insert_proposal(state.conn, attrs), state}
+  end
+
+  def handle_call({:list_proposals, status}, _from, state) do
+    {:reply, select_proposals(state.conn, status), state}
+  end
+
+  def handle_call({:get_proposal, id}, _from, state) do
+    {:reply, select_proposal(state.conn, id), state}
+  end
+
+  def handle_call({:decide_proposal, id, decision, decided_by}, _from, state) do
+    {:reply, update_proposal_decision(state.conn, id, decision, decided_by), state}
   end
 
   def handle_call({:query, sql, params, opts}, _from, state) do
@@ -265,6 +299,23 @@ defmodule Zaik.TelemetryStore do
     CREATE INDEX IF NOT EXISTS ops_watchdog_scans_time_idx
       ON ops_watchdog_scans(scanned_at);
 
+    CREATE TABLE IF NOT EXISTS ops_proposals (
+      id TEXT PRIMARY KEY,
+      status TEXT NOT NULL,
+      type TEXT NOT NULL,
+      title TEXT NOT NULL,
+      body TEXT NOT NULL,
+      action_json TEXT NOT NULL DEFAULT '{}',
+      metadata_json TEXT NOT NULL DEFAULT '{}',
+      created_by TEXT,
+      decided_by TEXT,
+      created_at TEXT NOT NULL,
+      decided_at TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS ops_proposals_status_created_idx
+      ON ops_proposals(status, created_at);
+
     CREATE VIEW IF NOT EXISTS zaik_tasks AS
       SELECT id, type, status, session_id, priority, submitted_at, started_at, completed_at,
              attempts, max_retries, timeout_ms, duration_ms, result_json, error_json,
@@ -293,6 +344,11 @@ defmodule Zaik.TelemetryStore do
     CREATE VIEW IF NOT EXISTS zaik_watchdog_scans AS
       SELECT id, scanned_at, summary_json
       FROM ops_watchdog_scans;
+
+    CREATE VIEW IF NOT EXISTS zaik_proposals AS
+      SELECT id, status, type, title, body, action_json, metadata_json,
+             created_by, decided_by, created_at, decided_at
+      FROM ops_proposals;
     """)
   end
 
@@ -485,6 +541,143 @@ defmodule Zaik.TelemetryStore do
     )
   end
 
+  defp insert_proposal(conn, attrs) do
+    id = map_value(attrs, :id) || proposal_id()
+    now = DateTime.utc_now() |> DateTime.to_iso8601()
+
+    result =
+      exec(
+        conn,
+        """
+        INSERT INTO ops_proposals (
+          id, status, type, title, body, action_json, metadata_json, created_by, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        [
+          id,
+          to_string(map_value(attrs, :status) || :pending),
+          to_string(map_value(attrs, :type) || :general),
+          to_string(map_value(attrs, :title) || "Untitled proposal"),
+          to_string(map_value(attrs, :body) || ""),
+          Jason.encode!(map_value(attrs, :action) || %{}),
+          Jason.encode!(map_value(attrs, :metadata) || %{}),
+          map_value(attrs, :created_by),
+          now
+        ]
+      )
+
+    case result do
+      :ok -> {:ok, select_proposal!(conn, id)}
+      error -> error
+    end
+  end
+
+  defp select_proposals(conn, status) do
+    {where, params} =
+      case status do
+        nil -> {"", []}
+        :all -> {"", []}
+        "all" -> {"", []}
+        value -> {"WHERE status = ?", [to_string(value)]}
+      end
+
+    rows =
+      query_rows(
+        conn,
+        """
+        SELECT id, status, type, title, body, action_json, metadata_json,
+               created_by, decided_by, created_at, decided_at
+        FROM ops_proposals
+        #{where}
+        ORDER BY created_at DESC
+        LIMIT 50
+        """,
+        params
+      )
+
+    {:ok, Enum.map(rows, &proposal_from_row/1)}
+  end
+
+  defp select_proposal(conn, id) do
+    case select_proposal!(conn, id) do
+      nil -> {:error, :not_found}
+      proposal -> {:ok, proposal}
+    end
+  end
+
+  defp select_proposal!(conn, id) do
+    conn
+    |> query_rows(
+      """
+      SELECT id, status, type, title, body, action_json, metadata_json,
+             created_by, decided_by, created_at, decided_at
+      FROM ops_proposals
+      WHERE id = ?
+      LIMIT 1
+      """,
+      [id]
+    )
+    |> case do
+      [] -> nil
+      [row | _] -> proposal_from_row(row)
+    end
+  end
+
+  defp update_proposal_decision(conn, id, decision, decided_by) do
+    decision = to_string(decision)
+    now = DateTime.utc_now() |> DateTime.to_iso8601()
+
+    with {:ok, proposal} <- select_proposal(conn, id),
+         true <- proposal.status == "pending" do
+      result =
+        exec(
+          conn,
+          """
+          UPDATE ops_proposals
+          SET status = ?, decided_by = ?, decided_at = ?
+          WHERE id = ?
+          """,
+          [decision, decided_by, now, id]
+        )
+
+      case result do
+        :ok -> select_proposal(conn, id)
+        error -> error
+      end
+    else
+      false -> {:error, :already_decided}
+      error -> error
+    end
+  end
+
+  defp proposal_from_row([
+         id,
+         status,
+         type,
+         title,
+         body,
+         action_json,
+         metadata_json,
+         created_by,
+         decided_by,
+         created_at,
+         decided_at
+       ]) do
+    %{
+      id: id,
+      status: status,
+      type: type,
+      title: title,
+      body: body,
+      action: decode_json(action_json, %{}),
+      metadata: decode_json(metadata_json, %{}),
+      created_by: created_by,
+      decided_by: decided_by,
+      created_at: parse_datetime(created_at),
+      decided_at: parse_datetime(decided_at)
+    }
+  end
+
   defp select(conn, sql, params, limit) do
     with {:ok, stmt} <- Sqlite3.prepare(conn, sql) do
       try do
@@ -525,6 +718,23 @@ defmodule Zaik.TelemetryStore do
     end
   end
 
+  defp query_rows(conn, sql, params) do
+    with {:ok, stmt} <- Sqlite3.prepare(conn, sql) do
+      try do
+        with :ok <- Sqlite3.bind(stmt, params),
+             {:ok, rows} <- Sqlite3.fetch_all(conn, stmt) do
+          rows
+        else
+          _error -> []
+        end
+      after
+        Sqlite3.release(conn, stmt)
+      end
+    else
+      _error -> []
+    end
+  end
+
   defp row_map(columns, row), do: columns |> Enum.zip(row) |> Map.new()
 
   defp safe_call(fun) do
@@ -549,6 +759,33 @@ defmodule Zaik.TelemetryStore do
 
   defp map_value(map, key) do
     Map.get(map, key) || Map.get(map, to_string(key))
+  end
+
+  defp decode_json(nil, default), do: default
+  defp decode_json("", default), do: default
+
+  defp decode_json(json, default) when is_binary(json) do
+    case Jason.decode(json) do
+      {:ok, value} -> value
+      {:error, _reason} -> default
+    end
+  end
+
+  defp decode_json(_json, default), do: default
+
+  defp parse_datetime(nil), do: nil
+
+  defp parse_datetime(value) when is_binary(value) do
+    case DateTime.from_iso8601(value) do
+      {:ok, datetime, _offset} -> datetime
+      {:error, _reason} -> value
+    end
+  end
+
+  defp parse_datetime(value), do: value
+
+  defp proposal_id do
+    "prop_" <> Base.url_encode64(:crypto.strong_rand_bytes(9), padding: false)
   end
 
   defp duration_ms(%Zaik.Task{
