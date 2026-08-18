@@ -35,6 +35,12 @@ defmodule Zaik.AgentChat.Prompts do
 
     cond do
       Regex.match?(
+        ~r/\b(agentchat|agent chat|fallback|fall back|fell back|primary model|fallback model|model used|which model|trace|tracing)\b/,
+        normalized
+      ) ->
+        :agent_chat_runs
+
+      Regex.match?(
         ~r/\b(task|tasks|job|jobs|work item|failed|failure|timed out|cancelled|retry|retries)\b/,
         normalized
       ) ->
@@ -117,6 +123,29 @@ defmodule Zaik.AgentChat.Prompts do
     - Do not query zaik_tasks for asked/message/chat questions unless the user explicitly asks about tasks/jobs.
 
     Use actual sender_id/chat_id values from CURRENT REQUEST CONTEXT. Never copy placeholder values such as '<current sender_id>' or '<current chat_id>'.
+    """
+    |> String.trim()
+  end
+
+  defp domain_policy(:agent_chat_runs) do
+    """
+    DOMAIN: AgentChat model/run tracing.
+    Database: ops
+    Use this view only:
+    zaik_agent_chat_runs(id, prompt, context_json, channel, sender_id, chat_id, chat_type, session_id, primary_model, fallback_model, fallback_used, final_model, status, answer, error_json, tool_calls_json, duration_ms, metadata_json, created_at)
+
+    Semantics:
+    - fallback_used is 1 when the primary model failed or returned a low-confidence answer and the fallback model was tried.
+    - channel, sender_id, chat_id, chat_type, and session_id come from the request context.
+    - primary_model is the first model attempted.
+    - fallback_model is the configured fallback model.
+    - final_model is the model that produced the final public result.
+    - status is 'ok' or 'error'.
+    - Recent run questions should order by created_at DESC.
+    - To inspect tool behavior, select tool_calls_json.
+
+    Example:
+    {"type":"tool_call","tool":"sql_query","args":{"database":"ops","query":"SELECT created_at, prompt, primary_model, fallback_used, final_model, status FROM zaik_agent_chat_runs ORDER BY created_at DESC LIMIT 10","limit":10}}
     """
     |> String.trim()
   end

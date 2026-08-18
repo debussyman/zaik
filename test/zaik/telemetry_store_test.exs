@@ -38,6 +38,31 @@ defmodule Zaik.TelemetryStoreTest do
 
     assert :ok = Zaik.TelemetryStore.record_watchdog_scan(%{requeued_missing_queued_tasks: 0})
 
+    assert :ok =
+             Zaik.TelemetryStore.record_agent_chat_run(%{
+               id: "agent-chat-test-run",
+               prompt: "what have we asked today?",
+               context: %{channel: :telegram, chat_id: "222"},
+               channel: "telegram",
+               chat_id: "222",
+               primary_model: "qwen3:4b-instruct",
+               fallback_model: "qwen3-coder:30b",
+               fallback_used: false,
+               final_model: "qwen3:4b-instruct",
+               status: :ok,
+               answer: "You asked one question.",
+               tool_calls: [
+                 %{
+                   database: :ops,
+                   query: "SELECT content FROM zaik_messages",
+                   limit: 20,
+                   ok: true,
+                   row_count: 1
+                 }
+               ],
+               duration_ms: 123
+             })
+
     assert {:ok, %{rows: [%{"id" => ^task_id, "status" => "succeeded"}]}} =
              Zaik.TelemetryStore.query("SELECT id, status FROM zaik_tasks WHERE id = ?", [task_id])
 
@@ -61,5 +86,23 @@ defmodule Zaik.TelemetryStoreTest do
              Zaik.TelemetryStore.query("SELECT id FROM zaik_watchdog_scans")
 
     assert count >= 1
+
+    assert {:ok,
+            %{
+              rows: [
+                %{
+                  "id" => "agent-chat-test-run",
+                  "primary_model" => "qwen3:4b-instruct",
+                  "channel" => "telegram",
+                  "chat_id" => "222",
+                  "fallback_used" => 0,
+                  "status" => "ok"
+                }
+              ]
+            }} =
+             Zaik.TelemetryStore.query(
+               "SELECT id, primary_model, channel, chat_id, fallback_used, status FROM zaik_agent_chat_runs WHERE id = ?",
+               ["agent-chat-test-run"]
+             )
   end
 end

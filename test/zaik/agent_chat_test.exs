@@ -107,6 +107,18 @@ defmodule Zaik.AgentChatTest do
     assert query =~ "home_readings"
     assert opts[:db] == :home
     assert opts[:limit] == 5
+
+    assert {:ok, %{rows: [row | _]}} =
+             Zaik.TelemetryStore.query(
+               "SELECT prompt, primary_model, fallback_used, status, answer, tool_calls_json FROM zaik_agent_chat_runs WHERE prompt = ? ORDER BY created_at DESC LIMIT 1",
+               ["Was Lily's room warm recently?"]
+             )
+
+    assert row["status"] == "ok"
+    assert row["answer"] == "Lily's room has been warm based on the readings."
+    assert row["fallback_used"] == 0
+    assert row["primary_model"]
+    assert row["tool_calls_json"] =~ "home_readings"
   end
 
   test "falls back to configured model when primary returns an error" do

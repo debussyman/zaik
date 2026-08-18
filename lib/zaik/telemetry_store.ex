@@ -60,6 +60,12 @@ defmodule Zaik.TelemetryStore do
   def record_watchdog_scan(server, summary) when is_map(summary),
     do: GenServer.call(server, {:record_watchdog_scan, summary})
 
+  def record_agent_chat_run(attrs) when is_map(attrs),
+    do: record_agent_chat_run(__MODULE__, attrs)
+
+  def record_agent_chat_run(server, attrs) when is_map(attrs),
+    do: GenServer.call(server, {:record_agent_chat_run, attrs})
+
   def create_proposal(attrs) when is_map(attrs), do: create_proposal(__MODULE__, attrs)
 
   def create_proposal(server, attrs) when is_map(attrs),
@@ -97,6 +103,9 @@ defmodule Zaik.TelemetryStore do
 
   def safe_record_watchdog_scan(summary) when is_map(summary),
     do: safe_call(fn -> record_watchdog_scan(summary) end)
+
+  def safe_record_agent_chat_run(attrs) when is_map(attrs),
+    do: safe_call(fn -> record_agent_chat_run(attrs) end)
 
   @impl true
   def init(opts) do
@@ -155,6 +164,10 @@ defmodule Zaik.TelemetryStore do
     {:reply, insert_watchdog_scan(state.conn, summary), state}
   end
 
+  def handle_call({:record_agent_chat_run, attrs}, _from, state) do
+    {:reply, insert_agent_chat_run(state.conn, attrs), state}
+  end
+
   def handle_call({:create_proposal, attrs}, _from, state) do
     {:reply, insert_proposal(state.conn, attrs), state}
   end
@@ -185,171 +198,252 @@ defmodule Zaik.TelemetryStore do
   def terminate(_reason, _state), do: :ok
 
   defp migrate(conn) do
-    Sqlite3.execute(conn, """
-    PRAGMA journal_mode = WAL;
-    PRAGMA synchronous = NORMAL;
-    PRAGMA foreign_keys = ON;
+    with :ok <-
+           Sqlite3.execute(conn, """
+           PRAGMA journal_mode = WAL;
+           PRAGMA synchronous = NORMAL;
+           PRAGMA foreign_keys = ON;
 
-    CREATE TABLE IF NOT EXISTS ops_tasks (
-      id TEXT PRIMARY KEY,
-      type TEXT NOT NULL,
-      status TEXT NOT NULL,
-      session_id TEXT,
-      priority INTEGER,
-      submitted_at TEXT,
-      started_at TEXT,
-      completed_at TEXT,
-      attempts INTEGER,
-      max_retries INTEGER,
-      timeout_ms INTEGER,
-      duration_ms INTEGER,
-      result_json TEXT,
-      error_json TEXT,
-      metadata_json TEXT NOT NULL DEFAULT '{}',
-      updated_at TEXT NOT NULL
-    );
+           CREATE TABLE IF NOT EXISTS ops_tasks (
+             id TEXT PRIMARY KEY,
+             type TEXT NOT NULL,
+             status TEXT NOT NULL,
+             session_id TEXT,
+             priority INTEGER,
+             submitted_at TEXT,
+             started_at TEXT,
+             completed_at TEXT,
+             attempts INTEGER,
+             max_retries INTEGER,
+             timeout_ms INTEGER,
+             duration_ms INTEGER,
+             result_json TEXT,
+             error_json TEXT,
+             metadata_json TEXT NOT NULL DEFAULT '{}',
+             updated_at TEXT NOT NULL
+           );
 
-    CREATE TABLE IF NOT EXISTS ops_task_events (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      task_id TEXT NOT NULL,
-      event_type TEXT NOT NULL,
-      occurred_at TEXT NOT NULL,
-      status TEXT,
-      metadata_json TEXT NOT NULL DEFAULT '{}'
-    );
+           CREATE TABLE IF NOT EXISTS ops_task_events (
+             id INTEGER PRIMARY KEY AUTOINCREMENT,
+             task_id TEXT NOT NULL,
+             event_type TEXT NOT NULL,
+             occurred_at TEXT NOT NULL,
+             status TEXT,
+             metadata_json TEXT NOT NULL DEFAULT '{}'
+           );
 
-    CREATE INDEX IF NOT EXISTS ops_task_events_task_time_idx
-      ON ops_task_events(task_id, occurred_at);
+           CREATE INDEX IF NOT EXISTS ops_task_events_task_time_idx
+             ON ops_task_events(task_id, occurred_at);
 
-    CREATE INDEX IF NOT EXISTS ops_tasks_status_time_idx
-      ON ops_tasks(status, submitted_at);
+           CREATE INDEX IF NOT EXISTS ops_tasks_status_time_idx
+             ON ops_tasks(status, submitted_at);
 
-    CREATE TABLE IF NOT EXISTS ops_sessions (
-      id TEXT PRIMARY KEY,
-      scope TEXT,
-      cwd TEXT,
-      path TEXT,
-      created_at TEXT,
-      updated_at TEXT,
-      metadata_json TEXT NOT NULL DEFAULT '{}'
-    );
+           CREATE TABLE IF NOT EXISTS ops_sessions (
+             id TEXT PRIMARY KEY,
+             scope TEXT,
+             cwd TEXT,
+             path TEXT,
+             created_at TEXT,
+             updated_at TEXT,
+             metadata_json TEXT NOT NULL DEFAULT '{}'
+           );
 
-    CREATE INDEX IF NOT EXISTS ops_sessions_scope_updated_idx
-      ON ops_sessions(scope, updated_at);
+           CREATE INDEX IF NOT EXISTS ops_sessions_scope_updated_idx
+             ON ops_sessions(scope, updated_at);
 
-    CREATE TABLE IF NOT EXISTS ops_session_entries (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      session_id TEXT NOT NULL,
-      entry_id TEXT NOT NULL,
-      parent_entry_id TEXT,
-      entry_type TEXT,
-      created_at TEXT,
-      entry_json TEXT NOT NULL,
-      UNIQUE(session_id, entry_id)
-    );
+           CREATE TABLE IF NOT EXISTS ops_session_entries (
+             id INTEGER PRIMARY KEY AUTOINCREMENT,
+             session_id TEXT NOT NULL,
+             entry_id TEXT NOT NULL,
+             parent_entry_id TEXT,
+             entry_type TEXT,
+             created_at TEXT,
+             entry_json TEXT NOT NULL,
+             UNIQUE(session_id, entry_id)
+           );
 
-    CREATE INDEX IF NOT EXISTS ops_session_entries_session_time_idx
-      ON ops_session_entries(session_id, created_at);
+           CREATE INDEX IF NOT EXISTS ops_session_entries_session_time_idx
+             ON ops_session_entries(session_id, created_at);
 
-    CREATE TABLE IF NOT EXISTS ops_messages (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      session_id TEXT NOT NULL,
-      entry_id TEXT NOT NULL,
-      role TEXT,
-      content TEXT,
-      channel TEXT,
-      sender_id TEXT,
-      chat_id TEXT,
-      created_at TEXT,
-      metadata_json TEXT NOT NULL DEFAULT '{}',
-      UNIQUE(session_id, entry_id)
-    );
+           CREATE TABLE IF NOT EXISTS ops_messages (
+             id INTEGER PRIMARY KEY AUTOINCREMENT,
+             session_id TEXT NOT NULL,
+             entry_id TEXT NOT NULL,
+             role TEXT,
+             content TEXT,
+             channel TEXT,
+             sender_id TEXT,
+             chat_id TEXT,
+             created_at TEXT,
+             metadata_json TEXT NOT NULL DEFAULT '{}',
+             UNIQUE(session_id, entry_id)
+           );
 
-    CREATE INDEX IF NOT EXISTS ops_messages_session_time_idx
-      ON ops_messages(session_id, created_at);
+           CREATE INDEX IF NOT EXISTS ops_messages_session_time_idx
+             ON ops_messages(session_id, created_at);
 
-    CREATE INDEX IF NOT EXISTS ops_messages_channel_time_idx
-      ON ops_messages(channel, created_at);
+           CREATE INDEX IF NOT EXISTS ops_messages_channel_time_idx
+             ON ops_messages(channel, created_at);
 
-    CREATE TABLE IF NOT EXISTS ops_llm_calls (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      purpose TEXT,
-      model TEXT,
-      success INTEGER NOT NULL,
-      duration_ms INTEGER,
-      total_duration_ms INTEGER,
-      load_duration_ms INTEGER,
-      prompt_eval_count INTEGER,
-      eval_count INTEGER,
-      response_length INTEGER,
-      error_json TEXT,
-      metadata_json TEXT NOT NULL DEFAULT '{}',
-      created_at TEXT NOT NULL
-    );
+           CREATE TABLE IF NOT EXISTS ops_llm_calls (
+             id INTEGER PRIMARY KEY AUTOINCREMENT,
+             purpose TEXT,
+             model TEXT,
+             success INTEGER NOT NULL,
+             duration_ms INTEGER,
+             total_duration_ms INTEGER,
+             load_duration_ms INTEGER,
+             prompt_eval_count INTEGER,
+             eval_count INTEGER,
+             response_length INTEGER,
+             error_json TEXT,
+             metadata_json TEXT NOT NULL DEFAULT '{}',
+             created_at TEXT NOT NULL
+           );
 
-    CREATE INDEX IF NOT EXISTS ops_llm_calls_created_idx
-      ON ops_llm_calls(created_at);
+           CREATE INDEX IF NOT EXISTS ops_llm_calls_created_idx
+             ON ops_llm_calls(created_at);
 
-    CREATE TABLE IF NOT EXISTS ops_watchdog_scans (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      scanned_at TEXT NOT NULL,
-      summary_json TEXT NOT NULL
-    );
+           CREATE TABLE IF NOT EXISTS ops_watchdog_scans (
+             id INTEGER PRIMARY KEY AUTOINCREMENT,
+             scanned_at TEXT NOT NULL,
+             summary_json TEXT NOT NULL
+           );
 
-    CREATE INDEX IF NOT EXISTS ops_watchdog_scans_time_idx
-      ON ops_watchdog_scans(scanned_at);
+           CREATE INDEX IF NOT EXISTS ops_watchdog_scans_time_idx
+             ON ops_watchdog_scans(scanned_at);
 
-    CREATE TABLE IF NOT EXISTS ops_proposals (
-      id TEXT PRIMARY KEY,
-      status TEXT NOT NULL,
-      type TEXT NOT NULL,
-      title TEXT NOT NULL,
-      body TEXT NOT NULL,
-      action_json TEXT NOT NULL DEFAULT '{}',
-      metadata_json TEXT NOT NULL DEFAULT '{}',
-      created_by TEXT,
-      decided_by TEXT,
-      created_at TEXT NOT NULL,
-      decided_at TEXT
-    );
+           CREATE TABLE IF NOT EXISTS ops_agent_chat_runs (
+             id TEXT PRIMARY KEY,
+             prompt TEXT NOT NULL,
+             context_json TEXT NOT NULL DEFAULT '{}',
+             channel TEXT,
+             sender_id TEXT,
+             chat_id TEXT,
+             chat_type TEXT,
+             session_id TEXT,
+             primary_model TEXT,
+             fallback_model TEXT,
+             fallback_used INTEGER NOT NULL DEFAULT 0,
+             final_model TEXT,
+             status TEXT NOT NULL,
+             answer TEXT,
+             error_json TEXT,
+             tool_calls_json TEXT NOT NULL DEFAULT '[]',
+             duration_ms INTEGER,
+             metadata_json TEXT NOT NULL DEFAULT '{}',
+             created_at TEXT NOT NULL
+           );
 
-    CREATE INDEX IF NOT EXISTS ops_proposals_status_created_idx
-      ON ops_proposals(status, created_at);
+           CREATE INDEX IF NOT EXISTS ops_agent_chat_runs_created_idx
+             ON ops_agent_chat_runs(created_at);
 
-    CREATE VIEW IF NOT EXISTS zaik_tasks AS
-      SELECT id, type, status, session_id, priority, submitted_at, started_at, completed_at,
-             attempts, max_retries, timeout_ms, duration_ms, result_json, error_json,
-             metadata_json, updated_at
-      FROM ops_tasks;
+           CREATE INDEX IF NOT EXISTS ops_agent_chat_runs_model_status_idx
+             ON ops_agent_chat_runs(primary_model, status, created_at);
 
-    CREATE VIEW IF NOT EXISTS zaik_task_events AS
-      SELECT id, task_id, event_type, occurred_at, status, metadata_json
-      FROM ops_task_events;
+           CREATE TABLE IF NOT EXISTS ops_proposals (
+             id TEXT PRIMARY KEY,
+             status TEXT NOT NULL,
+             type TEXT NOT NULL,
+             title TEXT NOT NULL,
+             body TEXT NOT NULL,
+             action_json TEXT NOT NULL DEFAULT '{}',
+             metadata_json TEXT NOT NULL DEFAULT '{}',
+             created_by TEXT,
+             decided_by TEXT,
+             created_at TEXT NOT NULL,
+             decided_at TEXT
+           );
 
-    CREATE VIEW IF NOT EXISTS zaik_sessions AS
-      SELECT id, scope, cwd, path, created_at, updated_at, metadata_json
-      FROM ops_sessions;
+           CREATE INDEX IF NOT EXISTS ops_proposals_status_created_idx
+             ON ops_proposals(status, created_at);
 
-    CREATE VIEW IF NOT EXISTS zaik_messages AS
-      SELECT id, session_id, entry_id, role, content, channel, sender_id, chat_id,
-             created_at, metadata_json
-      FROM ops_messages;
+           CREATE VIEW IF NOT EXISTS zaik_tasks AS
+             SELECT id, type, status, session_id, priority, submitted_at, started_at, completed_at,
+                    attempts, max_retries, timeout_ms, duration_ms, result_json, error_json,
+                    metadata_json, updated_at
+             FROM ops_tasks;
 
-    CREATE VIEW IF NOT EXISTS zaik_llm_calls AS
-      SELECT id, purpose, model, success, duration_ms, total_duration_ms,
-             load_duration_ms, prompt_eval_count, eval_count, response_length,
-             error_json, metadata_json, created_at
-      FROM ops_llm_calls;
+           CREATE VIEW IF NOT EXISTS zaik_task_events AS
+             SELECT id, task_id, event_type, occurred_at, status, metadata_json
+             FROM ops_task_events;
 
-    CREATE VIEW IF NOT EXISTS zaik_watchdog_scans AS
-      SELECT id, scanned_at, summary_json
-      FROM ops_watchdog_scans;
+           CREATE VIEW IF NOT EXISTS zaik_sessions AS
+             SELECT id, scope, cwd, path, created_at, updated_at, metadata_json
+             FROM ops_sessions;
 
-    CREATE VIEW IF NOT EXISTS zaik_proposals AS
-      SELECT id, status, type, title, body, action_json, metadata_json,
-             created_by, decided_by, created_at, decided_at
-      FROM ops_proposals;
-    """)
+           CREATE VIEW IF NOT EXISTS zaik_messages AS
+             SELECT id, session_id, entry_id, role, content, channel, sender_id, chat_id,
+                    created_at, metadata_json
+             FROM ops_messages;
+
+           CREATE VIEW IF NOT EXISTS zaik_llm_calls AS
+             SELECT id, purpose, model, success, duration_ms, total_duration_ms,
+                    load_duration_ms, prompt_eval_count, eval_count, response_length,
+                    error_json, metadata_json, created_at
+             FROM ops_llm_calls;
+
+           CREATE VIEW IF NOT EXISTS zaik_watchdog_scans AS
+             SELECT id, scanned_at, summary_json
+             FROM ops_watchdog_scans;
+
+           CREATE VIEW IF NOT EXISTS zaik_agent_chat_runs AS
+             SELECT id, prompt, context_json, channel, sender_id, chat_id, chat_type,
+                    session_id, primary_model, fallback_model, fallback_used, final_model,
+                    status, answer, error_json, tool_calls_json, duration_ms,
+                    metadata_json, created_at
+             FROM ops_agent_chat_runs;
+
+           CREATE VIEW IF NOT EXISTS zaik_proposals AS
+             SELECT id, status, type, title, body, action_json, metadata_json,
+                    created_by, decided_by, created_at, decided_at
+             FROM ops_proposals;
+           """),
+         :ok <- ensure_agent_chat_run_columns(conn),
+         :ok <- recreate_agent_chat_run_view(conn) do
+      :ok
+    end
+  end
+
+  defp ensure_agent_chat_run_columns(conn) do
+    columns = existing_columns(conn, "ops_agent_chat_runs")
+
+    [
+      {"channel", "TEXT"},
+      {"sender_id", "TEXT"},
+      {"chat_id", "TEXT"},
+      {"chat_type", "TEXT"},
+      {"session_id", "TEXT"}
+    ]
+    |> Enum.reduce_while(:ok, fn {column, type}, :ok ->
+      if column in columns do
+        {:cont, :ok}
+      else
+        case Sqlite3.execute(conn, "ALTER TABLE ops_agent_chat_runs ADD COLUMN #{column} #{type}") do
+          :ok -> {:cont, :ok}
+          {:error, reason} -> {:halt, {:error, reason}}
+        end
+      end
+    end)
+  end
+
+  defp existing_columns(conn, table) do
+    conn
+    |> query_rows("PRAGMA table_info(#{table})", [])
+    |> Enum.map(fn row -> Enum.at(row, 1) end)
+  end
+
+  defp recreate_agent_chat_run_view(conn) do
+    with :ok <- Sqlite3.execute(conn, "DROP VIEW IF EXISTS zaik_agent_chat_runs") do
+      Sqlite3.execute(conn, """
+      CREATE VIEW zaik_agent_chat_runs AS
+        SELECT id, prompt, context_json, channel, sender_id, chat_id, chat_type,
+               session_id, primary_model, fallback_model, fallback_used, final_model,
+               status, answer, error_json, tool_calls_json, duration_ms,
+               metadata_json, created_at
+        FROM ops_agent_chat_runs;
+      """)
+    end
   end
 
   defp upsert_task(conn, task) do
@@ -538,6 +632,43 @@ defmodule Zaik.TelemetryStore do
       VALUES (?, ?)
       """,
       [DateTime.utc_now() |> DateTime.to_iso8601(), Jason.encode!(summary)]
+    )
+  end
+
+  defp insert_agent_chat_run(conn, attrs) do
+    id = map_value(attrs, :id) || run_id("agent_chat")
+
+    exec(
+      conn,
+      """
+      INSERT INTO ops_agent_chat_runs (
+        id, prompt, context_json, channel, sender_id, chat_id, chat_type,
+        session_id, primary_model, fallback_model, fallback_used, final_model,
+        status, answer, error_json, tool_calls_json, duration_ms, metadata_json,
+        created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      """,
+      [
+        id,
+        to_string(map_value(attrs, :prompt) || ""),
+        Jason.encode!(sanitize(map_value(attrs, :context) || %{})),
+        map_value(attrs, :channel),
+        map_value(attrs, :sender_id),
+        map_value(attrs, :chat_id),
+        map_value(attrs, :chat_type),
+        map_value(attrs, :session_id),
+        map_value(attrs, :primary_model),
+        map_value(attrs, :fallback_model),
+        boolean_integer(map_value(attrs, :fallback_used) || false),
+        map_value(attrs, :final_model),
+        to_string(map_value(attrs, :status) || :unknown),
+        map_value(attrs, :answer),
+        encode_value(map_value(attrs, :error)),
+        Jason.encode!(sanitize(map_value(attrs, :tool_calls) || [])),
+        map_value(attrs, :duration_ms),
+        Jason.encode!(sanitize(map_value(attrs, :metadata) || %{})),
+        iso(map_value(attrs, :created_at) || DateTime.utc_now())
+      ]
     )
   end
 
@@ -784,8 +915,10 @@ defmodule Zaik.TelemetryStore do
 
   defp parse_datetime(value), do: value
 
-  defp proposal_id do
-    "prop_" <> Base.url_encode64(:crypto.strong_rand_bytes(9), padding: false)
+  defp proposal_id, do: run_id("prop")
+
+  defp run_id(prefix) do
+    prefix <> "_" <> Base.url_encode64(:crypto.strong_rand_bytes(9), padding: false)
   end
 
   defp duration_ms(%Zaik.Task{
@@ -803,6 +936,9 @@ defmodule Zaik.TelemetryStore do
   defp encode_value(nil), do: nil
   defp encode_value(value), do: Jason.encode!(sanitize(value))
 
+  defp sanitize(nil), do: nil
+  defp sanitize(value) when is_boolean(value), do: value
+  defp sanitize(atom) when is_atom(atom), do: to_string(atom)
   defp sanitize(pid) when is_pid(pid), do: inspect(pid)
   defp sanitize(ref) when is_reference(ref), do: inspect(ref)
   defp sanitize(tuple) when is_tuple(tuple), do: tuple |> Tuple.to_list() |> Enum.map(&sanitize/1)

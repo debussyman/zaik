@@ -48,42 +48,63 @@ defmodule Zaik.AgentChat do
       sql_tool = Keyword.get(opts, :sql_tool, Zaik.Analytics.SQLTool)
 
       messages = base_messages(text, context)
-      respond_with_fallback(client, sql_tool, messages, cfg)
+      respond_with_fallback(client, sql_tool, messages, cfg, text, context)
     else
       {:error, :disabled}
     end
   end
 
-  defp respond_with_fallback(client, sql_tool, messages, cfg) do
-    primary_result = loop(client, sql_tool, messages, cfg, 0)
+  defp respond_with_fallback(client, sql_tool, messages, cfg, text, context) do
+    started_mono = System.monotonic_time(:millisecond)
+    started_at = DateTime.utc_now()
+    primary = run_attempt(client, sql_tool, messages, cfg)
 
-    if fallback_needed?(primary_result) and fallback_available?(cfg) do
-      fallback_cfg = %{cfg | model: cfg.fallback_model, fallback_enabled: false}
-      reason = fallback_reason(primary_result)
+    {public_result, fallback} =
+      if fallback_needed?(primary.result) and fallback_available?(cfg) do
+        fallback_cfg = %{cfg | model: cfg.fallback_model, fallback_enabled: false}
+        reason = fallback_reason(primary.result)
 
-      Logger.info(
-        "AgentChat falling back from #{inspect(cfg.model)} to #{inspect(fallback_cfg.model)}: #{inspect(reason)}"
-      )
+        Logger.info(
+          "AgentChat falling back from #{inspect(cfg.model)} to #{inspect(fallback_cfg.model)}: #{inspect(reason)}"
+        )
 
-      Zaik.TelemetryStore.safe_record_llm_call(%{
-        purpose: :agent_chat_fallback,
-        model: fallback_cfg.model,
-        success: true,
-        metadata: %{
-          primary_model: cfg.model,
-          fallback_model: fallback_cfg.model,
-          reason: inspect(reason)
-        }
-      })
+        Zaik.TelemetryStore.safe_record_llm_call(%{
+          purpose: :agent_chat_fallback,
+          model: fallback_cfg.model,
+          success: true,
+          metadata: %{
+            primary_model: cfg.model,
+            fallback_model: fallback_cfg.model,
+            reason: inspect(reason)
+          }
+        })
 
-      case loop(client, sql_tool, messages, fallback_cfg, 0) do
-        {:ok, _answer} = ok -> ok
-        {:error, fallback_reason} -> {:error, {:fallback_failed, reason, fallback_reason}}
-        other -> other
+        fallback = run_attempt(client, sql_tool, messages, fallback_cfg)
+
+        result =
+          case fallback.result do
+            {:ok, _answer} = ok -> ok
+            {:error, fallback_reason} -> {:error, {:fallback_failed, reason, fallback_reason}}
+            other -> other
+          end
+
+        {result, fallback}
+      else
+        {primary.result, nil}
       end
-    else
-      primary_result
-    end
+
+    record_run_trace(
+      text,
+      context,
+      cfg,
+      primary,
+      fallback,
+      public_result,
+      started_at,
+      started_mono
+    )
+
+    public_result
   end
 
   defp fallback_available?(cfg) do
@@ -110,13 +131,26 @@ defmodule Zaik.AgentChat do
       String.contains?(normalized, "try asking a narrower question")
   end
 
-  defp loop(_client, _sql_tool, _messages, cfg, tool_count)
-       when tool_count >= cfg.max_tool_calls do
-    {:ok,
-     "I reached my read-only analysis limit before I could finish. Try asking a narrower question."}
+  defp run_attempt(client, sql_tool, messages, cfg) do
+    started_mono = System.monotonic_time(:millisecond)
+    {result, tool_calls} = loop(client, sql_tool, messages, cfg, 0, [])
+
+    %{
+      model: cfg.model,
+      result: result,
+      tool_calls: tool_calls,
+      duration_ms: System.monotonic_time(:millisecond) - started_mono
+    }
   end
 
-  defp loop(client, sql_tool, messages, cfg, tool_count) do
+  defp loop(_client, _sql_tool, _messages, cfg, tool_count, tool_calls)
+       when tool_count >= cfg.max_tool_calls do
+    {{:ok,
+      "I reached my read-only analysis limit before I could finish. Try asking a narrower question."},
+     tool_calls}
+  end
+
+  defp loop(client, sql_tool, messages, cfg, tool_count, tool_calls) do
     with {:ok, result} <-
            client.chat("",
              messages: messages,
@@ -133,22 +167,22 @@ defmodule Zaik.AgentChat do
          {:ok, action} <- decode_action(result.response) do
       case action do
         %{"type" => "final", "answer" => answer} when is_binary(answer) ->
-          {:ok, String.trim(answer)}
+          {{:ok, String.trim(answer)}, tool_calls}
 
         %{"type" => "tool_call", "tool" => "sql_query", "args" => args} when is_map(args) ->
-          run_sql_tool(client, sql_tool, messages, cfg, tool_count, args)
+          run_sql_tool(client, sql_tool, messages, cfg, tool_count, tool_calls, args)
 
         _ ->
-          {:error, {:invalid_agent_action, action}}
+          {{:error, {:invalid_agent_action, action}}, tool_calls}
       end
     else
       {:error, reason} ->
         Logger.debug("Agent chat failed: #{inspect(reason)}")
-        {:error, reason}
+        {{:error, reason}, tool_calls}
     end
   end
 
-  defp run_sql_tool(client, sql_tool, messages, cfg, tool_count, args) do
+  defp run_sql_tool(client, sql_tool, messages, cfg, tool_count, tool_calls, args) do
     db = args |> Map.get("database", "ops") |> normalize_database()
     query = Map.get(args, "query")
     limit = normalize_limit(Map.get(args, "limit"), 200)
@@ -175,9 +209,11 @@ defmodule Zaik.AgentChat do
       content: Jason.encode!(%{type: "tool_call", tool: "sql_query", args: args})
     }
 
+    tool_calls = tool_calls ++ [trace_tool_call(db, query, limit, tool_result)]
+
     case tool_result do
       {:ok, _result} ->
-        final_answer(client, user_text_from(messages), tool_message, cfg)
+        {final_answer(client, user_text_from(messages), tool_message, cfg), tool_calls}
 
       {:error, _reason} ->
         correction_instruction = %{
@@ -191,10 +227,92 @@ defmodule Zaik.AgentChat do
           sql_tool,
           messages ++ [assistant_message, tool_message, correction_instruction],
           cfg,
-          tool_count + 1
+          tool_count + 1,
+          tool_calls
         )
     end
   end
+
+  defp trace_tool_call(db, query, limit, tool_result) do
+    %{
+      database: db,
+      query: query,
+      limit: limit,
+      ok: match?({:ok, _result}, tool_result),
+      row_count: tool_row_count(tool_result),
+      error: tool_error(tool_result)
+    }
+  end
+
+  defp tool_row_count({:ok, %{row_count: row_count}}), do: row_count
+  defp tool_row_count({:ok, %{"row_count" => row_count}}), do: row_count
+  defp tool_row_count(_tool_result), do: nil
+
+  defp tool_error({:error, reason}), do: inspect(reason)
+  defp tool_error(_tool_result), do: nil
+
+  defp record_run_trace(
+         text,
+         context,
+         cfg,
+         primary,
+         fallback,
+         public_result,
+         started_at,
+         started_mono
+       ) do
+    final_attempt = fallback || primary
+
+    trace_context = trace_context(context)
+
+    Zaik.TelemetryStore.safe_record_agent_chat_run(%{
+      prompt: text,
+      context: trace_context,
+      channel: Map.get(trace_context, :channel),
+      sender_id: Map.get(trace_context, :sender_id) || Map.get(trace_context, :sender),
+      chat_id: Map.get(trace_context, :chat_id),
+      chat_type: Map.get(trace_context, :chat_type),
+      session_id: Map.get(trace_context, :session_id),
+      primary_model: primary.model,
+      fallback_model: cfg.fallback_model,
+      fallback_used: not is_nil(fallback),
+      final_model: final_attempt.model,
+      status: result_status(public_result),
+      answer: result_answer(public_result),
+      error: result_error(public_result),
+      tool_calls: primary.tool_calls ++ if(is_nil(fallback), do: [], else: fallback.tool_calls),
+      duration_ms: System.monotonic_time(:millisecond) - started_mono,
+      created_at: started_at,
+      metadata: %{
+        primary_duration_ms: primary.duration_ms,
+        fallback_duration_ms: if(is_nil(fallback), do: nil, else: fallback.duration_ms),
+        primary_result: inspect(primary.result, limit: 20),
+        fallback_result: if(is_nil(fallback), do: nil, else: inspect(fallback.result, limit: 20))
+      }
+    })
+  end
+
+  defp trace_context(context) when is_map(context) do
+    [:channel, :sender_id, :sender, :chat_id, :chat_type, :session_id]
+    |> Enum.reduce(%{}, fn key, acc ->
+      case Map.get(context, key) || Map.get(context, to_string(key)) do
+        nil -> acc
+        value -> Map.put(acc, key, to_string(value))
+      end
+    end)
+  end
+
+  defp trace_context(_context), do: %{}
+
+  defp result_status({:ok, _answer}), do: :ok
+  defp result_status({:error, _reason}), do: :error
+  defp result_status(_other), do: :unknown
+
+  defp result_answer({:ok, answer}) when is_binary(answer), do: answer
+  defp result_answer(_result), do: nil
+
+  defp result_error({:error, reason}), do: reason
+  defp result_error(_result), do: nil
 
   defp final_answer(client, user_text, tool_message, cfg) do
     final_messages = [

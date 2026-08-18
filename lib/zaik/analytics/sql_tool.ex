@@ -16,6 +16,7 @@ defmodule Zaik.Analytics.SQLTool do
                "zaik_messages",
                "zaik_llm_calls",
                "zaik_watchdog_scans",
+               "zaik_agent_chat_runs",
                "zaik_proposals"
              ])
 
@@ -43,6 +44,11 @@ defmodule Zaik.Analytics.SQLTool do
       error_json, metadata_json, created_at)
 
     zaik_watchdog_scans(id, scanned_at, summary_json)
+
+    zaik_agent_chat_runs(id, prompt, context_json, channel, sender_id, chat_id,
+      chat_type, session_id, primary_model, fallback_model, fallback_used,
+      final_model, status, answer, error_json, tool_calls_json, duration_ms,
+      metadata_json, created_at)
 
     zaik_proposals(id, status, type, title, body, action_json, metadata_json,
       created_by, decided_by, created_at, decided_at)

@@ -62,6 +62,29 @@ defmodule Zaik.AgentChat.Evals do
             row_count: 1
           }
 
+        String.contains?(downcased, "zaik_agent_chat_runs") ->
+          %{
+            columns: [
+              "created_at",
+              "prompt",
+              "primary_model",
+              "fallback_used",
+              "final_model",
+              "status"
+            ],
+            rows: [
+              %{
+                "created_at" => "2026-08-17T17:00:00Z",
+                "prompt" => "what have we asked you today?",
+                "primary_model" => "qwen3:4b-instruct",
+                "fallback_used" => 1,
+                "final_model" => "qwen3-coder:30b",
+                "status" => "ok"
+              }
+            ],
+            row_count: 1
+          }
+
         true ->
           %{columns: [], rows: [], row_count: 0}
       end
@@ -128,6 +151,15 @@ defmodule Zaik.AgentChat.Evals do
         expected_query_terms: ["zaik_tasks"],
         forbidden_query_terms: [],
         expected_answer_terms: ["failed"]
+      },
+      %{
+        name: "agent_chat_fallbacks_recently",
+        prompt: "did you fall back to the bigger model recently?",
+        expected_db: :ops,
+        context: eval_context(),
+        expected_query_terms: ["zaik_agent_chat_runs", "fallback_used"],
+        forbidden_query_terms: ["zaik_messages", "zaik_tasks"],
+        expected_answer_terms: ["back", "model"]
       },
       %{
         name: "home_lily_warm_recently",
