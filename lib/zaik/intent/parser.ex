@@ -14,6 +14,7 @@ defmodule Zaik.Intent.Parser do
     "home_presence_status",
     "system_health",
     "watchdog_scan",
+    "agent_chat",
     "llm_general_question",
     "unknown"
   ]
@@ -97,7 +98,13 @@ defmodule Zaik.Intent.Parser do
     Choose home_status for whole-home status.
     Choose system_health for Zaik/system health questions.
     Choose watchdog_scan for explicit watchdog scan requests.
-    Choose llm_general_question only for non-control general knowledge questions.
+    Choose agent_chat for conversational questions that require Zaik memory, previous conversations, recent messages, what users asked, tasks, failures, model fallback, AgentChat traces, or flexible analysis over home/ops data.
+    Examples of agent_chat:
+    - "what questions have we asked you recently?"
+    - "what have I asked you today?"
+    - "did you fall back to the bigger model recently?"
+    - "what tasks failed recently?"
+    Choose llm_general_question only for non-control general knowledge questions that do not require Zaik memory or operational/home data.
     Choose unknown when the request cannot be safely mapped.
     Do not answer the user. Only classify.
     """

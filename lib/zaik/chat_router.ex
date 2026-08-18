@@ -71,8 +71,11 @@ defmodule Zaik.ChatRouter do
   def dispatch_intent(%{intent: :watchdog_scan}, _text, context, _opts),
     do: Zaik.CommandProcessor.process("watchdog scan", context)
 
-  def dispatch_intent(%{intent: :llm_general_question}, text, context, _opts),
-    do: Zaik.CommandProcessor.process("ask #{text}", context)
+  def dispatch_intent(%{intent: :agent_chat}, text, context, opts),
+    do: route_agent_chat(text, context, opts)
+
+  def dispatch_intent(%{intent: :llm_general_question}, text, context, opts),
+    do: route_agent_chat(text, context, put_agent_chat_opt(opts, :prompt_domain, :general))
 
   def dispatch_intent(%{intent: :unknown}, text, context, opts),
     do: route_agent_chat(text, context, opts)
@@ -96,6 +99,12 @@ defmodule Zaik.ChatRouter do
   defp fallback_response,
     do:
       "I'm not sure how to route that yet. Try asking about home, Lily's room, Zaik health, or use `help`."
+
+  defp put_agent_chat_opt(opts, key, value) do
+    Keyword.update(opts, :agent_chat_opts, [{key, value}], fn agent_opts ->
+      Keyword.put(agent_opts, key, value)
+    end)
+  end
 
   defp explicit_command_response?(response) when is_binary(response),
     do: not String.starts_with?(response, "Unknown command.")

@@ -6,14 +6,14 @@ defmodule Zaik.AgentChat.Prompts do
   much more reliable when they see only the relevant views and one output shape.
   """
 
-  def planner(text, context \\ %{}) do
-    domain = domain(text)
+  def planner(text, context \\ %{}, forced_domain \\ nil) do
+    domain = forced_domain || domain(text)
 
     [
-      base_planner_contract(),
+      base_planner_contract(domain),
       domain_policy(domain),
       request_context(context),
-      "PLANNER MODE: Return one sql_query tool_call JSON object. Do not answer the user. Do not output final."
+      planner_mode_instruction(domain)
     ]
     |> Enum.join("\n\n")
   end
@@ -57,11 +57,11 @@ defmodule Zaik.AgentChat.Prompts do
         :home_readings
 
       true ->
-        :ops_messages
+        :general
     end
   end
 
-  def domain(_text), do: :ops_messages
+  def domain(_text), do: :general
 
   def request_context(context) when is_map(context) do
     channel = context_value(context, :channel)
@@ -91,7 +91,22 @@ defmodule Zaik.AgentChat.Prompts do
 
   def request_context(_context), do: request_context(%{})
 
-  defp base_planner_contract do
+  defp base_planner_contract(:general) do
+    """
+    You are Zaik, a local personal house agent. You can answer ordinary conversational and general-knowledge questions directly.
+
+    CRITICAL OUTPUT CONTRACT:
+    - Return exactly one valid JSON object and nothing else.
+    - Return ONLY this shape:
+      {"type":"final","answer":"..."}
+    - Do not output markdown, comments, code fences, or trailing text.
+    - If the user asks about Zaik's memory, prior messages, home sensor history, tasks, failures, model fallback, or operational traces, say you need the SQL-backed house memory path instead of pretending not to have access.
+    - Do not claim you cannot access prior conversations when the user is asking about Zaik/home/ops memory; those should be classified as agent_chat by the intent parser.
+    """
+    |> String.trim()
+  end
+
+  defp base_planner_contract(_domain) do
     """
     You are Zaik's SQL planner. You have one tool: sql_query.
 
@@ -103,6 +118,25 @@ defmodule Zaik.AgentChat.Prompts do
     - Do not output markdown, comments, code fences, or trailing text.
     - Use only SQLite SELECT or WITH SELECT.
     - Never invent table/view names. Query only the documented views in this prompt.
+    """
+    |> String.trim()
+  end
+
+  defp planner_mode_instruction(:general) do
+    "GENERAL CONVERSATION MODE: Return one final JSON object answering the user directly. Do not call tools."
+  end
+
+  defp planner_mode_instruction(_domain) do
+    "PLANNER MODE: Return one sql_query tool_call JSON object. Do not answer the user. Do not output final."
+  end
+
+  defp domain_policy(:general) do
+    """
+    DOMAIN: general conversation.
+
+    Answer arbitrary non-control questions normally and concisely. You are allowed to use general knowledge.
+    Keep Zaik's identity: you are the house agent, not a disconnected chatbot.
+    For requests that would change the home or system state, do not execute anything; say that changes require confirmation.
     """
     |> String.trim()
   end

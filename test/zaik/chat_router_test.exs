@@ -22,6 +22,30 @@ defmodule Zaik.ChatRouterTest do
     def parse(_text, _opts), do: {:ok, %{intent: :unknown, confidence: 0.1}}
   end
 
+  defmodule GeneralQuestionParser do
+    def parse(_text, _opts), do: {:ok, %{intent: :llm_general_question, confidence: 0.95}}
+  end
+
+  defmodule AgentChatParser do
+    def parse(_text, _opts), do: {:ok, %{intent: :agent_chat, confidence: 0.95}}
+  end
+
+  defmodule MemoryAgentClient do
+    def chat(_prompt, opts) do
+      messages = Keyword.fetch!(opts, :messages)
+      send(self(), {:agent_system_prompt, messages |> hd() |> Map.fetch!(:content)})
+
+      {:ok,
+       %{
+         response:
+           Jason.encode!(%{
+             "type" => "final",
+             "answer" => "You recently asked about Lily's room and Zaik's model fallback."
+           })
+       }}
+    end
+  end
+
   setup do
     Zaik.Home.DeviceStore.reset()
     Zaik.Home.HistoryStore.reset()
@@ -65,6 +89,44 @@ defmodule Zaik.ChatRouterTest do
 
     assert response =~ "Zaik is"
     assert response =~ "Queue:"
+  end
+
+  test "general LLM intent routes through house AgentChat instead of raw ask task" do
+    response =
+      Zaik.ChatRouter.process(
+        "what is photosynthesis?",
+        %{channel: :telegram, sender_id: "111", chat_id: "-100", chat_type: "group"},
+        parser: GeneralQuestionParser,
+        agent_chat_opts: [
+          client: MemoryAgentClient,
+          config: %{enabled: true, fallback_enabled: false, max_tool_calls: 3}
+        ]
+      )
+
+    assert response =~ "recently asked"
+    refute response =~ "LLM task"
+    assert_received {:agent_system_prompt, prompt}
+    assert prompt =~ "DOMAIN: general conversation"
+    assert prompt =~ ~s({"type":"final","answer":"..."})
+  end
+
+  test "agent_chat intent routes to SQL-backed house memory prompt" do
+    response =
+      Zaik.ChatRouter.process(
+        "what questions have we asked you recently",
+        %{channel: :telegram, sender_id: "111", chat_id: "-100", chat_type: "group"},
+        parser: AgentChatParser,
+        agent_chat_opts: [
+          client: MemoryAgentClient,
+          config: %{enabled: true, fallback_enabled: false, max_tool_calls: 3}
+        ]
+      )
+
+    assert response =~ "recently asked"
+    refute response =~ "LLM task"
+    assert_received {:agent_system_prompt, prompt}
+    assert prompt =~ "DOMAIN: ops message history"
+    assert prompt =~ "Return one sql_query tool_call"
   end
 
   test "unknown intents get a helpful chat response" do

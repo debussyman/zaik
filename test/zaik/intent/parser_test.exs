@@ -39,6 +39,33 @@ defmodule Zaik.Intent.ParserTest do
     assert Keyword.fetch!(opts, :temperature) == 0.0
   end
 
+  defmodule AgentChatClient do
+    def chat(_prompt, _opts),
+      do:
+        {:ok,
+         %{
+           response:
+             Jason.encode!(%{
+               "intent" => "agent_chat",
+               "device_query" => nil,
+               "fields" => [],
+               "time_window" => "recently",
+               "confidence" => 0.9
+             })
+         }}
+  end
+
+  test "parses agent_chat intent for house memory questions" do
+    assert {:ok, intent} =
+             Zaik.Intent.Parser.parse("what questions have we asked you recently?",
+               client: AgentChatClient
+             )
+
+    assert intent.intent == :agent_chat
+    assert intent.time_window == "recently"
+    assert intent.confidence == 0.9
+  end
+
   defmodule UnknownClient do
     def chat(_prompt, _opts),
       do: {:ok, %{response: Jason.encode!(%{"intent" => "delete_everything"})}}

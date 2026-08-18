@@ -47,7 +47,7 @@ defmodule Zaik.AgentChat do
       client = Keyword.get(opts, :client, Zaik.LLM.OllamaClient)
       sql_tool = Keyword.get(opts, :sql_tool, Zaik.Analytics.SQLTool)
 
-      messages = base_messages(text, context)
+      messages = base_messages(text, context, Keyword.get(opts, :prompt_domain))
       respond_with_fallback(client, sql_tool, messages, cfg, text, context)
     else
       {:error, :disabled}
@@ -353,9 +353,9 @@ defmodule Zaik.AgentChat do
     end
   end
 
-  defp base_messages(text, context) do
+  defp base_messages(text, context, prompt_domain) do
     [
-      %{role: "system", content: Zaik.AgentChat.Prompts.planner(text, context)},
+      %{role: "system", content: Zaik.AgentChat.Prompts.planner(text, context, prompt_domain)},
       %{role: "user", content: text}
     ]
   end
@@ -363,13 +363,28 @@ defmodule Zaik.AgentChat do
   def system_prompt, do: Zaik.AgentChat.Prompts.planner("", %{})
 
   defp decode_action(response) when is_binary(response) do
-    with {:ok, decoded} <-
-           response
-           |> String.trim()
-           |> strip_code_fence()
-           |> Jason.decode() do
-      {:ok, normalize_action(decoded)}
+    normalized_response =
+      response
+      |> String.trim()
+      |> strip_code_fence()
+
+    case Jason.decode(normalized_response) do
+      {:ok, decoded} -> {:ok, normalize_action(decoded)}
+      {:error, _reason} -> decode_non_json_action(normalized_response)
     end
+  end
+
+  defp decode_non_json_action(response) do
+    if sql_query_text?(response) do
+      {:ok, normalize_tool_call("sql_query", %{"query" => response})}
+    else
+      {:error, %Jason.DecodeError{data: response, position: 0, token: nil}}
+    end
+  end
+
+  defp sql_query_text?(text) when is_binary(text) do
+    downcased = text |> String.trim() |> String.downcase()
+    String.starts_with?(downcased, "select ") or String.starts_with?(downcased, "with ")
   end
 
   defp normalize_action(%{"type" => "final", "answer" => answer} = action) when is_binary(answer),

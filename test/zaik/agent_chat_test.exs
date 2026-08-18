@@ -48,6 +48,27 @@ defmodule Zaik.AgentChatTest do
     end
   end
 
+  defmodule RawSQLClient do
+    def chat(_prompt, opts) do
+      messages = Keyword.fetch!(opts, :messages)
+
+      response =
+        if Enum.any?(messages, &tool_result_message?/1) do
+          Jason.encode!(%{"type" => "final", "answer" => "Answered from raw SQL output."})
+        else
+          "SELECT content FROM zaik_messages WHERE role = 'user' ORDER BY created_at DESC LIMIT 5"
+        end
+
+      {:ok, %{model: "raw-sql", response: response, done: true, raw: %{}}}
+    end
+
+    defp tool_result_message?(%{role: "user", content: content}) do
+      String.starts_with?(String.trim_leading(content), "SQL TOOL RESULT")
+    end
+
+    defp tool_result_message?(_message), do: false
+  end
+
   defmodule FallbackClient do
     def chat(_prompt, opts) do
       model = Keyword.fetch!(opts, :model)
@@ -119,6 +140,19 @@ defmodule Zaik.AgentChatTest do
     assert row["fallback_used"] == 0
     assert row["primary_model"]
     assert row["tool_calls_json"] =~ "home_readings"
+  end
+
+  test "accepts raw SELECT text from planner as a SQL tool call" do
+    assert {:ok, "Answered from raw SQL output."} =
+             Zaik.AgentChat.respond("what did we ask recently?", %{},
+               client: RawSQLClient,
+               sql_tool: FakeSQLTool,
+               config: %{enabled: true, fallback_enabled: false, max_tool_calls: 3}
+             )
+
+    assert_received {:sql_tool_called, query, opts}
+    assert query =~ "zaik_messages"
+    assert opts[:db] == :ops
   end
 
   test "falls back to configured model when primary returns an error" do
