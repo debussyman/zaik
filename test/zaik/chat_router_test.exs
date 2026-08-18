@@ -48,8 +48,9 @@ defmodule Zaik.ChatRouterTest do
     assert user_message =~ "past 30 minutes"
     assert system_prompt =~ "You are Zaik, a local personal house agent"
     assert system_prompt =~ "home_readings"
-    assert system_prompt =~ "datetime('now', '-30 minutes')"
-    assert system_prompt =~ "Do not collapse different requested windows"
+    assert system_prompt =~ "CURRENT TIME CONTEXT"
+    assert system_prompt =~ "Interpret natural-language time phrases"
+    assert system_prompt =~ "Do not collapse different requested time windows"
   end
 
   test "free-form ops/memory questions use the same house-agent brain" do

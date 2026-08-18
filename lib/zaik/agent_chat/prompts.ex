@@ -13,6 +13,7 @@ defmodule Zaik.AgentChat.Prompts do
 
     [
       house_identity(domain),
+      current_time_context(),
       domain_policy(domain),
       request_context(context),
       mode_instruction(domain)
@@ -101,6 +102,21 @@ defmodule Zaik.AgentChat.Prompts do
     - Do not output markdown, comments, code fences, or trailing text.
     - Use only SQLite SELECT or WITH SELECT.
     - Never invent table/view names. Query only the documented views in this prompt.
+    """
+    |> String.trim()
+  end
+
+  defp current_time_context do
+    utc_now = DateTime.utc_now()
+    local = local_datetime_tuple()
+
+    """
+    CURRENT TIME CONTEXT:
+    utc_now: #{DateTime.to_iso8601(utc_now)}
+    local_now: #{format_local_datetime(local)}
+    local_utc_offset: #{format_local_offset(local, utc_now)}
+
+    Use local_now to interpret human calendar language, and use UTC-compatible recorded_at/created_at filters when querying persisted history.
     """
     |> String.trim()
   end
@@ -213,12 +229,15 @@ defmodule Zaik.AgentChat.Prompts do
     - Do not join to home_devices unless you need device metadata. home_readings already has device_name and room.
 
     Time windows:
-    - For "today", use substr(recorded_at, 1, 10) = date('now').
+    - Current local and UTC time are shown in CURRENT TIME CONTEXT.
+    - Interpret natural-language time phrases using current local time.
+    - For "today", use substr(recorded_at, 1, 10) = date('now') or equivalent UTC ISO bounds.
     - For "recently" without a precise window, use ORDER BY recorded_at DESC LIMIT 10 or 20.
-    - For "past/last 30 minutes", use recorded_at >= datetime('now', '-30 minutes').
-    - For "past/last 3 hours", use recorded_at >= datetime('now', '-3 hours').
-    - For "past/last N hours/minutes/days", translate N exactly into SQLite datetime('now', '-N unit').
-    - Do not collapse different requested windows into one default trend window.
+    - For explicit relative durations such as "past/last 30 minutes", use recorded_at >= datetime('now', '-30 minutes').
+    - For explicit relative durations such as "past/last 3 hours", use recorded_at >= datetime('now', '-3 hours').
+    - For explicit relative durations such as "past/last N hours/minutes/days", translate N exactly into SQLite datetime('now', '-N unit').
+    - For calendar phrases or parts of the day, infer the appropriate local calendar interval from current local time rather than copying a relative-duration example.
+    - Do not collapse different requested time windows into one default trend window.
 
     For temperature/humidity/illuminance change over a window, compare the newest and oldest readings inside exactly that window.
 
@@ -255,6 +274,34 @@ defmodule Zaik.AgentChat.Prompts do
   end
 
   def request_context(_context), do: request_context(%{})
+
+  defp local_datetime_tuple, do: :calendar.local_time()
+
+  defp format_local_datetime({{year, month, day}, {hour, minute, second}}) do
+    "#{pad4(year)}-#{pad2(month)}-#{pad2(day)}T#{pad2(hour)}:#{pad2(minute)}:#{pad2(second)}"
+  end
+
+  defp format_local_offset(local, utc_now) do
+    local_seconds = :calendar.datetime_to_gregorian_seconds(local)
+
+    utc_seconds =
+      utc_now
+      |> DateTime.to_naive()
+      |> NaiveDateTime.truncate(:second)
+      |> NaiveDateTime.to_erl()
+      |> :calendar.datetime_to_gregorian_seconds()
+
+    offset_seconds = local_seconds - utc_seconds
+    sign = if offset_seconds < 0, do: "-", else: "+"
+    abs_seconds = abs(offset_seconds)
+    hours = div(abs_seconds, 3600)
+    minutes = div(rem(abs_seconds, 3600), 60)
+
+    "#{sign}#{pad2(hours)}:#{pad2(minutes)}"
+  end
+
+  defp pad2(value), do: value |> Integer.to_string() |> String.pad_leading(2, "0")
+  defp pad4(value), do: value |> Integer.to_string() |> String.pad_leading(4, "0")
 
   defp context_value(context, key) when is_map(context),
     do: Map.get(context, key) || Map.get(context, to_string(key))
