@@ -1,46 +1,20 @@
 defmodule Zaik.ChatRouterTest do
   use ExUnit.Case, async: false
 
-  defmodule TrendParser do
-    def parse(_text, _opts) do
-      {:ok,
-       %{
-         intent: :home_sensor_trend,
-         device_query: "lily",
-         fields: ["temperature"],
-         time_window: "last hour",
-         confidence: 0.95
-       }}
-    end
-  end
-
-  defmodule HealthParser do
-    def parse(_text, _opts), do: {:ok, %{intent: :system_health, confidence: 0.95}}
-  end
-
-  defmodule UnknownParser do
-    def parse(_text, _opts), do: {:ok, %{intent: :unknown, confidence: 0.1}}
-  end
-
-  defmodule GeneralQuestionParser do
-    def parse(_text, _opts), do: {:ok, %{intent: :llm_general_question, confidence: 0.95}}
-  end
-
-  defmodule AgentChatParser do
-    def parse(_text, _opts), do: {:ok, %{intent: :agent_chat, confidence: 0.95}}
-  end
-
-  defmodule MemoryAgentClient do
+  defmodule HouseAgentClient do
     def chat(_prompt, opts) do
       messages = Keyword.fetch!(opts, :messages)
-      send(self(), {:agent_system_prompt, messages |> hd() |> Map.fetch!(:content)})
+      user_message = messages |> List.last() |> Map.fetch!(:content)
+      system_prompt = messages |> hd() |> Map.fetch!(:content)
+
+      send(self(), {:house_agent_called, user_message, system_prompt})
 
       {:ok,
        %{
          response:
            Jason.encode!(%{
              "type" => "final",
-             "answer" => "You recently asked about Lily's room and Zaik's model fallback."
+             "answer" => "HouseAgent answered: #{user_message}"
            })
        }}
     end
@@ -52,89 +26,70 @@ defmodule Zaik.ChatRouterTest do
     :ok
   end
 
-  test "explicit commands bypass intent parsing" do
-    response = Zaik.ChatRouter.process("health", %{}, parser: UnknownParser)
+  test "explicit commands still bypass the house agent" do
+    response =
+      Zaik.ChatRouter.process("health", %{}, agent_chat_opts: [client: HouseAgentClient])
 
     assert response =~ "Zaik is"
+    refute_received {:house_agent_called, _message, _prompt}
   end
 
-  test "free-form home trend routes through existing sensor trend command" do
-    now = DateTime.utc_now()
-
-    Zaik.Home.DeviceStore.upsert_device("Lily's room multi-sensor", %{"temperature" => 26.0})
-
-    Zaik.Home.HistoryStore.record_device(
-      "Lily's room multi-sensor",
-      %{"temperature" => 27.0},
-      %{},
-      observed_at: DateTime.add(now, -3500, :second)
-    )
-
-    Zaik.Home.HistoryStore.record_device(
-      "Lily's room multi-sensor",
-      %{"temperature" => 26.0},
-      %{},
-      observed_at: now
-    )
-
+  test "free-form home questions use the single house-agent brain" do
     response =
-      Zaik.ChatRouter.process("Has Lily's room cooled off?", %{}, parser: TrendParser)
-
-    assert response =~ "Lily's room is cooling."
-    assert response =~ "It is now 78.8°F, down 1.8°F"
-  end
-
-  test "free-form health routes to health command" do
-    response = Zaik.ChatRouter.process("Is Zaik healthy?", %{}, parser: HealthParser)
-
-    assert response =~ "Zaik is"
-    assert response =~ "Queue:"
-  end
-
-  test "general LLM intent routes through house AgentChat instead of raw ask task" do
-    response =
-      Zaik.ChatRouter.process(
-        "what is photosynthesis?",
-        %{channel: :telegram, sender_id: "111", chat_id: "-100", chat_type: "group"},
-        parser: GeneralQuestionParser,
+      Zaik.ChatRouter.process("What was Lily's temperature change in the past 30 minutes?", %{},
         agent_chat_opts: [
-          client: MemoryAgentClient,
+          client: HouseAgentClient,
           config: %{enabled: true, fallback_enabled: false, max_tool_calls: 3}
         ]
       )
 
-    assert response =~ "recently asked"
-    refute response =~ "LLM task"
-    assert_received {:agent_system_prompt, prompt}
-    assert prompt =~ "DOMAIN: general conversation"
-    assert prompt =~ ~s({"type":"final","answer":"..."})
+    assert response =~ "HouseAgent answered"
+    assert_received {:house_agent_called, user_message, system_prompt}
+    assert user_message =~ "past 30 minutes"
+    assert system_prompt =~ "You are Zaik, a local personal house agent"
+    assert system_prompt =~ "home_readings"
+    assert system_prompt =~ "datetime('now', '-30 minutes')"
+    assert system_prompt =~ "Do not collapse different requested windows"
   end
 
-  test "agent_chat intent routes to SQL-backed house memory prompt" do
+  test "free-form ops/memory questions use the same house-agent brain" do
     response =
       Zaik.ChatRouter.process(
         "what questions have we asked you recently",
         %{channel: :telegram, sender_id: "111", chat_id: "-100", chat_type: "group"},
-        parser: AgentChatParser,
         agent_chat_opts: [
-          client: MemoryAgentClient,
+          client: HouseAgentClient,
           config: %{enabled: true, fallback_enabled: false, max_tool_calls: 3}
         ]
       )
 
-    assert response =~ "recently asked"
-    refute response =~ "LLM task"
-    assert_received {:agent_system_prompt, prompt}
-    assert prompt =~ "DOMAIN: ops message history"
-    assert prompt =~ "Return one sql_query tool_call"
+    assert response =~ "HouseAgent answered"
+    assert_received {:house_agent_called, _user_message, system_prompt}
+    assert system_prompt =~ "zaik_messages"
+    assert system_prompt =~ "chat_id = '-100'"
+    assert system_prompt =~ "Do not claim you cannot access prior conversations"
   end
 
-  test "unknown intents get a helpful chat response" do
+  test "free-form general questions also use the house-agent brain instead of raw LLM tasks" do
     response =
-      Zaik.ChatRouter.process("florp the blorb", %{},
-        parser: UnknownParser,
-        agent_chat_enabled: false
+      Zaik.ChatRouter.process("what is photosynthesis?", %{},
+        agent_chat_opts: [
+          client: HouseAgentClient,
+          config: %{enabled: true, fallback_enabled: false, max_tool_calls: 3}
+        ]
       )
+
+    assert response =~ "HouseAgent answered: what is photosynthesis?"
+    refute response =~ "LLM task"
+    assert_received {:house_agent_called, "what is photosynthesis?", system_prompt}
+    assert system_prompt =~ ~s({"type":"final","answer":"..."})
+    assert system_prompt =~ "DOMAIN: general conversation"
+    refute system_prompt =~ "DOMAIN: home sensor readings"
+  end
+
+  test "disabled house agent returns a helpful fallback" do
+    response =
+      Zaik.ChatRouter.process("florp the blorb", %{}, agent_chat_enabled: false)
 
     assert response =~ "I'm not sure"
   end

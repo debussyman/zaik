@@ -169,6 +169,24 @@ defmodule Zaik.AgentChat.Evals do
         expected_query_terms: ["home_readings", "lily"],
         forbidden_query_terms: [],
         expected_answer_terms: ["lily", "warm"]
+      },
+      %{
+        name: "home_lily_temperature_change_30_minutes",
+        prompt: "what was Lily's temperature change in the past 30 minutes?",
+        expected_db: :home,
+        context: eval_context(),
+        expected_query_terms: ["home_readings", "lily", "datetime('now','-30 minutes')"],
+        forbidden_query_terms: ["'-3 hours'", "'-1 hour'"],
+        expected_answer_terms: ["temperature"]
+      },
+      %{
+        name: "home_lily_temperature_change_3_hours",
+        prompt: "what was Lily's temperature change in the past 3 hours?",
+        expected_db: :home,
+        context: eval_context(),
+        expected_query_terms: ["home_readings", "lily", "datetime('now','-3 hours')"],
+        forbidden_query_terms: ["'-30 minutes'", "'-1 hour'"],
+        expected_answer_terms: ["temperature"]
       }
     ]
   end

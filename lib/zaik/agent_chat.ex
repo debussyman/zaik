@@ -60,9 +60,9 @@ defmodule Zaik.AgentChat do
     primary = run_attempt(client, sql_tool, messages, cfg)
 
     {public_result, fallback} =
-      if fallback_needed?(primary.result) and fallback_available?(cfg) do
+      if fallback_needed?(primary) and fallback_available?(cfg) do
         fallback_cfg = %{cfg | model: cfg.fallback_model, fallback_enabled: false}
-        reason = fallback_reason(primary.result)
+        reason = fallback_reason(primary)
 
         Logger.info(
           "AgentChat falling back from #{inspect(cfg.model)} to #{inspect(fallback_cfg.model)}: #{inspect(reason)}"
@@ -112,13 +112,44 @@ defmodule Zaik.AgentChat do
       cfg.fallback_model != cfg.model
   end
 
-  defp fallback_needed?({:error, _reason}), do: true
-  defp fallback_needed?({:ok, answer}) when is_binary(answer), do: low_confidence_answer?(answer)
-  defp fallback_needed?(_result), do: false
+  defp fallback_needed?(%{result: result, tool_calls: tool_calls}) do
+    fallback_needed_result?(result) or contradictory_empty_answer?(result, tool_calls)
+  end
+
+  defp fallback_needed_result?({:error, _reason}), do: true
+
+  defp fallback_needed_result?({:ok, answer}) when is_binary(answer),
+    do: low_confidence_answer?(answer)
+
+  defp fallback_needed_result?(_result), do: false
+
+  defp fallback_reason(%{result: result, tool_calls: tool_calls}) do
+    cond do
+      contradictory_empty_answer?(result, tool_calls) ->
+        {:contradictory_empty_answer, String.slice(result_answer(result) || "", 0, 160)}
+
+      true ->
+        fallback_reason(result)
+    end
+  end
 
   defp fallback_reason({:error, reason}), do: reason
   defp fallback_reason({:ok, answer}), do: {:low_confidence_answer, String.slice(answer, 0, 160)}
   defp fallback_reason(other), do: other
+
+  defp contradictory_empty_answer?({:ok, answer}, tool_calls) when is_binary(answer) do
+    normalized = answer |> String.downcase() |> String.trim()
+
+    claims_no_rows? =
+      String.contains?(normalized, "no matching rows") or
+        String.contains?(normalized, "no rows") or
+        String.contains?(normalized, "no matching data") or
+        String.contains?(normalized, "no data")
+
+    claims_no_rows? and Enum.any?(tool_calls, fn call -> (Map.get(call, :row_count) || 0) > 0 end)
+  end
+
+  defp contradictory_empty_answer?(_result, _tool_calls), do: false
 
   defp low_confidence_answer?(answer) do
     normalized = answer |> String.downcase() |> String.trim()
@@ -128,7 +159,14 @@ defmodule Zaik.AgentChat do
       String.contains?(normalized, "before i could finish") or
       String.contains?(normalized, "i couldn't finish") or
       String.contains?(normalized, "i could not finish") or
-      String.contains?(normalized, "try asking a narrower question")
+      String.contains?(normalized, "try asking a narrower question") or
+      String.contains?(normalized, "i don't have memory") or
+      String.contains?(normalized, "i do not have memory") or
+      String.contains?(normalized, "i don't have access") or
+      String.contains?(normalized, "i do not have access") or
+      String.contains?(normalized, "can't retrieve") or
+      String.contains?(normalized, "cannot retrieve") or
+      String.contains?(normalized, "each conversation is independent")
   end
 
   defp run_attempt(client, sql_tool, messages, cfg) do
@@ -334,14 +372,24 @@ defmodule Zaik.AgentChat do
              timeout_ms: cfg.timeout_ms,
              purpose: :agent_chat_final
            ),
-         {:ok, %{"type" => "final", "answer" => answer}} when is_binary(answer) <-
-           decode_action(result.response) do
+         {:ok, action} <- decode_action(result.response),
+         {:ok, answer} <- final_answer_text(action) do
       {:ok, String.trim(answer)}
     else
-      {:ok, action} -> {:error, {:invalid_agent_action, action}}
+      {:error, {:invalid_final_action, action}} -> {:error, {:invalid_agent_action, action}}
       {:error, reason} -> {:error, reason}
     end
   end
+
+  defp final_answer_text(%{"type" => "final", "answer" => answer}) when is_binary(answer),
+    do: {:ok, answer}
+
+  defp final_answer_text(%{"type" => "tool_call", "args" => %{"query" => answer}} = action)
+       when is_binary(answer) do
+    if sql_query_text?(answer), do: {:error, {:invalid_final_action, action}}, else: {:ok, answer}
+  end
+
+  defp final_answer_text(action), do: {:error, {:invalid_final_action, action}}
 
   defp user_text_from(messages) do
     messages
@@ -375,10 +423,30 @@ defmodule Zaik.AgentChat do
   end
 
   defp decode_non_json_action(response) do
-    if sql_query_text?(response) do
-      {:ok, normalize_tool_call("sql_query", %{"query" => response})}
-    else
-      {:error, %Jason.DecodeError{data: response, position: 0, token: nil}}
+    case extract_sql_query(response) do
+      {:ok, query} -> {:ok, normalize_tool_call("sql_query", %{"query" => query})}
+      :error -> {:error, %Jason.DecodeError{data: response, position: 0, token: nil}}
+    end
+  end
+
+  defp extract_sql_query(text) when is_binary(text) do
+    stripped = String.trim(text)
+
+    cond do
+      sql_query_text?(stripped) ->
+        {:ok, stripped}
+
+      match = Regex.run(~r/```sql\s*(.+?)```/is, stripped, capture: :all_but_first) ->
+        match |> hd() |> String.trim() |> then(&{:ok, &1})
+
+      match = Regex.run(~r/```\s*((?:select|with)\b.+?)```/is, stripped, capture: :all_but_first) ->
+        match |> hd() |> String.trim() |> then(&{:ok, &1})
+
+      match = Regex.run(~r/((?:select|with)\b.+?)(?:;|\z)/is, stripped, capture: :all_but_first) ->
+        match |> hd() |> String.trim() |> then(&{:ok, &1})
+
+      true ->
+        :error
     end
   end
 

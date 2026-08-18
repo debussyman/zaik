@@ -1,19 +1,21 @@
 defmodule Zaik.AgentChat.Prompts do
   @moduledoc """
-  Prompt construction for AgentChat.
+  Prompt construction for Zaik's house agent.
 
-  The planner prompt is intentionally domain-specific. Smaller local models are
-  much more reliable when they see only the relevant views and one output shape.
+  Normal chat has one entrypoint/brain (`Zaik.AgentChat`). To keep local models
+  reliable, the house agent uses compact internal working prompts for the part of
+  house memory the current question needs. This is not a separate chat route: it
+  is prompt scaffolding inside the single house agent.
   """
 
   def planner(text, context \\ %{}, forced_domain \\ nil) do
     domain = forced_domain || domain(text)
 
     [
-      base_planner_contract(domain),
+      house_identity(domain),
       domain_policy(domain),
       request_context(context),
-      planner_mode_instruction(domain)
+      mode_instruction(domain)
     ]
     |> Enum.join("\n\n")
   end
@@ -25,10 +27,12 @@ defmodule Zaik.AgentChat.Prompts do
     Return exactly one valid JSON object and nothing else:
     {"type":"final","answer":"..."}
 
-    Answer only from the SQL TOOL RESULT rows. Do not call tools. Do not invent rows, timestamps, tasks, or sensor readings. If the result has zero rows, say that no matching rows were found and mention the filter/time window briefly.
+    Answer only from the SQL TOOL RESULT rows. Do not call tools. Do not invent rows, timestamps, tasks, messages, or sensor readings. If the result has zero rows, say that no matching rows were found and mention the filter/time window briefly. Use a natural house-agent voice.
     """
     |> String.trim()
   end
+
+  def system_prompt(context \\ %{}), do: planner("", context)
 
   def domain(text) when is_binary(text) do
     normalized = String.downcase(text)
@@ -46,12 +50,15 @@ defmodule Zaik.AgentChat.Prompts do
       ) ->
         :ops_tasks
 
-      Regex.match?(~r/\b(asked|ask|said|message|messages|chat|conversation|told)\b/, normalized) and
+      Regex.match?(
+        ~r/\b(asked|ask|question|questions|said|message|messages|chat|conversation|told)\b/,
+        normalized
+      ) and
           Regex.match?(~r/\b(you|zaik|me|we|i|us|our|this chat|this group)\b/, normalized) ->
         :ops_messages
 
       Regex.match?(
-        ~r/\b(lily|room|home|sensor|temperature|temp|humidity|bright|brightness|illuminance|presence|motion|warm|cool|warmer|cooler)\b/,
+        ~r/\b(lily|room|home|sensor|temperature|temp|humidity|bright|brightness|illuminance|presence|motion|warm|cool|warmer|cooler|change|changed|trend|trending)\b/,
         normalized
       ) ->
         :home_readings
@@ -63,58 +70,34 @@ defmodule Zaik.AgentChat.Prompts do
 
   def domain(_text), do: :general
 
-  def request_context(context) when is_map(context) do
-    channel = context_value(context, :channel)
-    sender_id = context_value(context, :sender_id) || context_value(context, :sender)
-    chat_id = context_value(context, :chat_id)
-    chat_type = context_value(context, :chat_type)
-    session_id = context_value(context, :session_id)
-
+  defp house_identity(:general) do
     """
-    CURRENT REQUEST CONTEXT:
-    channel: #{format_context_value(channel)}
-    sender_id: #{format_context_value(sender_id)}
-    chat_id: #{format_context_value(chat_id)}
-    chat_type: #{format_context_value(chat_type)}
-    session_id: #{format_context_value(session_id)}
-
-    Identity SQL rules for zaik_messages:
-    - "I", "me", "my" means current sender_id. If sender_id is known, filter with sender_id = #{sql_literal_hint(sender_id)}.
-    - "we", "us", "our", "this chat", "this group" means current chat_id/conversation. If chat_id is known, filter with chat_id = #{sql_literal_hint(chat_id)}. In group chats, WE means chat_id, not sender_id.
-    - "you" means Zaik. To find what users asked Zaik, use role = 'user'. To find what Zaik answered, use role = 'agent'.
-    - sender_id is a real external numeric/string sender id, never the word 'user'.
-    - channel is a real channel like 'telegram' or 'signal', never 'main'.
-    - session scope is a channel like 'telegram' or 'signal', never 'user'.
-    """
-    |> String.trim()
-  end
-
-  def request_context(_context), do: request_context(%{})
-
-  defp base_planner_contract(:general) do
-    """
-    You are Zaik, a local personal house agent. You can answer ordinary conversational and general-knowledge questions directly.
+    You are Zaik, a local personal house agent for this household.
 
     CRITICAL OUTPUT CONTRACT:
     - Return exactly one valid JSON object and nothing else.
     - Return ONLY this shape:
       {"type":"final","answer":"..."}
-    - Do not output markdown, comments, code fences, or trailing text.
-    - If the user asks about Zaik's memory, prior messages, home sensor history, tasks, failures, model fallback, or operational traces, say you need the SQL-backed house memory path instead of pretending not to have access.
-    - Do not claim you cannot access prior conversations when the user is asking about Zaik/home/ops memory; those should be classified as agent_chat by the intent parser.
+    - Answer ordinary conversational and general-knowledge questions directly.
+    - Keep Zaik's identity: you are the house agent, not a disconnected chatbot.
+    - For requests that would change the home or system state, do not execute anything; say changes require confirmation.
+    - Do not output markdown, comments, code fences, or trailing text outside the JSON object.
     """
     |> String.trim()
   end
 
-  defp base_planner_contract(_domain) do
+  defp house_identity(_domain) do
     """
-    You are Zaik's SQL planner. You have one tool: sql_query.
+    You are Zaik, a local personal house agent for this household.
+
+    For this question you need Zaik/home/ops memory. Use the supervised read-only sql_query tool.
 
     CRITICAL OUTPUT CONTRACT:
     - Return exactly one valid JSON object and nothing else.
     - Return ONLY this shape:
       {"type":"tool_call","tool":"sql_query","args":{"database":"ops_or_home","query":"SELECT ...","limit":20}}
-    - Do not return final answers in planner mode.
+    - Do not answer directly in planner mode.
+    - Do not claim you cannot access prior conversations, home history, task history, or model traces. Use SQL.
     - Do not output markdown, comments, code fences, or trailing text.
     - Use only SQLite SELECT or WITH SELECT.
     - Never invent table/view names. Query only the documented views in this prompt.
@@ -122,11 +105,11 @@ defmodule Zaik.AgentChat.Prompts do
     |> String.trim()
   end
 
-  defp planner_mode_instruction(:general) do
+  defp mode_instruction(:general) do
     "GENERAL CONVERSATION MODE: Return one final JSON object answering the user directly. Do not call tools."
   end
 
-  defp planner_mode_instruction(_domain) do
+  defp mode_instruction(_domain) do
     "PLANNER MODE: Return one sql_query tool_call JSON object. Do not answer the user. Do not output final."
   end
 
@@ -134,9 +117,7 @@ defmodule Zaik.AgentChat.Prompts do
     """
     DOMAIN: general conversation.
 
-    Answer arbitrary non-control questions normally and concisely. You are allowed to use general knowledge.
-    Keep Zaik's identity: you are the house agent, not a disconnected chatbot.
-    For requests that would change the home or system state, do not execute anything; say that changes require confirmation.
+    Use general knowledge. Be concise, friendly, and useful. If the user asks about Zaik memory, home readings, tasks, failures, fallbacks, proposals, or other house data, the house agent should use a SQL working prompt instead of this direct-answer prompt.
     """
     |> String.trim()
   end
@@ -151,12 +132,24 @@ defmodule Zaik.AgentChat.Prompts do
     Semantics:
     - User-authored messages have role = 'user'.
     - Zaik-authored messages have role = 'agent'.
-    - For "what did I ask you", filter role = 'user' and current sender_id.
-    - For "what did we ask you" or group/chat questions, filter role = 'user' and current chat_id.
+    - For "what did I ask you" or "my questions", filter role = 'user' and current sender_id.
+    - For "what did we ask you", "what have we asked you", "our questions", "this chat", or group/chat questions, filter role = 'user' and current chat_id.
+    - NEVER use sender_id for "we", "us", "our", "this chat", or "this group" questions when chat_id is known.
     - For "today", use substr(created_at, 1, 10) = date('now').
+    - For "recently", use ORDER BY created_at DESC LIMIT 10 or 20 unless the user gives a precise window.
     - Do not query zaik_tasks for asked/message/chat questions unless the user explicitly asks about tasks/jobs.
 
-    Use actual sender_id/chat_id values from CURRENT REQUEST CONTEXT. Never copy placeholder values such as '<current sender_id>' or '<current chat_id>'.
+    Examples:
+    User: what questions have we asked you recently?
+    {"type":"tool_call","tool":"sql_query","args":{"database":"ops","query":"SELECT created_at, content FROM zaik_messages WHERE role = 'user' AND chat_id = '<current chat_id>' ORDER BY created_at DESC LIMIT 10","limit":10}}
+
+    User: what have we asked you today?
+    {"type":"tool_call","tool":"sql_query","args":{"database":"ops","query":"SELECT created_at, content FROM zaik_messages WHERE role = 'user' AND chat_id = '<current chat_id>' AND substr(created_at, 1, 10) = date('now') ORDER BY created_at DESC LIMIT 10","limit":10}}
+
+    User: what have I asked you today?
+    {"type":"tool_call","tool":"sql_query","args":{"database":"ops","query":"SELECT created_at, content FROM zaik_messages WHERE role = 'user' AND sender_id = '<current sender_id>' AND substr(created_at, 1, 10) = date('now') ORDER BY created_at DESC LIMIT 10","limit":10}}
+
+    Replace placeholders with actual values from CURRENT REQUEST CONTEXT. Never output placeholders.
     """
     |> String.trim()
   end
@@ -204,24 +197,64 @@ defmodule Zaik.AgentChat.Prompts do
 
   defp domain_policy(:home_readings) do
     """
-    DOMAIN: home sensor readings.
+    DOMAIN: home sensor readings and trends.
     Database: home
     Use these views only:
     home_readings(id, device_id, device_name, room, recorded_at, temperature_c, temperature_f, humidity, illuminance, presence, pir_detection, battery, voltage, linkquality, target_distance, payload_json)
     home_devices(id, friendly_name, source, topic, metadata_json, inserted_at, updated_at)
 
     Semantics:
-    - For Lily's room, filter lower(device_name) LIKE '%lily%'.
+    - For Lily's room, filter lower(device_name) LIKE '%lily%' OR lower(room) LIKE '%lily%'.
     - For recent readings, ORDER BY recorded_at DESC.
-    - Use SQLite date/time syntax, e.g. datetime('now', '-7 days'). Do not use NOW() or INTERVAL.
-    - There is no home_read view. Use home_readings.
+    - Prefer temperature_f for household-facing temperature answers.
     - Boolean fields are 1=true, 0=false.
+    - Use SQLite date/time syntax, e.g. datetime('now', '-7 days'). Do not use NOW() or INTERVAL.
+    - There is no home_read or home_reads view. Use home_readings.
+    - Do not join to home_devices unless you need device metadata. home_readings already has device_name and room.
 
-    Example:
-    {"type":"tool_call","tool":"sql_query","args":{"database":"home","query":"SELECT recorded_at, temperature_f, humidity, illuminance, presence FROM home_readings WHERE lower(device_name) LIKE '%lily%' ORDER BY recorded_at DESC LIMIT 20","limit":20}}
+    Time windows:
+    - For "today", use substr(recorded_at, 1, 10) = date('now').
+    - For "recently" without a precise window, use ORDER BY recorded_at DESC LIMIT 10 or 20.
+    - For "past/last 30 minutes", use recorded_at >= datetime('now', '-30 minutes').
+    - For "past/last 3 hours", use recorded_at >= datetime('now', '-3 hours').
+    - For "past/last N hours/minutes/days", translate N exactly into SQLite datetime('now', '-N unit').
+    - Do not collapse different requested windows into one default trend window.
+
+    For temperature/humidity/illuminance change over a window, compare the newest and oldest readings inside exactly that window.
+
+    Examples:
+    {"type":"tool_call","tool":"sql_query","args":{"database":"home","query":"SELECT recorded_at, temperature_f, humidity, illuminance, presence FROM home_readings WHERE (lower(device_name) LIKE '%lily%' OR lower(room) LIKE '%lily%') ORDER BY recorded_at DESC LIMIT 20","limit":20}}
+    {"type":"tool_call","tool":"sql_query","args":{"database":"home","query":"WITH windowed AS (SELECT recorded_at, temperature_f FROM home_readings WHERE (lower(device_name) LIKE '%lily%' OR lower(room) LIKE '%lily%') AND recorded_at >= datetime('now', '-30 minutes')), first_row AS (SELECT recorded_at, temperature_f FROM windowed ORDER BY recorded_at ASC LIMIT 1), last_row AS (SELECT recorded_at, temperature_f FROM windowed ORDER BY recorded_at DESC LIMIT 1) SELECT first_row.recorded_at AS first_recorded_at, first_row.temperature_f AS first_temperature_f, last_row.recorded_at AS last_recorded_at, last_row.temperature_f AS last_temperature_f, last_row.temperature_f - first_row.temperature_f AS temperature_change_f FROM first_row CROSS JOIN last_row","limit":1}}
     """
     |> String.trim()
   end
+
+  def request_context(context) when is_map(context) do
+    channel = context_value(context, :channel)
+    sender_id = context_value(context, :sender_id) || context_value(context, :sender)
+    chat_id = context_value(context, :chat_id)
+    chat_type = context_value(context, :chat_type)
+    session_id = context_value(context, :session_id)
+
+    """
+    CURRENT REQUEST CONTEXT:
+    channel: #{format_context_value(channel)}
+    sender_id: #{format_context_value(sender_id)}
+    chat_id: #{format_context_value(chat_id)}
+    chat_type: #{format_context_value(chat_type)}
+    session_id: #{format_context_value(session_id)}
+
+    Identity SQL rules:
+    - "I", "me", "my" means current sender_id. If sender_id is known, filter with sender_id = #{sql_literal_hint(sender_id)}.
+    - "we", "us", "our", "this chat", "this group" means current chat_id/conversation. If chat_id is known, filter with chat_id = #{sql_literal_hint(chat_id)}. In group chats, WE means chat_id, not sender_id. Never use sender_id for WE/US/OUR questions.
+    - sender_id is a real external numeric/string sender id, never the word 'user'.
+    - channel is a real channel like 'telegram' or 'signal', never 'main'.
+    - session scope is a channel like 'telegram' or 'signal', never 'user'.
+    """
+    |> String.trim()
+  end
+
+  def request_context(_context), do: request_context(%{})
 
   defp context_value(context, key) when is_map(context),
     do: Map.get(context, key) || Map.get(context, to_string(key))

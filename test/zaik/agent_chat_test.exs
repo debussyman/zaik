@@ -48,6 +48,39 @@ defmodule Zaik.AgentChatTest do
     end
   end
 
+  defmodule MalformedFinalClient do
+    def chat(_prompt, opts) do
+      messages = Keyword.fetch!(opts, :messages)
+
+      response =
+        if Enum.any?(messages, &tool_result_message?/1) do
+          Jason.encode!(%{
+            "type" => "tool_call",
+            "tool" => "sql_query",
+            "args" => %{"query" => "You recently asked about Lily's room."}
+          })
+        else
+          Jason.encode!(%{
+            "type" => "tool_call",
+            "tool" => "sql_query",
+            "args" => %{
+              "database" => "ops",
+              "query" => "SELECT content FROM zaik_messages WHERE role = 'user' LIMIT 5",
+              "limit" => 5
+            }
+          })
+        end
+
+      {:ok, %{model: "malformed-final", response: response, done: true, raw: %{}}}
+    end
+
+    defp tool_result_message?(%{role: "user", content: content}) do
+      String.starts_with?(String.trim_leading(content), "SQL TOOL RESULT")
+    end
+
+    defp tool_result_message?(_message), do: false
+  end
+
   defmodule RawSQLClient do
     def chat(_prompt, opts) do
       messages = Keyword.fetch!(opts, :messages)
@@ -88,6 +121,41 @@ defmodule Zaik.AgentChatTest do
            }}
       end
     end
+  end
+
+  defmodule ContradictoryClient do
+    def chat(_prompt, opts) do
+      model = Keyword.fetch!(opts, :model)
+      messages = Keyword.fetch!(opts, :messages)
+      send(self(), {:agent_model_called, model})
+
+      response =
+        cond do
+          model == "big" ->
+            Jason.encode!(%{"type" => "final", "answer" => "fallback answer"})
+
+          Enum.any?(messages, &tool_result_message?/1) ->
+            Jason.encode!(%{"type" => "final", "answer" => "No matching rows were found."})
+
+          true ->
+            Jason.encode!(%{
+              "type" => "tool_call",
+              "tool" => "sql_query",
+              "args" => %{
+                "database" => "ops",
+                "query" => "SELECT content FROM zaik_messages LIMIT 5"
+              }
+            })
+        end
+
+      {:ok, %{model: model, response: response, done: true, raw: %{}}}
+    end
+
+    defp tool_result_message?(%{role: "user", content: content}) do
+      String.starts_with?(String.trim_leading(content), "SQL TOOL RESULT")
+    end
+
+    defp tool_result_message?(_message), do: false
   end
 
   defmodule LowConfidenceClient do
@@ -142,6 +210,19 @@ defmodule Zaik.AgentChatTest do
     assert row["tool_calls_json"] =~ "home_readings"
   end
 
+  test "accepts prose answer accidentally returned in final tool-call query field" do
+    assert {:ok, "You recently asked about Lily's room."} =
+             Zaik.AgentChat.respond("what did we ask recently?", %{},
+               client: MalformedFinalClient,
+               sql_tool: FakeSQLTool,
+               config: %{enabled: true, fallback_enabled: false, max_tool_calls: 3}
+             )
+
+    assert_received {:sql_tool_called, query, opts}
+    assert query =~ "zaik_messages"
+    assert opts[:db] == :ops
+  end
+
   test "accepts raw SELECT text from planner as a SQL tool call" do
     assert {:ok, "Answered from raw SQL output."} =
              Zaik.AgentChat.respond("what did we ask recently?", %{},
@@ -159,6 +240,24 @@ defmodule Zaik.AgentChatTest do
     assert {:ok, "fallback answer"} =
              Zaik.AgentChat.respond("hello", %{},
                client: FallbackClient,
+               sql_tool: FakeSQLTool,
+               config: %{
+                 enabled: true,
+                 model: "small",
+                 fallback_enabled: true,
+                 fallback_model: "big",
+                 max_tool_calls: 3
+               }
+             )
+
+    assert_received {:agent_model_called, "small"}
+    assert_received {:agent_model_called, "big"}
+  end
+
+  test "falls back when final answer contradicts non-empty tool results" do
+    assert {:ok, "fallback answer"} =
+             Zaik.AgentChat.respond("what did we ask recently?", %{},
+               client: ContradictoryClient,
                sql_tool: FakeSQLTool,
                config: %{
                  enabled: true,
