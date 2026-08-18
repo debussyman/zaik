@@ -162,7 +162,13 @@ defmodule Zaik.AgentChat.Evals do
     response =
       Zaik.AgentChat.respond(case_def.prompt, context,
         sql_tool: CannedSQLTool,
-        config: %{enabled: true, model: model, timeout_ms: timeout_ms, max_tool_calls: 3}
+        config: %{
+          enabled: true,
+          model: model,
+          timeout_ms: timeout_ms,
+          max_tool_calls: 3,
+          fallback_enabled: false
+        }
       )
 
     calls = Process.get(:zaik_agent_eval_tool_calls, [])

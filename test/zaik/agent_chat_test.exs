@@ -48,6 +48,51 @@ defmodule Zaik.AgentChatTest do
     end
   end
 
+  defmodule FallbackClient do
+    def chat(_prompt, opts) do
+      model = Keyword.fetch!(opts, :model)
+      send(self(), {:agent_model_called, model})
+
+      case model do
+        "small" ->
+          {:error, :invalid_json}
+
+        "big" ->
+          {:ok,
+           %{
+             model: model,
+             response: Jason.encode!(%{"type" => "final", "answer" => "fallback answer"}),
+             done: true,
+             raw: %{}
+           }}
+      end
+    end
+  end
+
+  defmodule LowConfidenceClient do
+    def chat(_prompt, opts) do
+      model = Keyword.fetch!(opts, :model)
+      send(self(), {:agent_model_called, model})
+
+      answer =
+        case model do
+          "small" ->
+            "I reached my read-only analysis limit before I could finish. Try asking a narrower question."
+
+          "big" ->
+            "fallback answer"
+        end
+
+      {:ok,
+       %{
+         model: model,
+         response: Jason.encode!(%{"type" => "final", "answer" => answer}),
+         done: true,
+         raw: %{}
+       }}
+    end
+  end
+
   test "loops through a read-only SQL tool call and returns final answer" do
     assert {:ok, answer} =
              Zaik.AgentChat.respond("Was Lily's room warm recently?", %{},
@@ -62,5 +107,41 @@ defmodule Zaik.AgentChatTest do
     assert query =~ "home_readings"
     assert opts[:db] == :home
     assert opts[:limit] == 5
+  end
+
+  test "falls back to configured model when primary returns an error" do
+    assert {:ok, "fallback answer"} =
+             Zaik.AgentChat.respond("hello", %{},
+               client: FallbackClient,
+               sql_tool: FakeSQLTool,
+               config: %{
+                 enabled: true,
+                 model: "small",
+                 fallback_enabled: true,
+                 fallback_model: "big",
+                 max_tool_calls: 3
+               }
+             )
+
+    assert_received {:agent_model_called, "small"}
+    assert_received {:agent_model_called, "big"}
+  end
+
+  test "falls back when primary returns a low-confidence limit answer" do
+    assert {:ok, "fallback answer"} =
+             Zaik.AgentChat.respond("hello", %{},
+               client: LowConfidenceClient,
+               sql_tool: FakeSQLTool,
+               config: %{
+                 enabled: true,
+                 model: "small",
+                 fallback_enabled: true,
+                 fallback_model: "big",
+                 max_tool_calls: 3
+               }
+             )
+
+    assert_received {:agent_model_called, "small"}
+    assert_received {:agent_model_called, "big"}
   end
 end

@@ -9,7 +9,8 @@ defmodule Zaik.AgentChat do
 
   require Logger
 
-  @default_model "qwen3-coder:30b"
+  @default_model "qwen3:4b-instruct"
+  @default_fallback_model "qwen3-coder:30b"
   @default_max_tool_calls 3
 
   def config do
@@ -19,6 +20,11 @@ defmodule Zaik.AgentChat do
       enabled: env_bool("ZAIK_AGENT_CHAT_ENABLED", Keyword.get(configured, :enabled, true)),
       model:
         System.get_env("ZAIK_AGENT_MODEL") || Keyword.get(configured, :model, @default_model),
+      fallback_enabled:
+        env_bool("ZAIK_AGENT_FALLBACK_ENABLED", Keyword.get(configured, :fallback_enabled, true)),
+      fallback_model:
+        System.get_env("ZAIK_AGENT_FALLBACK_MODEL") ||
+          Keyword.get(configured, :fallback_model, @default_fallback_model),
       num_ctx: env_integer("ZAIK_AGENT_NUM_CTX") || Keyword.get(configured, :num_ctx, 4096),
       num_predict:
         env_integer("ZAIK_AGENT_NUM_PREDICT") || Keyword.get(configured, :num_predict, 900),
@@ -42,10 +48,66 @@ defmodule Zaik.AgentChat do
       sql_tool = Keyword.get(opts, :sql_tool, Zaik.Analytics.SQLTool)
 
       messages = base_messages(text, context)
-      loop(client, sql_tool, messages, cfg, 0)
+      respond_with_fallback(client, sql_tool, messages, cfg)
     else
       {:error, :disabled}
     end
+  end
+
+  defp respond_with_fallback(client, sql_tool, messages, cfg) do
+    primary_result = loop(client, sql_tool, messages, cfg, 0)
+
+    if fallback_needed?(primary_result) and fallback_available?(cfg) do
+      fallback_cfg = %{cfg | model: cfg.fallback_model, fallback_enabled: false}
+      reason = fallback_reason(primary_result)
+
+      Logger.info(
+        "AgentChat falling back from #{inspect(cfg.model)} to #{inspect(fallback_cfg.model)}: #{inspect(reason)}"
+      )
+
+      Zaik.TelemetryStore.safe_record_llm_call(%{
+        purpose: :agent_chat_fallback,
+        model: fallback_cfg.model,
+        success: true,
+        metadata: %{
+          primary_model: cfg.model,
+          fallback_model: fallback_cfg.model,
+          reason: inspect(reason)
+        }
+      })
+
+      case loop(client, sql_tool, messages, fallback_cfg, 0) do
+        {:ok, _answer} = ok -> ok
+        {:error, fallback_reason} -> {:error, {:fallback_failed, reason, fallback_reason}}
+        other -> other
+      end
+    else
+      primary_result
+    end
+  end
+
+  defp fallback_available?(cfg) do
+    cfg.fallback_enabled and is_binary(cfg.fallback_model) and cfg.fallback_model != "" and
+      cfg.fallback_model != cfg.model
+  end
+
+  defp fallback_needed?({:error, _reason}), do: true
+  defp fallback_needed?({:ok, answer}) when is_binary(answer), do: low_confidence_answer?(answer)
+  defp fallback_needed?(_result), do: false
+
+  defp fallback_reason({:error, reason}), do: reason
+  defp fallback_reason({:ok, answer}), do: {:low_confidence_answer, String.slice(answer, 0, 160)}
+  defp fallback_reason(other), do: other
+
+  defp low_confidence_answer?(answer) do
+    normalized = answer |> String.downcase() |> String.trim()
+
+    normalized == "" or
+      String.contains?(normalized, "i reached my read-only analysis limit") or
+      String.contains?(normalized, "before i could finish") or
+      String.contains?(normalized, "i couldn't finish") or
+      String.contains?(normalized, "i could not finish") or
+      String.contains?(normalized, "try asking a narrower question")
   end
 
   defp loop(_client, _sql_tool, _messages, cfg, tool_count)
