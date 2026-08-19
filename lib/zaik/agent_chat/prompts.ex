@@ -95,9 +95,11 @@ defmodule Zaik.AgentChat.Prompts do
 
     CRITICAL OUTPUT CONTRACT:
     - Return exactly one valid JSON object and nothing else.
-    - Return ONLY this shape:
+    - Before any SQL TOOL RESULT, return ONLY this shape:
       {"type":"tool_call","tool":"sql_query","args":{"database":"ops_or_home","query":"SELECT ...","limit":20}}
-    - Do not answer directly in planner mode.
+    - After one or more SQL TOOL RESULT messages, either answer from the gathered rows:
+      {"type":"final","answer":"..."}
+      or request one additional useful read-only SQL query if genuinely needed.
     - Do not claim you cannot access prior conversations, home history, task history, or model traces. Use SQL.
     - Do not output markdown, comments, code fences, or trailing text.
     - Use only SQLite SELECT or WITH SELECT.

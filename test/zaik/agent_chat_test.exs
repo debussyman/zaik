@@ -102,40 +102,41 @@ defmodule Zaik.AgentChatTest do
     defp tool_result_message?(_message), do: false
   end
 
-  defmodule FinalRetryClient do
+  defmodule MultiQueryClient do
     def chat(_prompt, opts) do
       messages = Keyword.fetch!(opts, :messages)
+      tool_result_count = Enum.count(messages, &tool_result_message?/1)
 
       response =
-        cond do
-          Enum.any?(messages, &final_correction_message?/1) ->
-            Jason.encode!(%{"type" => "final", "answer" => "Lily's room is warm and occupied."})
+        case tool_result_count do
+          0 ->
+            tool_call(
+              "SELECT recorded_at, temperature_f, humidity, illuminance, presence FROM home_readings WHERE lower(device_name) LIKE '%lily%' ORDER BY recorded_at DESC LIMIT 1",
+              1
+            )
 
-          Enum.any?(messages, &tool_result_message?/1) ->
-            Jason.encode!(%{
-              "type" => "tool_call",
-              "tool" => "sql_query",
-              "args" => %{
-                "database" => "home",
-                "query" =>
-                  "SELECT recorded_at, temperature_f FROM home_readings ORDER BY recorded_at DESC LIMIT 20"
-              }
-            })
+          1 ->
+            tool_call(
+              "SELECT recorded_at, temperature_f FROM home_readings WHERE lower(device_name) LIKE '%lily%' AND recorded_at >= datetime('now', '-3 hours') ORDER BY recorded_at DESC LIMIT 20",
+              20
+            )
 
-          true ->
+          _ ->
             Jason.encode!(%{
-              "type" => "tool_call",
-              "tool" => "sql_query",
-              "args" => %{
-                "database" => "home",
-                "query" =>
-                  "SELECT recorded_at, temperature_f FROM home_readings WHERE lower(device_name) LIKE '%lily%' ORDER BY recorded_at DESC LIMIT 5",
-                "limit" => 5
-              }
+              "type" => "final",
+              "answer" => "Lily's room is warm with a recent trend."
             })
         end
 
-      {:ok, %{model: "final-retry", response: response, done: true, raw: %{}}}
+      {:ok, %{model: "multi-query", response: response, done: true, raw: %{}}}
+    end
+
+    defp tool_call(query, limit) do
+      Jason.encode!(%{
+        "type" => "tool_call",
+        "tool" => "sql_query",
+        "args" => %{"database" => "home", "query" => query, "limit" => limit}
+      })
     end
 
     defp tool_result_message?(%{role: "user", content: content}) do
@@ -143,6 +144,29 @@ defmodule Zaik.AgentChatTest do
     end
 
     defp tool_result_message?(_message), do: false
+  end
+
+  defmodule FinalRetryClient do
+    def chat(_prompt, opts) do
+      messages = Keyword.fetch!(opts, :messages)
+
+      response =
+        if Enum.any?(messages, &final_correction_message?/1) do
+          Jason.encode!(%{"type" => "final", "answer" => "Lily's room is warm and occupied."})
+        else
+          Jason.encode!(%{
+            "type" => "tool_call",
+            "tool" => "sql_query",
+            "args" => %{
+              "database" => "home",
+              "query" =>
+                "SELECT recorded_at, temperature_f FROM home_readings ORDER BY recorded_at DESC LIMIT 20"
+            }
+          })
+        end
+
+      {:ok, %{model: "final-retry", response: response, done: true, raw: %{}}}
+    end
 
     defp final_correction_message?(%{content: content}) when is_binary(content),
       do: String.contains?(content, "FINAL ANSWER CORRECTION")
@@ -271,18 +295,34 @@ defmodule Zaik.AgentChatTest do
     assert opts[:db] == :ops
   end
 
-  test "retries final answer when model returns another tool call after successful SQL" do
+  test "allows another useful SQL query after a successful SQL result" do
+    assert {:ok, "Lily's room is warm with a recent trend."} =
+             Zaik.AgentChat.respond("how's Lily's room", %{},
+               client: MultiQueryClient,
+               sql_tool: FakeSQLTool,
+               config: %{enabled: true, fallback_enabled: false, max_tool_calls: 3}
+             )
+
+    assert_received {:sql_tool_called, first_query, first_opts}
+    assert first_query =~ "ORDER BY recorded_at DESC LIMIT 1"
+    assert first_opts[:db] == :home
+
+    assert_received {:sql_tool_called, second_query, second_opts}
+    assert second_query =~ "datetime('now', '-3 hours')"
+    assert second_opts[:db] == :home
+  end
+
+  test "forces final answer when model keeps requesting SQL after budget is exhausted" do
     assert {:ok, "Lily's room is warm and occupied."} =
              Zaik.AgentChat.respond("how's Lily's room", %{},
                client: FinalRetryClient,
                sql_tool: FakeSQLTool,
-               config: %{enabled: true, fallback_enabled: false, max_tool_calls: 3}
+               config: %{enabled: true, fallback_enabled: false, max_tool_calls: 2}
              )
 
     assert_received {:sql_tool_called, query, opts}
     assert query =~ "home_readings"
     assert opts[:db] == :home
-    refute_received {:sql_tool_called, _, _}
   end
 
   test "accepts raw SELECT text from planner as a SQL tool call" do

@@ -181,11 +181,18 @@ defmodule Zaik.AgentChat do
     }
   end
 
-  defp loop(_client, _sql_tool, _messages, cfg, tool_count, tool_calls)
+  defp loop(client, _sql_tool, messages, cfg, tool_count, tool_calls)
        when tool_count >= cfg.max_tool_calls do
-    {{:ok,
-      "I reached my read-only analysis limit before I could finish. Try asking a narrower question."},
-     tool_calls}
+    if sql_tool_result_messages(messages) == [] do
+      {{:ok,
+        "I reached my read-only analysis limit before I could finish. Try asking a narrower question."},
+       tool_calls}
+    else
+      result =
+        final_answer(client, user_text_from(messages), sql_tool_result_messages(messages), cfg)
+
+      {result, tool_calls}
+    end
   end
 
   defp loop(client, sql_tool, messages, cfg, tool_count, tool_calls) do
@@ -207,8 +214,19 @@ defmodule Zaik.AgentChat do
         %{"type" => "final", "answer" => answer} when is_binary(answer) ->
           {{:ok, String.trim(answer)}, tool_calls}
 
-        %{"type" => "tool_call", "tool" => "sql_query", "args" => args} when is_map(args) ->
-          run_sql_tool(client, sql_tool, messages, cfg, tool_count, tool_calls, args)
+        %{"type" => "tool_call", "tool" => "sql_query", "args" => args} = action
+        when is_map(args) ->
+          case final_answer_text(action) do
+            {:ok, answer} ->
+              if tool_success?(tool_calls) do
+                {{:ok, String.trim(answer)}, tool_calls}
+              else
+                run_sql_tool(client, sql_tool, messages, cfg, tool_count, tool_calls, args)
+              end
+
+            _ ->
+              run_sql_tool(client, sql_tool, messages, cfg, tool_count, tool_calls, args)
+          end
 
         _ ->
           {{:error, {:invalid_agent_action, action}}, tool_calls}
@@ -249,9 +267,29 @@ defmodule Zaik.AgentChat do
 
     tool_calls = tool_calls ++ [trace_tool_call(db, query, limit, tool_result)]
 
+    next_tool_count = tool_count + 1
+
     case tool_result do
       {:ok, _result} ->
-        {final_answer(client, user_text_from(messages), tool_message, cfg), tool_calls}
+        continuation_instruction = %{
+          role: "system",
+          content: """
+          TOOL RESULT CONTINUATION MODE.
+          You have one or more SQL TOOL RESULT messages.
+          If you have enough evidence to answer the original question, return {"type":"final","answer":"..."}.
+          If a specific additional read-only query is genuinely needed, return one sql_query tool_call.
+          Do not repeat an equivalent query. Remaining SQL calls before forced finalization: #{max(cfg.max_tool_calls - next_tool_count, 0)}.
+          """
+        }
+
+        loop(
+          client,
+          sql_tool,
+          messages ++ [assistant_message, tool_message, continuation_instruction],
+          cfg,
+          next_tool_count,
+          tool_calls
+        )
 
       {:error, _reason} ->
         correction_instruction = %{
@@ -265,7 +303,7 @@ defmodule Zaik.AgentChat do
           sql_tool,
           messages ++ [assistant_message, tool_message, correction_instruction],
           cfg,
-          tool_count + 1,
+          next_tool_count,
           tool_calls
         )
     end
@@ -288,6 +326,8 @@ defmodule Zaik.AgentChat do
 
   defp tool_error({:error, reason}), do: inspect(reason)
   defp tool_error(_tool_result), do: nil
+
+  defp tool_success?(tool_calls), do: Enum.any?(tool_calls, &Map.get(&1, :ok))
 
   defp record_run_trace(
          text,
@@ -352,17 +392,20 @@ defmodule Zaik.AgentChat do
   defp result_error({:error, reason}), do: reason
   defp result_error(_result), do: nil
 
-  defp final_answer(client, user_text, tool_message, cfg) do
-    final_answer(client, user_text, tool_message, cfg, [])
+  defp final_answer(client, user_text, tool_messages, cfg) when is_list(tool_messages) do
+    final_answer(client, user_text, tool_messages, cfg, [])
   end
 
-  defp final_answer(client, user_text, tool_message, cfg, correction_messages) do
+  defp final_answer(client, user_text, tool_message, cfg) when is_map(tool_message) do
+    final_answer(client, user_text, [tool_message], cfg, [])
+  end
+
+  defp final_answer(client, user_text, tool_messages, cfg, correction_messages) do
     final_messages =
       [
         %{role: "system", content: Zaik.AgentChat.Prompts.final()},
-        %{role: "user", content: "Original user question: #{user_text}"},
-        tool_message
-      ] ++ correction_messages
+        %{role: "user", content: "Original user question: #{user_text}"}
+      ] ++ tool_messages ++ correction_messages
 
     with {:ok, result} <-
            client.chat("",
@@ -395,7 +438,7 @@ defmodule Zaik.AgentChat do
           }
         ]
 
-        final_answer(client, user_text, tool_message, cfg, correction_messages)
+        final_answer(client, user_text, tool_messages, cfg, correction_messages)
 
       {:error, {:invalid_final_action, action}} ->
         {:error, {:invalid_agent_action, action}}
@@ -418,12 +461,23 @@ defmodule Zaik.AgentChat do
   defp user_text_from(messages) do
     messages
     |> Enum.filter(&(&1.role == "user"))
+    |> Enum.reject(&sql_tool_result_message?/1)
     |> List.last()
     |> case do
       %{content: content} -> content
       _ -> ""
     end
   end
+
+  defp sql_tool_result_messages(messages), do: Enum.filter(messages, &sql_tool_result_message?/1)
+
+  defp sql_tool_result_message?(%{role: "user", content: content}) when is_binary(content) do
+    content
+    |> String.trim_leading()
+    |> String.starts_with?("SQL TOOL RESULT")
+  end
+
+  defp sql_tool_result_message?(_message), do: false
 
   defp base_messages(text, context, prompt_domain) do
     [
