@@ -353,11 +353,16 @@ defmodule Zaik.AgentChat do
   defp result_error(_result), do: nil
 
   defp final_answer(client, user_text, tool_message, cfg) do
-    final_messages = [
-      %{role: "system", content: Zaik.AgentChat.Prompts.final()},
-      %{role: "user", content: "Original user question: #{user_text}"},
-      tool_message
-    ]
+    final_answer(client, user_text, tool_message, cfg, [])
+  end
+
+  defp final_answer(client, user_text, tool_message, cfg, correction_messages) do
+    final_messages =
+      [
+        %{role: "system", content: Zaik.AgentChat.Prompts.final()},
+        %{role: "user", content: "Original user question: #{user_text}"},
+        tool_message
+      ] ++ correction_messages
 
     with {:ok, result} <-
            client.chat("",
@@ -376,8 +381,27 @@ defmodule Zaik.AgentChat do
          {:ok, answer} <- final_answer_text(action) do
       {:ok, String.trim(answer)}
     else
-      {:error, {:invalid_final_action, action}} -> {:error, {:invalid_agent_action, action}}
-      {:error, reason} -> {:error, reason}
+      {:error, {:invalid_final_action, action}} when correction_messages == [] ->
+        correction_messages = [
+          %{role: "assistant", content: Jason.encode!(action)},
+          %{
+            role: "system",
+            content: """
+            FINAL ANSWER CORRECTION.
+            SQL already succeeded. Your previous response tried to call a tool or plan SQL again.
+            Do not call tools. Answer the original user question using only the SQL TOOL RESULT above.
+            Return exactly one JSON object: {"type":"final","answer":"..."}
+            """
+          }
+        ]
+
+        final_answer(client, user_text, tool_message, cfg, correction_messages)
+
+      {:error, {:invalid_final_action, action}} ->
+        {:error, {:invalid_agent_action, action}}
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 

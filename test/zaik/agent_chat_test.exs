@@ -102,6 +102,54 @@ defmodule Zaik.AgentChatTest do
     defp tool_result_message?(_message), do: false
   end
 
+  defmodule FinalRetryClient do
+    def chat(_prompt, opts) do
+      messages = Keyword.fetch!(opts, :messages)
+
+      response =
+        cond do
+          Enum.any?(messages, &final_correction_message?/1) ->
+            Jason.encode!(%{"type" => "final", "answer" => "Lily's room is warm and occupied."})
+
+          Enum.any?(messages, &tool_result_message?/1) ->
+            Jason.encode!(%{
+              "type" => "tool_call",
+              "tool" => "sql_query",
+              "args" => %{
+                "database" => "home",
+                "query" =>
+                  "SELECT recorded_at, temperature_f FROM home_readings ORDER BY recorded_at DESC LIMIT 20"
+              }
+            })
+
+          true ->
+            Jason.encode!(%{
+              "type" => "tool_call",
+              "tool" => "sql_query",
+              "args" => %{
+                "database" => "home",
+                "query" =>
+                  "SELECT recorded_at, temperature_f FROM home_readings WHERE lower(device_name) LIKE '%lily%' ORDER BY recorded_at DESC LIMIT 5",
+                "limit" => 5
+              }
+            })
+        end
+
+      {:ok, %{model: "final-retry", response: response, done: true, raw: %{}}}
+    end
+
+    defp tool_result_message?(%{role: "user", content: content}) do
+      String.starts_with?(String.trim_leading(content), "SQL TOOL RESULT")
+    end
+
+    defp tool_result_message?(_message), do: false
+
+    defp final_correction_message?(%{content: content}) when is_binary(content),
+      do: String.contains?(content, "FINAL ANSWER CORRECTION")
+
+    defp final_correction_message?(_message), do: false
+  end
+
   defmodule FallbackClient do
     def chat(_prompt, opts) do
       model = Keyword.fetch!(opts, :model)
@@ -221,6 +269,20 @@ defmodule Zaik.AgentChatTest do
     assert_received {:sql_tool_called, query, opts}
     assert query =~ "zaik_messages"
     assert opts[:db] == :ops
+  end
+
+  test "retries final answer when model returns another tool call after successful SQL" do
+    assert {:ok, "Lily's room is warm and occupied."} =
+             Zaik.AgentChat.respond("how's Lily's room", %{},
+               client: FinalRetryClient,
+               sql_tool: FakeSQLTool,
+               config: %{enabled: true, fallback_enabled: false, max_tool_calls: 3}
+             )
+
+    assert_received {:sql_tool_called, query, opts}
+    assert query =~ "home_readings"
+    assert opts[:db] == :home
+    refute_received {:sql_tool_called, _, _}
   end
 
   test "accepts raw SELECT text from planner as a SQL tool call" do
