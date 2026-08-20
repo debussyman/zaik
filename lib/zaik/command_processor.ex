@@ -561,19 +561,19 @@ defmodule Zaik.CommandProcessor do
       opts =
         context
         |> task_opts()
-        |> Keyword.put_new(:timeout_ms, Zaik.LLM.OllamaClient.config().timeout_ms)
+        |> Keyword.put_new(:timeout_ms, Zaik.LLM.config().timeout_ms)
 
       payload = %{
         prompt: prompt,
-        model: Zaik.LLM.OllamaClient.config().default_model,
-        num_predict: Zaik.LLM.OllamaClient.config().num_predict,
-        num_ctx: Zaik.LLM.OllamaClient.config().num_ctx,
-        temperature: Zaik.LLM.OllamaClient.config().temperature
+        model: Zaik.LLM.config().default_model,
+        num_predict: Zaik.LLM.config().num_predict,
+        num_ctx: Zaik.LLM.config().num_ctx,
+        temperature: Zaik.LLM.config().temperature
       }
 
       case Zaik.submit_task(:llm_prompt, payload, opts) do
         {:ok, task_id} ->
-          case Zaik.await_task(task_id, Zaik.LLM.OllamaClient.config().timeout_ms + 5_000) do
+          case Zaik.await_task(task_id, Zaik.LLM.config().timeout_ms + 5_000) do
             {:ok, result} ->
               "LLM task #{task_id}.\n" <> format_llm_result(result)
 

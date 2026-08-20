@@ -1,6 +1,6 @@
 defmodule Zaik.Agent.LLM do
   @moduledoc """
-  One-shot local LLM prompt task backed by Ollama.
+  One-shot local LLM prompt task backed by the configured LLM provider.
   """
 
   use Zaik.Agent.TaskRunner
@@ -11,19 +11,19 @@ defmodule Zaik.Agent.LLM do
 
     {:ok,
      %{
-       client: Map.get(payload, :client) || Map.get(payload, "client") || Zaik.LLM.OllamaClient,
+       client: Map.get(payload, :client) || Map.get(payload, "client") || Zaik.LLM,
        model:
          Map.get(payload, :model) || Map.get(payload, "model") ||
-           Zaik.LLM.OllamaClient.config().default_model,
+           Zaik.LLM.config().default_model,
        num_predict:
          Map.get(payload, :num_predict) || Map.get(payload, "num_predict") ||
-           Zaik.LLM.OllamaClient.config().num_predict,
+           Zaik.LLM.config().num_predict,
        num_ctx:
          Map.get(payload, :num_ctx) || Map.get(payload, "num_ctx") ||
-           Zaik.LLM.OllamaClient.config().num_ctx,
+           Zaik.LLM.config().num_ctx,
        temperature:
          Map.get(payload, :temperature) || Map.get(payload, "temperature") ||
-           Zaik.LLM.OllamaClient.config().temperature
+           Zaik.LLM.config().temperature
      }}
   end
 

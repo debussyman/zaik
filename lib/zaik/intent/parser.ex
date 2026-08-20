@@ -45,7 +45,7 @@ defmodule Zaik.Intent.Parser do
 
   def parse(message, opts \\ []) when is_binary(message) do
     cfg = Map.merge(config(), Map.new(opts))
-    client = Keyword.get(opts, :client, Zaik.LLM.OllamaClient)
+    client = Keyword.get(opts, :client, Zaik.LLM)
 
     if cfg.enabled do
       messages = [

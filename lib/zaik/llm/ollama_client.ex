@@ -1,7 +1,12 @@
 defmodule Zaik.LLM.OllamaClient do
   @moduledoc """
-  Minimal Ollama chat client for local LLM workloads.
+  Ollama provider for local LLM workloads.
+
+  This module implements `Zaik.LLM.Provider` and keeps the historical
+  `Zaik.LLM.OllamaClient` API for compatibility.
   """
+
+  @behaviour Zaik.LLM.Provider
 
   @default_url "http://localhost:11434"
   @default_model "qwen3-coder:30b"
@@ -9,6 +14,7 @@ defmodule Zaik.LLM.OllamaClient do
   @default_num_predict 512
   @default_keep_alive "30m"
 
+  @impl true
   def chat(prompt, opts \\ []) when is_binary(prompt) do
     messages = Keyword.get(opts, :messages, [%{role: "user", content: prompt}])
     model = Keyword.get(opts, :model, config().default_model)
@@ -48,10 +54,11 @@ defmodule Zaik.LLM.OllamaClient do
         end
       end
 
-    record_llm_call(:chat, model, result, started, opts)
+    Zaik.LLM.Telemetry.record_call(:chat, model, result, started, opts)
     result
   end
 
+  @impl true
   def generate(prompt, opts \\ []) when is_binary(prompt) do
     model = Keyword.get(opts, :model, config().default_model)
 
@@ -94,15 +101,16 @@ defmodule Zaik.LLM.OllamaClient do
         end
       end
 
-    record_llm_call(:generate, model, result, started, opts)
+    Zaik.LLM.Telemetry.record_call(:generate, model, result, started, opts)
     result
   end
 
+  @impl true
   def config do
     app_config = Application.get_env(:zaik, :llm, [])
 
     %{
-      provider: Keyword.get(app_config, :provider, :ollama),
+      provider: :ollama,
       ollama_url:
         System.get_env("ZAIK_OLLAMA_URL") || Keyword.get(app_config, :ollama_url, @default_url),
       default_model:
@@ -125,77 +133,8 @@ defmodule Zaik.LLM.OllamaClient do
   defp maybe_put(map, _key, nil), do: map
   defp maybe_put(map, key, value), do: Map.put(map, key, value)
 
-  defp record_llm_call(kind, requested_model, result, started, opts) do
-    duration_ms = System.monotonic_time(:millisecond) - started
-    purpose = Keyword.get(opts, :purpose, kind)
-
-    attrs =
-      case result do
-        {:ok, response} ->
-          %{
-            purpose: to_string(purpose),
-            model: response.model || requested_model,
-            success: true,
-            duration_ms: duration_ms,
-            response_length: String.length(response.response || ""),
-            raw: response.raw,
-            metadata: %{kind: kind}
-          }
-
-        {:error, reason} ->
-          %{
-            purpose: to_string(purpose),
-            model: requested_model,
-            success: false,
-            duration_ms: duration_ms,
-            error: inspect(reason),
-            metadata: %{kind: kind}
-          }
-      end
-
-    Zaik.TelemetryStore.safe_record_llm_call(attrs)
-  end
-
   defp post_json(path, payload, timeout) do
-    ensure_http_started()
-    url = config().ollama_url |> String.trim_trailing("/") |> Kernel.<>(path)
-    body = Jason.encode!(payload)
-    headers = [{~c"content-type", ~c"application/json"}]
-
-    case :httpc.request(
-           :post,
-           {to_charlist(url), headers, ~c"application/json", body},
-           [timeout: timeout],
-           body_format: :binary
-         ) do
-      {:ok, {{_version, status, _reason}, _headers, response_body}} ->
-        decode_response(status, response_body)
-
-      {:error, reason} ->
-        {:error, reason}
-    end
-  end
-
-  defp decode_response(status, body) when status in 200..299 do
-    case Jason.decode(body) do
-      {:ok, decoded} -> {:ok, decoded}
-      {:error, _} -> {:error, {:invalid_json, body}}
-    end
-  end
-
-  defp decode_response(status, body) do
-    decoded =
-      case Jason.decode(body) do
-        {:ok, value} -> value
-        {:error, _} -> body
-      end
-
-    {:error, {:http_error, status, decoded}}
-  end
-
-  defp ensure_http_started do
-    Application.ensure_all_started(:inets)
-    Application.ensure_all_started(:ssl)
+    Zaik.LLM.HTTP.post_json(config().ollama_url, path, payload, timeout)
   end
 
   defp env_integer(name) do

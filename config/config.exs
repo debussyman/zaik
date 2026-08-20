@@ -20,6 +20,13 @@ config :zaik, :llm,
   keep_alive: "30m",
   temperature: 0.2
 
+config :zaik, :llama_cpp,
+  base_url: "http://localhost:8080",
+  default_model: "local-model",
+  num_predict: 512,
+  timeout_ms: 180_000,
+  temperature: 0.2
+
 config :zaik, :intent,
   enabled: true,
   provider: :ollama,

@@ -44,7 +44,7 @@ defmodule Zaik.AgentChat do
     cfg = Map.merge(config(), Map.new(Keyword.get(opts, :config, %{})))
 
     if cfg.enabled do
-      client = Keyword.get(opts, :client, Zaik.LLM.OllamaClient)
+      client = Keyword.get(opts, :client, Zaik.LLM)
       sql_tool = Keyword.get(opts, :sql_tool, Zaik.Analytics.SQLTool)
 
       messages = base_messages(text, context, Keyword.get(opts, :prompt_domain))
