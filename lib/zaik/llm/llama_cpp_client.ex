@@ -40,6 +40,7 @@ defmodule Zaik.LLM.LlamaCppClient do
         max_tokens: Keyword.get(opts, :num_predict, config().num_predict)
       }
       |> maybe_put_response_format(Keyword.get(opts, :format))
+      |> maybe_put_thinking(Keyword.get(opts, :think))
       |> maybe_put_extra_body(Keyword.get(opts, :llama_cpp_extra_body, []))
 
     started = System.monotonic_time(:millisecond)
@@ -132,6 +133,20 @@ defmodule Zaik.LLM.LlamaCppClient do
     do: Map.put(payload, :response_format, %{type: "json_object"})
 
   defp maybe_put_response_format(payload, _format), do: payload
+
+  defp maybe_put_thinking(payload, false) do
+    Map.update(payload, :chat_template_kwargs, %{enable_thinking: false}, fn kwargs ->
+      Map.put(kwargs, :enable_thinking, false)
+    end)
+  end
+
+  defp maybe_put_thinking(payload, true) do
+    Map.update(payload, :chat_template_kwargs, %{enable_thinking: true}, fn kwargs ->
+      Map.put(kwargs, :enable_thinking, true)
+    end)
+  end
+
+  defp maybe_put_thinking(payload, _think), do: payload
 
   defp maybe_put_extra_body(payload, extra) when is_list(extra),
     do: Map.merge(payload, Map.new(extra))

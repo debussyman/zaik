@@ -55,6 +55,7 @@ defmodule Zaik.LLMTest do
                format: "json",
                num_predict: 64,
                temperature: 0.0,
+               think: false,
                timeout_ms: 12_345
              )
 
@@ -70,6 +71,7 @@ defmodule Zaik.LLMTest do
     assert payload.max_tokens == 64
     assert payload.temperature == 0.0
     assert payload.response_format == %{type: "json_object"}
+    assert payload.chat_template_kwargs == %{enable_thinking: false}
   end
 
   defp restore_env(name) do
