@@ -1,10 +1,13 @@
 defmodule Zaik.Intent.Parser do
   @moduledoc """
-  LLM-backed structured intent parser for free-form Zaik chat.
+  Deprecated LLM-backed structured intent parser.
 
-  The parser classifies a natural-language message into a constrained JSON
-  shape. It does not execute actions directly; `Zaik.ChatRouter` dispatches the
-  parsed intent to trusted Elixir functions/commands.
+  Normal free-form Zaik chat no longer uses this parser. Chat surfaces route
+  through `Zaik.ChatRouter` into the unified `Zaik.AgentChat` house-agent brain,
+  while explicit deterministic commands still go through `Zaik.CommandProcessor`.
+
+  This module remains temporarily for legacy experiments/tests and may move to a
+  legacy adapter or be removed during the open-source reorganization.
   """
 
   @intents [
@@ -43,6 +46,8 @@ defmodule Zaik.Intent.Parser do
     }
   end
 
+  @doc deprecated:
+         "Normal chat now routes through Zaik.ChatRouter/Zaik.AgentChat; this legacy parser is retained temporarily."
   def parse(message, opts \\ []) when is_binary(message) do
     cfg = Map.merge(config(), Map.new(opts))
     client = Keyword.get(opts, :client, Zaik.LLM)

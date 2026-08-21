@@ -1,6 +1,6 @@
 # Zaik
 
-Zaik is a local-first personal agent harness built with Elixir/OTP. It provides a supervised task runtime, filesystem-backed session memory, Signal chat ingress, local Ollama LLM tasks, and MQTT/Zigbee2MQTT home-state integration.
+Zaik is a local-first personal agent harness built with Elixir/OTP. It provides a supervised task runtime, filesystem-backed session memory, Telegram chat ingress, pluggable local LLM providers, and MQTT/Zigbee2MQTT home-state integration.
 
 ## Current capabilities
 
@@ -10,11 +10,11 @@ Zaik is a local-first personal agent harness built with Elixir/OTP. It provides 
 - Filesystem-backed session memory under `~/.zaik/sessions`
 - Context building from session branches/messages
 - Observability snapshots, health summaries, and watchdog reconciliation
-- Signal ingress/replies via linked-device `signal-cli`
+- Optional Signal ingress/replies via linked-device `signal-cli`
 - Telegram Bot API polling for a separate bot identity and multi-user chat
-- Natural-language chat routing with a small local Ollama intent model
+- Unified free-form house-agent chat through `Zaik.AgentChat`
 - Read-only conversational agent mode with supervised SQL tools over home/ops telemetry
-- Local Ollama prompt tasks
+- Pluggable local LLM providers: Ollama and llama.cpp/`llama-server`
 - MQTT subscription to Zigbee2MQTT state
 - SQLite-backed home telemetry history in `~/.zaik/home/home.db`
 - Home commands for latest Zigbee2MQTT device/sensor state and trends
@@ -81,7 +81,7 @@ Natural chat:
 
 ```elixir
 Zaik.ChatRouter.process("Is Lily's room cooling off?")
-Zaik.Intent.Parser.parse("Is anyone in Lily's room?")
+Zaik.agent_chat("What changed in Lily's room this morning?", %{channel: :telegram})
 ```
 
 Home state:
@@ -97,9 +97,9 @@ Zaik.mqtt_status()
 
 ## Text / messaging chat
 
-Signal and Telegram ingress go through `Zaik.ChatRouter`: exact commands still work, and free-form messages are parsed by a small local intent model and dispatched to trusted Elixir handlers.
+Signal and Telegram ingress go through `Zaik.ChatRouter`: exact commands still work, and free-form messages route to one unified house-agent brain, `Zaik.AgentChat`.
 
-For simple high-confidence requests, Zaik still uses deterministic Elixir command handlers. For more analytical/follow-up questions, Zaik can use `Zaik.AgentChat`: a bounded read-only agent loop where the model asks Elixir to run safe SQL tools over documented SQLite views, then answers from the tool results.
+Explicit deterministic commands still use trusted Elixir command handlers. Normal free-form chat uses `Zaik.AgentChat`: a bounded read-only agent loop where the model asks Elixir to run safe SQL tools over documented SQLite views, then answers from the tool results.
 
 Telegram is the preferred multi-person chat path because Zaik appears as its own bot identity instead of speaking as your linked Signal account.
 
@@ -233,67 +233,34 @@ zaik how's Lily's room?
 
 Private one-on-one Telegram chats do not require a trigger.
 
-### Ollama
+### Local LLM providers
 
-Defaults are configured for local Ollama:
+Zaik supports pluggable local LLM providers. Ollama remains supported; llama.cpp/`llama-server` is also supported through its OpenAI-compatible `/v1/chat/completions` API.
+
+Default Ollama config:
 
 ```text
 URL:          http://localhost:11434
 Prompt model: qwen3-coder:30b
-Intent model: qwen3:4b
 ```
 
-The intent model is used only for lightweight structured routing. The separate conversational agent fallback defaults to `qwen3-coder:30b` because tool-planning JSON is more demanding than simple intent classification.
-
-The intent parser returns JSON like:
-
-```json
-{
-  "intent": "home_sensor_trend",
-  "device_query": "lily",
-  "fields": ["temperature"],
-  "time_window": "last hour",
-  "confidence": 0.95
-}
-```
-
-Pull the intent model if needed:
-
-```bash
-ollama pull qwen3:4b
-```
-
-Important Ollama settings for the intent parser:
-
-```text
-format: json
-think: false
-temperature: 0
-num_ctx: 2048
-num_predict: 160
-```
-
-Optional environment overrides:
+llama.cpp example:
 
 ```sh
-ZAIK_INTENT_ENABLED=true
-ZAIK_INTENT_MODEL=qwen3:4b
-ZAIK_INTENT_NUM_CTX=2048
-ZAIK_INTENT_NUM_PREDICT=160
-ZAIK_INTENT_KEEP_ALIVE=30m
+ZAIK_LLM_PROVIDER=llama_cpp
+ZAIK_LLAMA_CPP_URL=http://127.0.0.1:8080
+ZAIK_LLM_MODEL=qwen3-coder:30b
+ZAIK_AGENT_MODEL=qwen3:4b-instruct
+ZAIK_AGENT_FALLBACK_MODEL=qwen3.8:27b
 ```
 
 Useful smoke test through Zaik:
 
 ```bash
-nix develop -c mix run -e 'IO.puts(Zaik.CommandProcessor.process("ask say zaik ollama ok"))'
+nix develop -c mix run -e 'IO.puts(Zaik.CommandProcessor.process("ask say zaik llm ok"))'
 ```
 
-Intent parser smoke test:
-
-```bash
-nix develop -c mix run -e 'IO.inspect(Zaik.Intent.Parser.parse("Is Lily room cooling?"))'
-```
+`Zaik.Intent.Parser` is deprecated. It remains temporarily for legacy experiments/tests, but normal free-form chat now routes through `Zaik.ChatRouter` to `Zaik.AgentChat`.
 
 ### MQTT / Zigbee2MQTT
 
