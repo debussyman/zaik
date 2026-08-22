@@ -8,9 +8,9 @@ defmodule Zaik.MixProject do
       elixir: "~> 1.14",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
-      description: "A personal AI agent runtime inspired by OpenClaw",
+      description: "A local-first Elixir/OTP personal agent harness",
       package: package(),
-      source_url: "https://github.com/yourusername/zaik"
+      source_url: "https://github.com/debussyman/zaik"
     ]
   end
 
@@ -31,9 +31,9 @@ defmodule Zaik.MixProject do
   defp package do
     [
       files: ["lib", "mix.exs", "README.md", "LICENSE"],
-      maintainers: ["Your Name"],
+      maintainers: ["Ryan Cooke"],
       licenses: ["MIT"],
-      links: %{"GitHub" => "https://github.com/yourusername/zaik"}
+      links: %{"GitHub" => "https://github.com/debussyman/zaik"}
     ]
   end
 end

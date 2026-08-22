@@ -55,7 +55,7 @@ Zaik currently includes several overlapping concerns under one top-level namespa
   - `Zaik.ChatRouter`
   - `Zaik.CommandProcessor`
 
-The core pieces are reusable, but the current layout makes the repository feel tightly coupled to one house, Telegram/Signal, Ollama, MQTT, Zigbee2MQTT, and Lily's room.
+The core pieces are reusable, but the current layout makes the repository feel tightly coupled to one private household deployment, Telegram/Signal, Ollama, MQTT, Zigbee2MQTT, and a specific room/sensor setup.
 
 ## Proposed Conceptual Layers
 
@@ -397,19 +397,14 @@ Needed before opening the repo:
 
 ### mix.exs Metadata
 
-Current placeholders should be replaced:
-
-```elixir
-source_url: "https://github.com/yourusername/zaik"
-maintainers: ["Your Name"]
-```
+Package metadata should stay accurate for public use.
 
 Tasks:
 
-- [ ] Set real `source_url`.
-- [ ] Set maintainer name/handle.
-- [ ] Confirm license.
-- [ ] Add or verify `LICENSE` file.
+- [x] Set real `source_url`.
+- [x] Set maintainer name/handle.
+- [x] Confirm license: MIT.
+- [x] Add or verify `LICENSE` file.
 - [ ] Decide whether package metadata should target Hex now or later.
 
 ### Planning Docs
@@ -467,7 +462,7 @@ Before publishing:
   - `~/.config/zaik/signal.env`
   - `~/.config/zaik/telegram.env`
 - [ ] Scan tracked files for real phone numbers, Telegram IDs, bot tokens, API keys, local IPs, and personal names.
-- [ ] Replace household-specific names like Lily in core docs/examples where generic examples would be better.
+- [x] Replace household-specific names in public README examples where generic examples are better. Test fixtures may still use historical sample names until domain fixtures are generalized.
 - [ ] Keep a separate personal/private deployment branch or local config for household-specific defaults.
 
 ## Suggested Target Tree
@@ -540,16 +535,16 @@ lib/
 
 ### Phase 1: OSS Hygiene
 
-- [ ] Update README to describe current one-brain architecture.
-- [ ] Make Signal docs optional/deprecated relative to Telegram.
-- [ ] Add `.env.example` files.
-- [ ] Fix `mix.exs` metadata.
-- [ ] Add/verify `LICENSE`.
-- [ ] Move planning docs to `docs/archive/` or convert to polished docs.
-- [ ] Add `CONTRIBUTING.md`.
-- [ ] Add architecture docs.
-- [ ] Run tracked-file secret/privacy scan.
-- [ ] Ensure `nix develop -c mix test` passes.
+- [x] Update README to describe current one-brain architecture.
+- [x] Make Signal docs optional/deprecated relative to Telegram.
+- [x] Add `.env.example` files.
+- [x] Fix `mix.exs` metadata.
+- [x] Add/verify `LICENSE`.
+- [x] Move planning docs to `docs/archive/` or convert to polished docs.
+- [x] Add `CONTRIBUTING.md`.
+- [x] Add architecture docs.
+- [x] Run tracked-file secret/privacy scan.
+- [x] Ensure `nix develop -c mix test` passes.
 
 ### Phase 2: Clarify Boundaries Without Big Renames
 

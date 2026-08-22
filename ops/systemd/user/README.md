@@ -3,13 +3,15 @@
 These user-level systemd units keep the local home-agent runtime alive:
 
 - `zigbee2mqtt.service` runs the Zigbee2MQTT checkout from `~/.local/share/zigbee2mqtt`.
-- `zaik.service` runs the Zaik OTP app with Signal/Telegram ingress and MQTT home integration.
+- `zaik.service` runs the Zaik OTP app with Telegram/optional Signal ingress and MQTT home integration.
 
 Mosquitto is expected to run as a system service on `localhost:1883`.
 
-## Private Signal env
+## Private env files
 
-Create `~/.config/zaik/signal.env` with mode `0600`:
+Create private env files under `~/.config/zaik/` with mode `0600`. See `examples/env/*.env.example` for templates.
+
+Optional legacy Signal example:
 
 ```sh
 ZAIK_SIGNAL_ENABLED=true
@@ -19,7 +21,7 @@ ZAIK_SIGNAL_ALLOWED_SENDERS=+15555555555
 ZAIK_SIGNAL_POLL_INTERVAL_MS=5000
 ```
 
-Optional Signal/Telegram/home overrides:
+Optional Telegram/home/LLM overrides:
 
 ```sh
 ZAIK_TELEGRAM_ENABLED=false
@@ -29,18 +31,20 @@ ZAIK_TELEGRAM_ALLOWED_USER_IDS=111111111,222222222
 ZAIK_TELEGRAM_ALLOWED_CHAT_IDS=
 ZAIK_TELEGRAM_GROUP_TRIGGER=zaik
 ZAIK_TELEMETRY_ENABLED=true
-ZAIK_TELEMETRY_DB=/home/ryan/.zaik/zaik.db
+ZAIK_TELEMETRY_DB=$HOME/.zaik/zaik.db
 ZAIK_AGENT_CHAT_ENABLED=true
-ZAIK_AGENT_MODEL=qwen3-coder:30b
+ZAIK_AGENT_MODEL=qwen3:4b-instruct
+ZAIK_AGENT_FALLBACK_ENABLED=true
+ZAIK_AGENT_FALLBACK_MODEL=qwen3.8:27b
 ZAIK_AGENT_NUM_PREDICT=900
 ZAIK_AGENT_TEMPERATURE=0
 ZAIK_AGENT_MAX_TOOL_CALLS=3
 ZAIK_MQTT_HOST=localhost
 ZAIK_MQTT_PORT=1883
-ZAIK_ZIGBEE2MQTT_DATA_DIR=/home/ryan/.local/share/zigbee2mqtt/data
-ZAIK_HOME_HISTORY_DB=/home/ryan/.zaik/home/home.db
-ZAIK_INTENT_MODEL=qwen3:4b
-ZAIK_INTENT_KEEP_ALIVE=30m
+ZAIK_ZIGBEE2MQTT_DATA_DIR=$HOME/.local/share/zigbee2mqtt/data
+ZAIK_HOME_HISTORY_DB=$HOME/.zaik/home/home.db
+ZAIK_LLM_PROVIDER=ollama
+ZAIK_OLLAMA_URL=http://127.0.0.1:11434
 ```
 
 ## Install / update

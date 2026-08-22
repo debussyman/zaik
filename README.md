@@ -80,18 +80,18 @@ Zaik.get_session_context(session_id)
 Natural chat:
 
 ```elixir
-Zaik.ChatRouter.process("Is Lily's room cooling off?")
-Zaik.agent_chat("What changed in Lily's room this morning?", %{channel: :telegram})
+Zaik.ChatRouter.process("Is the nursery cooling off?")
+Zaik.agent_chat("What changed in the nursery this morning?", %{channel: :telegram})
 ```
 
 Home state:
 
 ```elixir
 Zaik.home_devices()
-Zaik.home_device("lily")
+Zaik.home_device("nursery")
 Zaik.presence_devices()
-Zaik.home_trend("lily")
-Zaik.home_readings("lily", limit: 20)
+Zaik.home_trend("nursery")
+Zaik.home_readings("nursery", limit: 20)
 Zaik.mqtt_status()
 ```
 
@@ -106,11 +106,11 @@ Telegram is the preferred multi-person chat path because Zaik appears as its own
 Natural-language examples:
 
 ```text
-How's Lily's room?
-Is Lily's room getting colder?
-Has her room cooled off in the last hour?
-Is anyone in Lily's room right now?
-How bright is it in Lily's room?
+How's the nursery?
+Is the nursery getting colder?
+Has that room cooled off in the last hour?
+Is anyone in the nursery right now?
+How bright is the nursery?
 What's going on at home?
 Is Zaik healthy?
 Do a watchdog scan
@@ -149,8 +149,8 @@ Home command examples:
 home
 home devices
 presence
-sensor lily
-sensor lily trend
+sensor nursery
+sensor nursery trend
 home trends
 ```
 
@@ -227,8 +227,8 @@ chmod 600 ~/.config/zaik/telegram.env
 Find your Telegram user/chat IDs from logs while testing, or use a bot like `@userinfobot`. For groups, add the bot to the group and allowlist the group chat ID. Group messages only trigger Zaik if addressed, e.g.:
 
 ```text
-zaik how's Lily's room?
-@your_bot_username is Lily's room cooling?
+zaik how's the nursery?
+@your_bot_username is the nursery cooling?
 ```
 
 Private one-on-one Telegram chats do not require a trigger.
@@ -276,8 +276,8 @@ Optional environment overrides:
 ```sh
 ZAIK_MQTT_HOST=localhost
 ZAIK_MQTT_PORT=1883
-ZAIK_ZIGBEE2MQTT_DATA_DIR=/home/ryan/.local/share/zigbee2mqtt/data
-ZAIK_HOME_HISTORY_DB=/home/ryan/.zaik/home/home.db
+ZAIK_ZIGBEE2MQTT_DATA_DIR=$HOME/.local/share/zigbee2mqtt/data
+ZAIK_HOME_HISTORY_DB=$HOME/.zaik/home/home.db
 ```
 
 Zaik also bootstraps latest Zigbee2MQTT state from:
@@ -331,14 +331,14 @@ Current eval cases cover:
 ```text
 what have we asked you today?
 what tasks failed recently?
-has Lily's room been warm recently?
+has the nursery been warm recently?
 ```
 
 Optional environment overrides:
 
 ```sh
 ZAIK_TELEMETRY_ENABLED=true
-ZAIK_TELEMETRY_DB=/home/ryan/.zaik/zaik.db
+ZAIK_TELEMETRY_DB=$HOME/.zaik/zaik.db
 ZAIK_AGENT_CHAT_ENABLED=true
 ZAIK_AGENT_MODEL=qwen3-coder:30b
 ZAIK_AGENT_NUM_PREDICT=900
@@ -377,13 +377,13 @@ home_readings
 Trend commands use this history, for example:
 
 ```text
-sensor lily trend
+sensor nursery trend
 ```
 
 Example response once at least two readings exist in the recent window:
 
 ```text
-Lily's room is cooling. It is now 78.8°F, down 1.8°F over 1 hour. Humidity is steady at 54%. The room is getting brighter at 200 lux, up 100 lux. Based on 2 readings over 1 hour.
+The nursery is cooling. It is now 78.8°F, down 1.8°F over 1 hour. Humidity is steady at 54%. The room is getting brighter at 200 lux, up 100 lux. Based on 2 readings over 1 hour.
 ```
 
 Tests use an in-memory SQLite database by default, so test runs do not mutate the real home telemetry database.
@@ -475,11 +475,7 @@ Inspect running processes:
 ps -ef | grep -E '[m]osquitto|[z]igbee2mqtt|[p]npm start|[b]eam.smp|[m]osquitto_sub'
 ```
 
-Zigbee2MQTT frontend:
-
-```text
-http://192.168.1.1:8081/
-```
+Zigbee2MQTT frontend URL depends on your local deployment.
 
 MQTT topic watch:
 
@@ -497,9 +493,9 @@ lib/zaik/dispatcher.ex              Dynamic task dispatcher
 lib/zaik/agent/*.ex                 Task runner and workloads
 lib/zaik/session*.ex                Filesystem-backed sessions
 lib/zaik/context_builder.ex         Session context assembly
-lib/zaik/command_processor.ex       Text/Signal command routing
-lib/zaik/messaging/*.ex             Signal CLI ingress/replies
-lib/zaik/llm/*.ex                   Ollama client/workload
+lib/zaik/command_processor.ex       Explicit text commands
+lib/zaik/messaging/*.ex             Telegram and optional Signal adapters
+lib/zaik/llm*.ex                    Pluggable LLM facade and providers
 lib/zaik/mqtt/*.ex                  MQTT subscription wrapper
 lib/zaik/home/*.ex                  Zigbee2MQTT state parsing/store/bootstrap
 ops/systemd/user/*.service          User service templates
@@ -512,8 +508,10 @@ Local development/runtime files should stay untracked:
 ```text
 .envrc
 .direnv/
-~/.config/zaik/signal.env
+~/.config/zaik/*.env
 ~/.local/share/zigbee2mqtt/
+
+See `examples/env/*.env.example` for private runtime config templates.
 ```
 
 ## License
