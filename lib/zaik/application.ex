@@ -18,6 +18,8 @@ defmodule Zaik.Application do
         Zaik.TaskQueue,
         Zaik.Home.DeviceStore,
         home_history_child(),
+        alerts_rule_store_child(),
+        alerts_engine_child(),
         zigbee2mqtt_bootstrapper_child(),
         mqtt_child(),
         {Registry, keys: :unique, name: Zaik.Agent.Registry},
@@ -48,6 +50,22 @@ defmodule Zaik.Application do
 
     if config.enabled do
       {Zaik.Home.HistoryStore, Map.to_list(config)}
+    end
+  end
+
+  defp alerts_rule_store_child do
+    config = Zaik.Alerts.RuleStore.config()
+
+    if config.enabled do
+      {Zaik.Alerts.RuleStore, Map.to_list(config)}
+    end
+  end
+
+  defp alerts_engine_child do
+    config = Zaik.Alerts.RuleStore.config()
+
+    if config.enabled do
+      Zaik.Alerts.Engine
     end
   end
 

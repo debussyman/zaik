@@ -78,6 +78,15 @@ config :zaik, :scheduler,
     }
   ]
 
+config :zaik, :alerts,
+  enabled: true,
+  path:
+    if(config_env() == :test,
+      do: Path.join(System.tmp_dir!(), "zaik-alert-rules-test.json"),
+      else: "~/.zaik/alerts/rules.json"
+    ),
+  default_cooldown_seconds: 900
+
 config :zaik, :mqtt,
   enabled: true,
   host: "localhost",

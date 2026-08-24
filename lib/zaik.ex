@@ -111,6 +111,21 @@ defmodule Zaik do
   def run_scheduled_job(name), do: Zaik.Scheduler.run_now(name)
 
   @doc """
+  List active alert rules by default.
+  """
+  def alerts(status \\ :active), do: Zaik.Alerts.list(status)
+
+  @doc """
+  Fetch one alert rule.
+  """
+  def alert(id), do: Zaik.Alerts.get(id)
+
+  @doc """
+  Cancel an alert rule.
+  """
+  def cancel_alert(id), do: Zaik.Alerts.cancel(id)
+
+  @doc """
   List pending proposals that require human confirmation.
   """
   def proposals(status \\ :pending), do: Zaik.Proposals.list(status)

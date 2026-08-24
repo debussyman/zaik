@@ -170,6 +170,7 @@ defmodule Zaik.Home.Zigbee2MQTT do
         with {:ok, device} <-
                Zaik.Home.DeviceStore.upsert_device(store, friendly_name, decoded, metadata) do
           record_history(history_store, device.friendly_name, device.payload, device.metadata)
+          evaluate_alerts(device.friendly_name, device.payload, device.metadata)
           {:ok, device}
         end
     end
@@ -189,6 +190,22 @@ defmodule Zaik.Home.Zigbee2MQTT do
   catch
     :exit, reason ->
       Logger.debug("Failed to record home history: #{inspect(reason)}")
+      :ok
+  end
+
+  defp evaluate_alerts(friendly_name, payload, metadata) do
+    if Process.whereis(Zaik.Alerts.Engine) do
+      Zaik.Alerts.Engine.evaluate_device_update(friendly_name, payload, metadata)
+    end
+
+    :ok
+  rescue
+    error ->
+      Logger.debug("Failed to evaluate home alerts: #{Exception.message(error)}")
+      :ok
+  catch
+    :exit, reason ->
+      Logger.debug("Failed to evaluate home alerts: #{inspect(reason)}")
       :ok
   end
 

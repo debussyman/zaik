@@ -68,6 +68,12 @@ defmodule Zaik.CommandProcessor do
       command?(text, "proposals all") ->
         format_proposals(:all)
 
+      command?(text, "alerts") ->
+        format_alerts(:active)
+
+      command?(text, "alerts all") ->
+        format_alerts(:all)
+
       command?(text, "ask") ->
         submit_llm_prompt("", context)
 
@@ -91,6 +97,18 @@ defmodule Zaik.CommandProcessor do
 
       String.starts_with?(downcase(text), "proposal ") ->
         text |> rest_after("proposal") |> format_proposal()
+
+      String.starts_with?(downcase(text), "alert cancel ") ->
+        text |> rest_after("alert cancel") |> cancel_alert()
+
+      String.starts_with?(downcase(text), "alert presence until ") ->
+        text |> rest_after("alert presence until") |> create_presence_alert(context)
+
+      String.starts_with?(downcase(text), "watch presence until ") ->
+        text |> rest_after("watch presence until") |> create_presence_alert(context)
+
+      String.starts_with?(downcase(text), "watch home until ") ->
+        text |> rest_after("watch home until") |> create_presence_alert(context)
 
       String.starts_with?(downcase(text), "approve ") ->
         text |> rest_after("approve") |> decide_proposal(:approve, context)
@@ -153,6 +171,11 @@ defmodule Zaik.CommandProcessor do
     proposals
     proposals all
     proposal <proposal_id>
+    alerts
+    alerts all
+    alert presence until <time>
+    watch presence until <time>
+    alert cancel <alert_id>
     approve <proposal_id>
     reject <proposal_id>
     ask <prompt>
@@ -523,6 +546,90 @@ defmodule Zaik.CommandProcessor do
 
   defp format_proposal_line(proposal) do
     "- #{proposal.id} [#{proposal.status}] #{proposal.title} created=#{format_time(proposal.created_at)}"
+  end
+
+  defp create_presence_alert(until_text, context) do
+    until_text = String.trim(until_text)
+
+    with {:ok, chat_id} <- alert_chat_id(context),
+         {:ok, ends_at} <- Zaik.Alerts.parse_until(until_text),
+         :ok <- future_datetime?(ends_at),
+         {:ok, rule} <-
+           Zaik.Alerts.create_presence_alert(%{
+             scope: :home,
+             starts_at: DateTime.utc_now(),
+             ends_at: ends_at,
+             notify_channel: :telegram,
+             notify_chat_id: chat_id,
+             created_by: actor_from_context(context),
+             metadata: %{command: "alert presence until #{until_text}"}
+           }) do
+      "Created presence alert #{rule["id"]}. I’ll notify this Telegram chat if presence is detected before #{format_time(rule["ends_at"])}. Cooldown: #{format_duration(rule["cooldown_seconds"])}."
+    else
+      {:error, :missing_chat_id} ->
+        "Usage: alert presence until <time>. This command must be run from a Telegram chat so I know where to notify."
+
+      {:error, :empty_until} ->
+        "Usage: alert presence until <time>"
+
+      {:error, :invalid_until} ->
+        "I couldn't understand that alert end time. Try `alert presence until saturday`, `alert presence until tomorrow`, or `alert presence until 2026-08-30 09:00`."
+
+      {:error, :not_future} ->
+        "Alert end time must be in the future."
+
+      {:error, reason} ->
+        "Failed to create alert: #{format_value(reason)}"
+    end
+  end
+
+  defp format_alerts(status) do
+    case Zaik.Alerts.list(status) do
+      [] ->
+        if status == :all, do: "No alerts.", else: "No active alerts."
+
+      rules ->
+        header = if status == :all, do: "Alerts", else: "Active alerts"
+        ([header] ++ Enum.map(rules, &format_alert_line/1)) |> Enum.join("\n")
+    end
+  rescue
+    _ -> "Alerts are not available."
+  catch
+    :exit, _ -> "Alerts are not available."
+  end
+
+  defp cancel_alert(id) do
+    id = String.trim(id)
+
+    if id == "" do
+      "Usage: alert cancel <alert_id>"
+    else
+      case Zaik.Alerts.cancel(id) do
+        {:ok, rule} -> "Cancelled alert #{rule["id"]}."
+        {:error, :not_found} -> "Alert not found: #{id}"
+        {:error, reason} -> "Failed to cancel alert #{id}: #{format_value(reason)}"
+      end
+    end
+  end
+
+  defp format_alert_line(rule) do
+    last = rule["last_triggered_at"] || "never"
+
+    "- #{rule["id"]} [#{rule["status"]}] #{rule["type"]} #{rule["scope"]} until=#{format_time(rule["ends_at"])} cooldown=#{format_duration(rule["cooldown_seconds"])} triggered=#{rule["trigger_count"] || 0} last=#{format_time(last)}"
+  end
+
+  defp alert_chat_id(context) when is_map(context) do
+    case Map.get(context, :chat_id) || Map.get(context, "chat_id") do
+      nil -> {:error, :missing_chat_id}
+      "" -> {:error, :missing_chat_id}
+      chat_id -> {:ok, to_string(chat_id)}
+    end
+  end
+
+  defp alert_chat_id(_context), do: {:error, :missing_chat_id}
+
+  defp future_datetime?(%DateTime{} = datetime) do
+    if DateTime.compare(datetime, DateTime.utc_now()) == :gt, do: :ok, else: {:error, :not_future}
   end
 
   defp submit_echo(message, context) do
@@ -1009,6 +1116,12 @@ defmodule Zaik.CommandProcessor do
   defp format_time(nil), do: "-"
   defp format_time(%DateTime{} = time), do: DateTime.to_iso8601(time)
   defp format_time(time), do: to_string(time)
+
+  defp format_duration(seconds)
+       when is_integer(seconds) and seconds >= 60 and rem(seconds, 60) == 0,
+       do: "#{div(seconds, 60)}m"
+
+  defp format_duration(seconds), do: "#{seconds}s"
 
   defp command?(text, command), do: downcase(text) == command
   defp downcase(text), do: text |> String.trim() |> String.downcase()

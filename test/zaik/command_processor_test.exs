@@ -108,6 +108,38 @@ defmodule Zaik.CommandProcessorTest do
     assert response =~ "Based on 2 readings"
   end
 
+  test "alert commands create, list, and cancel presence alerts" do
+    Zaik.Alerts.RuleStore.reset()
+
+    response =
+      Zaik.CommandProcessor.process("alert presence until 2099-01-01", %{
+        channel: :telegram,
+        chat_id: "chat-1",
+        sender_id: "user-1"
+      })
+
+    assert response =~ "Created presence alert alert_"
+    assert response =~ "Cooldown: 15m"
+
+    [rule] = Zaik.Alerts.list(:active)
+    assert rule["notify_chat_id"] == "chat-1"
+    assert rule["created_by"] == "user-1"
+
+    alerts = Zaik.CommandProcessor.process("alerts")
+    assert alerts =~ "Active alerts"
+    assert alerts =~ rule["id"]
+    assert alerts =~ "triggered=0"
+
+    cancel = Zaik.CommandProcessor.process("alert cancel #{rule["id"]}")
+    assert cancel == "Cancelled alert #{rule["id"]}."
+    assert Zaik.Alerts.list(:active) == []
+  end
+
+  test "alert creation requires a chat context" do
+    assert Zaik.CommandProcessor.process("alert presence until 2099-01-01") =~
+             "must be run from a Telegram chat"
+  end
+
   test "unknown command returns help" do
     response = Zaik.CommandProcessor.process("do unsafe thing")
 

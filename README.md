@@ -14,6 +14,7 @@ Zaik is a local-first personal agent harness built with Elixir/OTP. It provides 
 - Telegram Bot API polling for a separate bot identity and multi-user chat
 - Unified free-form house-agent chat through `Zaik.AgentChat`
 - Read-only conversational agent mode with supervised SQL tools over home/ops telemetry
+- Deterministic presence alert rules with Telegram notifications and cooldown/debounce
 - Pluggable local LLM providers: Ollama and llama.cpp/`llama-server`
 - MQTT subscription to Zigbee2MQTT state
 - SQLite-backed home telemetry history in `~/.zaik/home/home.db`
@@ -145,6 +146,11 @@ sensor <device name>
 sensor <device name> trend
 watchdog
 watchdog scan
+alerts
+alerts all
+alert presence until <time>
+watch presence until <time>
+alert cancel <alert_id>
 ask <prompt>
 submit llm <prompt>
 submit echo <message>
@@ -246,6 +252,42 @@ zaik how's the nursery?
 Set `ZAIK_TELEGRAM_REQUIRE_DIRECT_ADDRESSING=true` to restore the older mode where group messages only trigger Zaik when they start with `zaik`, `/zaik`, `@your_bot_username`, or `/zaik@your_bot_username`.
 
 Private one-on-one Telegram chats do not require a trigger.
+
+### Presence alerts
+
+Zaik can create deterministic presence alerts from explicit commands. These are persistent local rules, not LLM-created automations:
+
+```text
+alert presence until saturday
+watch presence until tomorrow
+alerts
+alert cancel <alert_id>
+```
+
+When any presence-capable home sensor reports `presence=true` or `pir_detection=true` during an active rule window, Zaik sends a Telegram notification to the chat where the rule was created. Each rule has a cooldown/debounce period to prevent spam; the default is 15 minutes.
+
+Supported `until` examples:
+
+```text
+saturday
+tomorrow
+2026-08-30
+2026-08-30 09:00
+```
+
+Alert rules are stored locally as JSON:
+
+```text
+~/.zaik/alerts/rules.json
+```
+
+Optional config:
+
+```sh
+ZAIK_ALERTS_ENABLED=true
+ZAIK_ALERTS_PATH=$HOME/.zaik/alerts/rules.json
+ZAIK_ALERT_DEFAULT_COOLDOWN_SECONDS=900
+```
 
 ### Local LLM providers
 
