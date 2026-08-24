@@ -12,4 +12,16 @@ defmodule Zaik.AgentChat.PromptsTest do
     refute prompt =~ "this_morning_start"
     refute prompt =~ "Do NOT interpret \"this morning\""
   end
+
+  test "bedroom questions route to dynamic home readings prompt" do
+    assert Zaik.AgentChat.Prompts.domain("what's it like in the main bedroom?") == :home_readings
+
+    prompt = Zaik.AgentChat.Prompts.planner("what's it like in the main bedroom?", %{})
+
+    assert prompt =~ "DOMAIN: home sensor readings and trends"
+    assert prompt =~ "Device and room names are dynamic"
+    assert prompt =~ "main bedroom"
+    assert prompt =~ "home_devices"
+    refute prompt =~ "DOMAIN: general conversation"
+  end
 end

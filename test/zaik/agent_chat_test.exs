@@ -254,6 +254,107 @@ defmodule Zaik.AgentChatTest do
     end
   end
 
+  defmodule RepairClient do
+    def chat(_prompt, opts) do
+      messages = Keyword.fetch!(opts, :messages)
+
+      response =
+        cond do
+          Enum.any?(messages, &tool_result_message?/1) ->
+            Jason.encode!(%{"type" => "final", "answer" => "The main bedroom is 80.6°F."})
+
+          Enum.any?(messages, &planner_repair_message?/1) ->
+            Jason.encode!(%{
+              "type" => "tool_call",
+              "tool" => "sql_query",
+              "args" => %{
+                "database" => "home",
+                "query" =>
+                  "SELECT recorded_at, temperature_f FROM home_readings WHERE lower(device_name) LIKE '%main bedroom%' ORDER BY recorded_at DESC LIMIT 1",
+                "limit" => 1
+              }
+            })
+
+          true ->
+            "I don't know what it is like in the main bedroom."
+        end
+
+      {:ok, %{model: "repair", response: response, done: true, raw: %{}}}
+    end
+
+    defp planner_repair_message?(%{content: content}) when is_binary(content),
+      do: String.contains?(content, "PLANNER JSON CORRECTION")
+
+    defp planner_repair_message?(_message), do: false
+
+    defp tool_result_message?(%{role: "user", content: content}) do
+      String.starts_with?(String.trim_leading(content), "SQL TOOL RESULT")
+    end
+
+    defp tool_result_message?(_message), do: false
+  end
+
+  defmodule StatusMessageClient do
+    def chat(_prompt, _opts) do
+      {:ok,
+       %{
+         model: "status-message",
+         response:
+           Jason.encode!(%{
+             "status" => "success",
+             "message" => "The main bedroom is currently at 80.6°F."
+           }),
+         done: true,
+         raw: %{}
+       }}
+    end
+  end
+
+  defmodule RawToolResultEchoClient do
+    def chat(_prompt, opts) do
+      messages = Keyword.fetch!(opts, :messages)
+
+      response =
+        cond do
+          Enum.any?(messages, &final_answer_mode?/1) ->
+            Jason.encode!(%{"type" => "final", "answer" => "The main bedroom is 80.6°F."})
+
+          Enum.any?(messages, &tool_result_message?/1) ->
+            Jason.encode!(%{
+              "columns" => ["device_name", "temperature_f"],
+              "rows" => [%{"device_name" => "Main bedroom multi-sensor", "temperature_f" => 80.6}],
+              "row_count" => 1,
+              "error" => nil
+            })
+
+          true ->
+            Jason.encode!(%{
+              "type" => "tool_call",
+              "tool" => "sql_query",
+              "args" => %{
+                "database" => "home",
+                "query" =>
+                  "SELECT device_name, temperature_f FROM home_readings WHERE lower(device_name) LIKE '%main bedroom%' ORDER BY recorded_at DESC LIMIT 1",
+                "limit" => 1
+              }
+            })
+        end
+
+      {:ok, %{model: "raw-tool-result-echo", response: response, done: true, raw: %{}}}
+    end
+
+    defp final_answer_mode?(%{content: content}) when is_binary(content),
+      do: String.contains?(content, "FINAL ANSWER MODE")
+
+    defp final_answer_mode?(_message), do: false
+
+    defp tool_result_message?(%{role: "user", content: content}) do
+      String.starts_with?(String.trim_leading(content), "SQL TOOL RESULT")
+    end
+
+    defp tool_result_message?(_message), do: false
+  end
+
   test "loops through a read-only SQL tool call and returns final answer" do
     assert {:ok, answer} =
              Zaik.AgentChat.respond("Was Lily's room warm recently?", %{},
@@ -336,6 +437,42 @@ defmodule Zaik.AgentChatTest do
     assert_received {:sql_tool_called, query, opts}
     assert query =~ "zaik_messages"
     assert opts[:db] == :ops
+  end
+
+  test "repairs a non-JSON planner response once before failing" do
+    assert {:ok, "The main bedroom is 80.6°F."} =
+             Zaik.AgentChat.respond("what is it like in the main bedroom?", %{},
+               client: RepairClient,
+               sql_tool: FakeSQLTool,
+               config: %{enabled: true, fallback_enabled: false, max_tool_calls: 3}
+             )
+
+    assert_received {:sql_tool_called, query, opts}
+    assert query =~ "home_readings"
+    assert query =~ "main bedroom"
+    assert opts[:db] == :home
+  end
+
+  test "accepts status/message JSON as a final answer" do
+    assert {:ok, "The main bedroom is currently at 80.6°F."} =
+             Zaik.AgentChat.respond("hello", %{},
+               client: StatusMessageClient,
+               sql_tool: FakeSQLTool,
+               config: %{enabled: true, fallback_enabled: false, max_tool_calls: 3}
+             )
+  end
+
+  test "forces final answer when model echoes raw SQL result JSON" do
+    assert {:ok, "The main bedroom is 80.6°F."} =
+             Zaik.AgentChat.respond("what is it like in the main bedroom?", %{},
+               client: RawToolResultEchoClient,
+               sql_tool: FakeSQLTool,
+               config: %{enabled: true, fallback_enabled: false, max_tool_calls: 3}
+             )
+
+    assert_received {:sql_tool_called, query, opts}
+    assert query =~ "home_readings"
+    assert opts[:db] == :home
   end
 
   test "falls back to configured model when primary returns an error" do

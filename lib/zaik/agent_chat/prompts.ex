@@ -59,7 +59,7 @@ defmodule Zaik.AgentChat.Prompts do
         :ops_messages
 
       Regex.match?(
-        ~r/\b(lily|room|home|sensor|temperature|temp|humidity|bright|brightness|illuminance|presence|motion|warm|cool|warmer|cooler|change|changed|trend|trending)\b/,
+        ~r/\b(lily|room|bedroom|nursery|kitchen|bathroom|living room|office|basement|upstairs|downstairs|home|sensor|temperature|temp|humidity|bright|brightness|illuminance|presence|motion|warm|cool|warmer|cooler|change|changed|trend|trending)\b/,
         normalized
       ) ->
         :home_readings
@@ -222,7 +222,10 @@ defmodule Zaik.AgentChat.Prompts do
     home_devices(id, friendly_name, source, topic, metadata_json, inserted_at, updated_at)
 
     Semantics:
-    - For Lily's room, filter lower(device_name) LIKE '%lily%' OR lower(room) LIKE '%lily%'.
+    - Device and room names are dynamic. Match the user's room/device words against lower(device_name), lower(room), and home_devices.friendly_name when needed.
+    - For a named room/device like "main bedroom", filter lower(device_name) LIKE '%main bedroom%' OR lower(room) LIKE '%main bedroom%'.
+    - If a named room/device has no matching home_readings rows, query home_devices with the same name words before saying there is no data.
+    - For casual room-state questions like "what is it like in <room>" or "how is <room>", query the latest temperature_f, humidity, illuminance, presence, and linkquality for that room/device.
     - For recent readings, ORDER BY recorded_at DESC.
     - Prefer temperature_f for household-facing temperature answers.
     - Boolean fields are 1=true, 0=false.
@@ -244,8 +247,9 @@ defmodule Zaik.AgentChat.Prompts do
     For temperature/humidity/illuminance change over a window, compare the newest and oldest readings inside exactly that window.
 
     Examples:
-    {"type":"tool_call","tool":"sql_query","args":{"database":"home","query":"SELECT recorded_at, temperature_f, humidity, illuminance, presence FROM home_readings WHERE (lower(device_name) LIKE '%lily%' OR lower(room) LIKE '%lily%') ORDER BY recorded_at DESC LIMIT 20","limit":20}}
-    {"type":"tool_call","tool":"sql_query","args":{"database":"home","query":"WITH windowed AS (SELECT recorded_at, temperature_f FROM home_readings WHERE (lower(device_name) LIKE '%lily%' OR lower(room) LIKE '%lily%') AND recorded_at >= datetime('now', '-30 minutes')), first_row AS (SELECT recorded_at, temperature_f FROM windowed ORDER BY recorded_at ASC LIMIT 1), last_row AS (SELECT recorded_at, temperature_f FROM windowed ORDER BY recorded_at DESC LIMIT 1) SELECT first_row.recorded_at AS first_recorded_at, first_row.temperature_f AS first_temperature_f, last_row.recorded_at AS last_recorded_at, last_row.temperature_f AS last_temperature_f, last_row.temperature_f - first_row.temperature_f AS temperature_change_f FROM first_row CROSS JOIN last_row","limit":1}}
+    {"type":"tool_call","tool":"sql_query","args":{"database":"home","query":"SELECT recorded_at, temperature_f, humidity, illuminance, presence, linkquality FROM home_readings WHERE (lower(device_name) LIKE '%main bedroom%' OR lower(room) LIKE '%main bedroom%') ORDER BY recorded_at DESC LIMIT 20","limit":20}}
+    {"type":"tool_call","tool":"sql_query","args":{"database":"home","query":"WITH windowed AS (SELECT recorded_at, temperature_f FROM home_readings WHERE (lower(device_name) LIKE '%nursery%' OR lower(room) LIKE '%nursery%') AND recorded_at >= datetime('now', '-30 minutes')), first_row AS (SELECT recorded_at, temperature_f FROM windowed ORDER BY recorded_at ASC LIMIT 1), last_row AS (SELECT recorded_at, temperature_f FROM windowed ORDER BY recorded_at DESC LIMIT 1) SELECT first_row.recorded_at AS first_recorded_at, first_row.temperature_f AS first_temperature_f, last_row.recorded_at AS last_recorded_at, last_row.temperature_f AS last_temperature_f, last_row.temperature_f - first_row.temperature_f AS temperature_change_f FROM first_row CROSS JOIN last_row","limit":1}}
+    {"type":"tool_call","tool":"sql_query","args":{"database":"home","query":"SELECT friendly_name, updated_at, metadata_json FROM home_devices WHERE lower(friendly_name) LIKE '%main bedroom%' ORDER BY updated_at DESC LIMIT 10","limit":10}}
     """
     |> String.trim()
   end

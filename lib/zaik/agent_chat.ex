@@ -12,6 +12,7 @@ defmodule Zaik.AgentChat do
   @default_model "qwen3:4b-instruct"
   @default_fallback_model "qwen3-coder:30b"
   @default_max_tool_calls 3
+  @max_planner_repairs 1
 
   def config do
     configured = Application.get_env(:zaik, :agent_chat, [])
@@ -171,7 +172,7 @@ defmodule Zaik.AgentChat do
 
   defp run_attempt(client, sql_tool, messages, cfg) do
     started_mono = System.monotonic_time(:millisecond)
-    {result, tool_calls} = loop(client, sql_tool, messages, cfg, 0, [])
+    {result, tool_calls} = loop(client, sql_tool, messages, cfg, 0, [], 0)
 
     %{
       model: cfg.model,
@@ -181,7 +182,7 @@ defmodule Zaik.AgentChat do
     }
   end
 
-  defp loop(client, _sql_tool, messages, cfg, tool_count, tool_calls)
+  defp loop(client, _sql_tool, messages, cfg, tool_count, tool_calls, _repair_count)
        when tool_count >= cfg.max_tool_calls do
     if sql_tool_result_messages(messages) == [] do
       {{:ok,
@@ -195,7 +196,7 @@ defmodule Zaik.AgentChat do
     end
   end
 
-  defp loop(client, sql_tool, messages, cfg, tool_count, tool_calls) do
+  defp loop(client, sql_tool, messages, cfg, tool_count, tool_calls, repair_count) do
     with {:ok, result} <-
            client.chat("",
              messages: messages,
@@ -229,12 +230,33 @@ defmodule Zaik.AgentChat do
           end
 
         _ ->
-          {{:error, {:invalid_agent_action, action}}, tool_calls}
+          if sql_tool_result_messages(messages) == [] do
+            {{:error, {:invalid_agent_action, action}}, tool_calls}
+          else
+            {final_answer(
+               client,
+               user_text_from(messages),
+               sql_tool_result_messages(messages),
+               cfg
+             ), tool_calls}
+          end
       end
     else
       {:error, reason} ->
-        Logger.debug("Agent chat failed: #{inspect(reason)}")
-        {{:error, reason}, tool_calls}
+        if planner_repairable?(reason, repair_count) do
+          loop(
+            client,
+            sql_tool,
+            messages ++ planner_repair_messages(reason),
+            cfg,
+            tool_count,
+            tool_calls,
+            repair_count + 1
+          )
+        else
+          Logger.debug("Agent chat failed: #{inspect(reason)}")
+          {{:error, reason}, tool_calls}
+        end
     end
   end
 
@@ -288,7 +310,8 @@ defmodule Zaik.AgentChat do
           messages ++ [assistant_message, tool_message, continuation_instruction],
           cfg,
           next_tool_count,
-          tool_calls
+          tool_calls,
+          0
         )
 
       {:error, _reason} ->
@@ -304,7 +327,8 @@ defmodule Zaik.AgentChat do
           messages ++ [assistant_message, tool_message, correction_instruction],
           cfg,
           next_tool_count,
-          tool_calls
+          tool_calls,
+          0
         )
     end
   end
@@ -326,6 +350,35 @@ defmodule Zaik.AgentChat do
 
   defp tool_error({:error, reason}), do: inspect(reason)
   defp tool_error(_tool_result), do: nil
+
+  defp planner_repairable?(%Jason.DecodeError{}, repair_count),
+    do: repair_count < @max_planner_repairs
+
+  defp planner_repairable?(_reason, _repair_count), do: false
+
+  defp planner_repair_messages(reason) do
+    previous_response =
+      reason
+      |> Map.get(:data, "")
+      |> to_string()
+      |> String.slice(0, 1_000)
+
+    [
+      %{role: "assistant", content: previous_response},
+      %{
+        role: "system",
+        content: """
+        PLANNER JSON CORRECTION.
+        Your previous response was not valid JSON and was not executed.
+        Return exactly one JSON object and nothing else.
+        If the user asks about home state, room conditions, sensor readings, message history, task history, model traces, or other Zaik data, use the sql_query tool first.
+        Valid tool shape: {"type":"tool_call","tool":"sql_query","args":{"database":"home","query":"SELECT ...","limit":20}}
+        Valid final shape only for general conversation: {"type":"final","answer":"..."}
+        Do not say you lack access to home data; query the documented SQL views.
+        """
+      }
+    ]
+  end
 
   defp tool_success?(tool_calls), do: Enum.any?(tool_calls, &Map.get(&1, :ok))
 
@@ -515,22 +568,29 @@ defmodule Zaik.AgentChat do
         {:ok, stripped}
 
       match = Regex.run(~r/```sql\s*(.+?)```/is, stripped, capture: :all_but_first) ->
-        match |> hd() |> String.trim() |> then(&{:ok, &1})
+        match |> hd() |> extracted_sql_query()
 
       match = Regex.run(~r/```\s*((?:select|with)\b.+?)```/is, stripped, capture: :all_but_first) ->
-        match |> hd() |> String.trim() |> then(&{:ok, &1})
+        match |> hd() |> extracted_sql_query()
 
       match = Regex.run(~r/((?:select|with)\b.+?)(?:;|\z)/is, stripped, capture: :all_but_first) ->
-        match |> hd() |> String.trim() |> then(&{:ok, &1})
+        match |> hd() |> extracted_sql_query()
 
       true ->
         :error
     end
   end
 
+  defp extracted_sql_query(candidate) when is_binary(candidate) do
+    candidate = String.trim(candidate)
+    if sql_query_text?(candidate), do: {:ok, candidate}, else: :error
+  end
+
   defp sql_query_text?(text) when is_binary(text) do
     downcased = text |> String.trim() |> String.downcase()
-    String.starts_with?(downcased, "select ") or String.starts_with?(downcased, "with ")
+
+    String.starts_with?(downcased, "select ") or
+      Regex.match?(~r/^with\s+[a-z_][a-z0-9_]*\s+as\s*\(/i, downcased)
   end
 
   defp normalize_action(%{"type" => "final", "answer" => answer} = action) when is_binary(answer),
@@ -551,6 +611,16 @@ defmodule Zaik.AgentChat do
 
   defp normalize_action(%{"role" => "assistant", "content" => content}) when is_binary(content),
     do: %{"type" => "final", "answer" => content}
+
+  defp normalize_action(%{"answer" => answer}) when is_binary(answer),
+    do: %{"type" => "final", "answer" => answer}
+
+  defp normalize_action(%{"message" => message, "status" => status})
+       when is_binary(message) and status in ["ok", "success", true],
+       do: %{"type" => "final", "answer" => message}
+
+  defp normalize_action(%{"message" => message, "error" => nil}) when is_binary(message),
+    do: %{"type" => "final", "answer" => message}
 
   defp normalize_action(%{"type" => type, "args" => args} = action)
        when type in ["tool_call", "tool_request"] and is_map(args) do
