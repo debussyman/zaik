@@ -71,6 +71,11 @@ defmodule Zaik.Messaging.TelegramClient do
       long_poll_timeout_seconds:
         env_integer("ZAIK_TELEGRAM_LONG_POLL_TIMEOUT_SECONDS") ||
           Keyword.get(app_config, :long_poll_timeout_seconds, 10),
+      require_direct_addressing:
+        env_bool(
+          "ZAIK_TELEGRAM_REQUIRE_DIRECT_ADDRESSING",
+          Keyword.get(app_config, :require_direct_addressing, false)
+        ),
       group_trigger:
         System.get_env("ZAIK_TELEGRAM_GROUP_TRIGGER") ||
           Keyword.get(app_config, :group_trigger, "zaik")

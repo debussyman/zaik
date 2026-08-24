@@ -32,6 +32,7 @@ defmodule Zaik.Messaging.TelegramPoller do
             MapSet.new(Enum.map(Map.get(config, :allowed_chat_ids, []), &to_string/1)),
           poll_interval_ms: Map.get(config, :poll_interval_ms, 1_000),
           long_poll_timeout_seconds: Map.get(config, :long_poll_timeout_seconds, 10),
+          require_direct_addressing: Map.get(config, :require_direct_addressing, false),
           group_trigger: Map.get(config, :group_trigger, "zaik"),
           bot_username: Map.get(config, :bot_username),
           client: Map.get(config, :client, Zaik.Messaging.TelegramClient)
@@ -77,7 +78,11 @@ defmodule Zaik.Messaging.TelegramPoller do
 
   def addressed_text(message, state) do
     if message.chat_type in ["group", "supergroup"] do
-      strip_group_trigger(message.text, state.group_trigger, state.bot_username)
+      if Map.get(state, :require_direct_addressing, false) do
+        strip_group_trigger(message.text, state.group_trigger, state.bot_username)
+      else
+        ambient_group_text(message.text, state.group_trigger, state.bot_username)
+      end
     else
       {:ok, message.text}
     end
@@ -227,7 +232,8 @@ defmodule Zaik.Messaging.TelegramPoller do
     trimmed = String.trim(text)
     downcased = String.downcase(trimmed)
     trigger = trigger |> to_string() |> String.trim() |> String.downcase()
-    mention = bot_username && "@" <> String.downcase(String.trim(bot_username))
+    username = normalize_username(bot_username)
+    mention = if username in [nil, ""], do: nil, else: "@" <> username
     slash_trigger = if trigger == "", do: nil, else: "/" <> trigger
     slash_mention = if mention && trigger != "", do: slash_trigger <> mention, else: nil
 
@@ -259,6 +265,41 @@ defmodule Zaik.Messaging.TelegramPoller do
       true ->
         :ignore
     end
+  end
+
+  defp ambient_group_text(text, trigger, bot_username) do
+    if mentions_someone_else?(text, bot_username) do
+      :ignore
+    else
+      case strip_group_trigger(text, trigger, bot_username) do
+        {:ok, stripped} -> {:ok, stripped}
+        :ignore -> {:ok, String.trim(text)}
+      end
+    end
+  end
+
+  defp mentions_someone_else?(text, bot_username) do
+    bot_username = normalize_username(bot_username)
+
+    text
+    |> mention_usernames()
+    |> Enum.any?(fn username -> bot_username in [nil, ""] or username != bot_username end)
+  end
+
+  defp mention_usernames(text) do
+    ~r/(?:^|[^\w.])@([A-Za-z][A-Za-z0-9_]{2,31})\b/
+    |> Regex.scan(text)
+    |> Enum.map(fn [_match, username] -> String.downcase(username) end)
+  end
+
+  defp normalize_username(nil), do: nil
+
+  defp normalize_username(username) do
+    username
+    |> to_string()
+    |> String.trim()
+    |> String.trim_leading("@")
+    |> String.downcase()
   end
 
   defp strip_addressing_separator(text) do

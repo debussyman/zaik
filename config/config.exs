@@ -114,4 +114,5 @@ config :zaik, :telegram,
   allowed_chat_ids: [],
   poll_interval_ms: 1_000,
   long_poll_timeout_seconds: 10,
+  require_direct_addressing: false,
   group_trigger: "zaik"

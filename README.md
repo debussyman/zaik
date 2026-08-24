@@ -215,6 +215,7 @@ ZAIK_TELEGRAM_BOT_TOKEN=123456:replace_me
 ZAIK_TELEGRAM_BOT_USERNAME=your_bot_username
 ZAIK_TELEGRAM_ALLOWED_USER_IDS=111111111,222222222
 ZAIK_TELEGRAM_ALLOWED_CHAT_IDS=
+ZAIK_TELEGRAM_REQUIRE_DIRECT_ADDRESSING=false
 ZAIK_TELEGRAM_GROUP_TRIGGER=zaik
 ```
 
@@ -224,12 +225,16 @@ Keep it private:
 chmod 600 ~/.config/zaik/telegram.env
 ```
 
-Find your Telegram user/chat IDs from logs while testing, or use a bot like `@userinfobot`. For groups, add the bot to the group and allowlist the group chat ID. Group messages only trigger Zaik if addressed, e.g.:
+Find your Telegram user/chat IDs from logs while testing, or use a bot like `@userinfobot`. For groups, add the bot to the group and allowlist the group chat ID.
+
+By default, allowlisted group chats use ambient mode: Zaik responds to normal group messages, but ignores messages that `@-mention` someone else. Directly addressed messages still work and have the addressing prefix stripped:
 
 ```text
 zaik how's the nursery?
 @your_bot_username is the nursery cooling?
 ```
+
+Set `ZAIK_TELEGRAM_REQUIRE_DIRECT_ADDRESSING=true` to restore the older mode where group messages only trigger Zaik when they start with `zaik`, `/zaik`, `@your_bot_username`, or `/zaik@your_bot_username`.
 
 Private one-on-one Telegram chats do not require a trigger.
 

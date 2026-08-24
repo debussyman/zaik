@@ -62,8 +62,8 @@ defmodule Zaik.Messaging.TelegramPollerTest do
              Zaik.Messaging.TelegramPoller.addressed_text(message, state)
   end
 
-  test "group messages require trigger or bot mention" do
-    state = %{group_trigger: "zaik", bot_username: "zaik_bot"}
+  test "group messages can require trigger or bot mention" do
+    state = %{group_trigger: "zaik", bot_username: "zaik_bot", require_direct_addressing: true}
 
     assert {:ok, "How's Lily's room?"} =
              Zaik.Messaging.TelegramPoller.addressed_text(
@@ -92,6 +92,40 @@ defmodule Zaik.Messaging.TelegramPollerTest do
     assert :ignore =
              Zaik.Messaging.TelegramPoller.addressed_text(
                %{chat_type: "group", text: "normal conversation"},
+               state
+             )
+  end
+
+  test "ambient group mode responds unless someone else is mentioned" do
+    state = %{group_trigger: "zaik", bot_username: "zaik_bot", require_direct_addressing: false}
+
+    assert {:ok, "normal conversation"} =
+             Zaik.Messaging.TelegramPoller.addressed_text(
+               %{chat_type: "group", text: "normal conversation"},
+               state
+             )
+
+    assert {:ok, "How's the nursery?"} =
+             Zaik.Messaging.TelegramPoller.addressed_text(
+               %{chat_type: "group", text: "zaik How's the nursery?"},
+               state
+             )
+
+    assert {:ok, "How's the nursery?"} =
+             Zaik.Messaging.TelegramPoller.addressed_text(
+               %{chat_type: "supergroup", text: "@zaik_bot, How's the nursery?"},
+               state
+             )
+
+    assert :ignore =
+             Zaik.Messaging.TelegramPoller.addressed_text(
+               %{chat_type: "group", text: "@someone_else can you check this?"},
+               state
+             )
+
+    assert :ignore =
+             Zaik.Messaging.TelegramPoller.addressed_text(
+               %{chat_type: "group", text: "zaik ask @someone_else about this"},
                state
              )
   end
