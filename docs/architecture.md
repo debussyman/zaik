@@ -2,6 +2,8 @@
 
 Zaik is being organized as a local-first Elixir/OTP personal agent harness. The repository currently remains a single Mix app, but code is moving toward clearer internal layers.
 
+For a module-by-module classification of the current code and future target namespaces, see [`module-map.md`](module-map.md).
+
 ## Layers
 
 ### Runtime core

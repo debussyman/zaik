@@ -548,7 +548,7 @@ lib/
 
 ### Phase 2: Clarify Boundaries Without Big Renames
 
-- [ ] Add docs that classify modules into runtime, memory, brain, adapters, domains.
+- [x] Add docs that classify modules into runtime, memory, brain, adapters, domains.
 - [ ] Add behaviours for LLM client, messaging adapter, tool, and home bridge.
   - [x] LLM provider behaviour/facade added with Ollama and llama.cpp clients.
 - [x] Mark legacy intent parser as deprecated; normal free-form chat uses `Zaik.AgentChat`.

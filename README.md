@@ -490,6 +490,8 @@ mosquitto_sub -t 'zigbee2mqtt/#' -v
 
 ## Project layout
 
+For a contributor-focused layer/module classification, see [`docs/module-map.md`](docs/module-map.md).
+
 ```text
 lib/zaik.ex                         Public API
 lib/zaik/application.ex             OTP supervision tree
