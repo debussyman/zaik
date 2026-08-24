@@ -35,8 +35,10 @@ defmodule Zaik.AgentChat.Prompts do
 
   def system_prompt(context \\ %{}), do: planner("", context)
 
-  def domain(text) when is_binary(text) do
-    normalized = String.downcase(text)
+  def domain(text, opts \\ [])
+
+  def domain(text, opts) when is_binary(text) do
+    normalized = normalize_home_name(text)
 
     cond do
       Regex.match?(
@@ -64,12 +66,114 @@ defmodule Zaik.AgentChat.Prompts do
       ) ->
         :home_readings
 
+      known_home_device_match?(normalized, opts) ->
+        :home_readings
+
       true ->
         :general
     end
   end
 
-  def domain(_text), do: :general
+  def domain(_text, _opts), do: :general
+
+  defp known_home_device_match?(normalized_text, opts) do
+    opts
+    |> known_home_device_names()
+    |> Enum.flat_map(&home_device_match_phrases/1)
+    |> Enum.uniq()
+    |> Enum.any?(&phrase_in_text?(normalized_text, &1))
+  end
+
+  defp known_home_device_names(opts) do
+    Keyword.get(opts, :home_device_names) || runtime_home_device_names()
+  end
+
+  defp runtime_home_device_names do
+    (device_store_names() ++ history_store_names())
+    |> Enum.uniq()
+  end
+
+  defp device_store_names do
+    if Process.whereis(Zaik.Home.DeviceStore) do
+      Zaik.Home.DeviceStore.list_devices()
+      |> Enum.map(&Map.get(&1, :friendly_name))
+      |> Enum.reject(&is_nil/1)
+    else
+      []
+    end
+  catch
+    :exit, _reason -> []
+  end
+
+  defp history_store_names do
+    if Process.whereis(Zaik.Home.HistoryStore) do
+      Zaik.Home.HistoryStore.list_devices()
+      |> Enum.map(&Map.get(&1, :friendly_name))
+      |> Enum.reject(&is_nil/1)
+    else
+      []
+    end
+  catch
+    :exit, _reason -> []
+  end
+
+  defp home_device_match_phrases(name) when is_binary(name) do
+    normalized_name = normalize_home_name(name)
+    room_like = strip_device_words(normalized_name)
+
+    [normalized_name, room_like]
+    |> Enum.concat(significant_single_word_phrases(room_like))
+    |> Enum.map(&String.trim/1)
+    |> Enum.reject(&(&1 == ""))
+  end
+
+  defp home_device_match_phrases(_name), do: []
+
+  defp significant_single_word_phrases(room_like) do
+    words = String.split(room_like, " ", trim: true)
+
+    case words do
+      [word] when byte_size(word) >= 4 -> [word]
+      _ -> []
+    end
+  end
+
+  defp strip_device_words(normalized_name) do
+    normalized_name
+    |> String.split(" ", trim: true)
+    |> Enum.reject(
+      &(&1 in [
+          "sensor",
+          "sensors",
+          "multi",
+          "multisensor",
+          "fp300",
+          "aqara",
+          "presence",
+          "motion",
+          "climate",
+          "temperature",
+          "humidity",
+          "device"
+        ])
+    )
+    |> Enum.join(" ")
+  end
+
+  defp phrase_in_text?(_normalized_text, phrase) when byte_size(phrase) < 4, do: false
+
+  defp phrase_in_text?(normalized_text, phrase) do
+    Regex.match?(~r/(^|\s)#{Regex.escape(phrase)}(\s|$)/, normalized_text)
+  end
+
+  defp normalize_home_name(value) do
+    value
+    |> to_string()
+    |> String.downcase()
+    |> String.replace(~r/[^a-z0-9]+/, " ")
+    |> String.trim()
+    |> String.replace(~r/\s+/, " ")
+  end
 
   defp house_identity(:general) do
     """

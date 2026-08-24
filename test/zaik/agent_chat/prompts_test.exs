@@ -24,4 +24,18 @@ defmodule Zaik.AgentChat.PromptsTest do
     assert prompt =~ "home_devices"
     refute prompt =~ "DOMAIN: general conversation"
   end
+
+  test "known dynamic device names classify as home readings without static room keywords" do
+    assert Zaik.AgentChat.Prompts.domain("what's it like in the conservatory?",
+             home_device_names: ["Conservatory FP300"]
+           ) == :home_readings
+
+    assert Zaik.AgentChat.Prompts.domain("how is the garage?",
+             home_device_names: ["Garage climate sensor"]
+           ) == :home_readings
+
+    assert Zaik.AgentChat.Prompts.domain("what's it like in the conservatory?",
+             home_device_names: ["Garage climate sensor"]
+           ) == :general
+  end
 end
