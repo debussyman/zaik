@@ -59,6 +59,15 @@ Zaik.list_tasks(status: :running)
 Zaik.queue_size()
 ```
 
+Custom task types can be added without changing Zaik core by configuring `:task_modules`:
+
+```elixir
+config :zaik, :task_modules,
+  custom_task: MyApp.CustomTask
+```
+
+Task modules implement/use `Zaik.Agent.TaskRunner`.
+
 Observability:
 
 ```elixir

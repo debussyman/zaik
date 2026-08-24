@@ -3,6 +3,12 @@ import Config
 config :zaik,
   environment: :development
 
+# Optional task type extensions. Built-in defaults are provided by Zaik.TaskResolver.
+# Example:
+# config :zaik, :task_modules,
+#   custom_task: MyApp.CustomTask
+config :zaik, :task_modules, []
+
 config :zaik, :watchdog,
   enabled: true,
   scan_interval_ms: 30_000,

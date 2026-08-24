@@ -21,7 +21,7 @@ Reusable OTP task harness, scheduling, dispatch, watchdog, and health state.
 | `Zaik.TaskStore` | Filesystem-backed task persistence. | `Zaik.Runtime.TaskStore` |
 | `Zaik.TaskQueue` | In-memory task queue GenServer. | `Zaik.Runtime.TaskQueue` |
 | `Zaik.Dispatcher` | Pulls queued tasks and starts supervised runners. | `Zaik.Runtime.Dispatcher` |
-| `Zaik.TaskResolver` | Maps task types to runner modules. | `Zaik.Runtime.TaskResolver`; make config-driven first. |
+| `Zaik.TaskResolver` | Maps task types to runner modules, merging built-in defaults with `config :zaik, :task_modules`. | `Zaik.Runtime.TaskResolver` after namespace migration. |
 | `Zaik.Agent.DynamicSupervisor` | Dynamic supervisor for task runners. | `Zaik.Runtime.DynamicSupervisor` |
 | `Zaik.Agent.TaskRunner` | Executes one task under supervision. | `Zaik.Runtime.TaskRunner` |
 | `Zaik.TaskWatchdog` | Reconciles stuck/abandoned task state. | `Zaik.Runtime.TaskWatchdog` |
@@ -29,7 +29,14 @@ Reusable OTP task harness, scheduling, dispatch, watchdog, and health state.
 | `Zaik.Clock` | Time abstraction for deterministic tests. | `Zaik.Runtime.Clock` |
 | `Zaik.Observability` | Runtime health/snapshots. | `Zaik.Runtime.Observability` |
 
-Task workload modules currently under `Zaik.Agent.*` are examples/default task implementations, not core runtime policy:
+Task workload modules currently under `Zaik.Agent.*` are examples/default task implementations, not core runtime policy. Contributors can add or override task mappings with:
+
+```elixir
+config :zaik, :task_modules,
+  custom_task: MyApp.CustomTask
+```
+
+Task workload modules implement/use `Zaik.Agent.TaskRunner`.
 
 | Current module/file | Role | Future target |
 | --- | --- | --- |
