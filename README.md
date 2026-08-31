@@ -346,6 +346,25 @@ Zaik also bootstraps latest Zigbee2MQTT state from:
 
 This makes `home`, `presence`, and `sensor ...` useful immediately after a Zaik restart even if device state MQTT messages are not retained.
 
+MQTT subscription handling is configurable. By default, incoming MQTT publishes are sent to the Zigbee2MQTT handler:
+
+```elixir
+config :zaik, :mqtt,
+  handlers: [Zaik.Home.Zigbee2MQTT]
+```
+
+Handlers implement `Zaik.MQTT.Handler` and can also receive per-handler options:
+
+```elixir
+config :zaik, :mqtt,
+  handlers: [
+    Zaik.Home.Zigbee2MQTT,
+    {MyApp.BlindsMQTTHandler, control_policy: :direct}
+  ]
+```
+
+This is intended to support future device-specific integrations such as smart blinds while keeping the generic MQTT transport reusable.
+
 ### Operational telemetry / conversational SQL memory
 
 Zaik records queryable operational telemetry to SQLite:
@@ -554,7 +573,7 @@ lib/zaik/context_builder.ex         Session context assembly
 lib/zaik/command_processor.ex       Explicit text commands
 lib/zaik/messaging/*.ex             Telegram and optional Signal adapters
 lib/zaik/llm*.ex                    Pluggable LLM facade and providers
-lib/zaik/mqtt/*.ex                  MQTT subscription wrapper
+lib/zaik/mqtt/*.ex                  MQTT transport and handler behaviour
 lib/zaik/home/*.ex                  Zigbee2MQTT state parsing/store/bootstrap
 ops/systemd/user/*.service          User service templates
 ```

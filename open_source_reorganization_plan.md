@@ -553,7 +553,7 @@ lib/
   - [x] LLM provider behaviour/facade added with Ollama and llama.cpp clients.
 - [x] Mark legacy intent parser as deprecated; normal free-form chat uses `Zaik.AgentChat`.
 - [x] Make `TaskResolver` config-driven while preserving defaults.
-- [ ] Make MQTT handler modules configurable.
+- [x] Make MQTT handler modules configurable.
 - [ ] Introduce `Zaik.Ingress.Message` and shared ingress flow.
 - [ ] Start slimming Telegram/Signal pollers into protocol adapters.
 - [ ] Ensure all tests pass.

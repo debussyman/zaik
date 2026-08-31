@@ -26,6 +26,7 @@ defmodule Zaik.MQTT.Client do
       client_id:
         System.get_env("ZAIK_MQTT_CLIENT_ID") || Keyword.get(configured, :client_id, "zaik"),
       topics: Keyword.get(configured, :topics, ["zigbee2mqtt/#"]),
+      handlers: configured_handlers(configured),
       reconnect_interval_ms:
         env_integer(
           "ZAIK_MQTT_RECONNECT_INTERVAL_MS",
@@ -94,7 +95,8 @@ defmodule Zaik.MQTT.Client do
       connected?: state.connected?,
       last_error: state.last_error,
       last_connected_at: state.last_connected_at,
-      subscriptions: state.subscriptions
+      subscriptions: state.subscriptions,
+      handlers: state.config.handlers
     }
 
     {:reply, status, state}
@@ -108,12 +110,12 @@ defmodule Zaik.MQTT.Client do
   def handle_info(:connect, state), do: connect(state)
 
   def handle_info({_port, {:data, {:eol, line}}}, state) when is_binary(line) do
-    handle_sub_line(line)
+    handle_sub_line(line, state.config)
     {:noreply, state}
   end
 
   def handle_info({_port, {:data, {:noeol, line}}}, state) when is_binary(line) do
-    handle_sub_line(line)
+    handle_sub_line(line, state.config)
     {:noreply, state}
   end
 
@@ -220,15 +222,42 @@ defmodule Zaik.MQTT.Client do
     error -> {:error, Exception.message(error)}
   end
 
-  defp handle_sub_line(line) do
+  defp handle_sub_line(line, cfg) do
     case String.split(line, "\t", parts: 2) do
       [topic, payload] ->
-        Zaik.Home.Zigbee2MQTT.handle_publish(topic, payload)
+        dispatch_publish(cfg.handlers, topic, payload)
 
       _ ->
         Logger.debug("Ignoring MQTT subscription line without tab delimiter")
         :ignored
     end
+  end
+
+  defp dispatch_publish(handlers, topic, payload) do
+    handlers
+    |> Enum.map(&call_handler(&1, topic, payload))
+  end
+
+  defp call_handler({handler, opts}, topic, payload) when is_atom(handler) and is_list(opts) do
+    call_handler(handler, topic, payload, opts)
+  end
+
+  defp call_handler(handler, topic, payload) when is_atom(handler) do
+    call_handler(handler, topic, payload, [])
+  end
+
+  defp call_handler(handler, _topic, _payload), do: {:error, {:invalid_handler, handler}}
+
+  defp call_handler(handler, topic, payload, opts) do
+    apply(handler, :handle_publish, [topic, payload, opts])
+  rescue
+    error ->
+      Logger.debug("MQTT handler #{inspect(handler)} failed: #{Exception.message(error)}")
+      {:error, {handler, error}}
+  catch
+    :exit, reason ->
+      Logger.debug("MQTT handler #{inspect(handler)} exited: #{inspect(reason)}")
+      {:error, {handler, reason}}
   end
 
   defp sub_args(cfg) do
@@ -272,6 +301,32 @@ defmodule Zaik.MQTT.Client do
     Process.send_after(self(), :connect, state.config.reconnect_interval_ms)
     state
   end
+
+  defp configured_handlers(configured) do
+    configured
+    |> Keyword.get(:handlers, [Zaik.Home.Zigbee2MQTT])
+    |> List.wrap()
+    |> Enum.flat_map(&normalize_handler/1)
+  end
+
+  defp normalize_handler(handler) when is_atom(handler), do: [handler]
+
+  defp normalize_handler({handler, opts}) when is_atom(handler) and is_list(opts),
+    do: [{handler, opts}]
+
+  defp normalize_handler(handler) when is_binary(handler) do
+    handler = String.trim(handler)
+
+    cond do
+      handler == "" -> []
+      String.starts_with?(handler, "Elixir.") -> [String.to_existing_atom(handler)]
+      true -> [String.to_existing_atom("Elixir." <> handler)]
+    end
+  rescue
+    ArgumentError -> []
+  end
+
+  defp normalize_handler(_handler), do: []
 
   defp env_bool(name, default) do
     case System.get_env(name) do

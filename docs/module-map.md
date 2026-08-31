@@ -117,7 +117,8 @@ Home automation is one optional domain, not the whole harness.
 | `Zaik.Home.Trends` | Home sensor trend summaries. | `Zaik.Domains.Home.Trends` |
 | `Zaik.Home.Zigbee2MQTT` | Zigbee2MQTT payload handling. | `Zaik.Adapters.Home.Zigbee2MQTT` or bridge into home domain. |
 | `Zaik.Home.Zigbee2MQTTBootstrapper` | Loads Zigbee2MQTT retained/current state. | `Zaik.Adapters.Home.Zigbee2MQTTBootstrapper` |
-| `Zaik.MQTT.Client` | MQTT subscription wrapper. | `Zaik.Adapters.Home.MQTT`; make handlers configurable first. |
+| `Zaik.MQTT.Client` | MQTT subscription/publish wrapper that fans incoming messages out to configured `Zaik.MQTT.Handler` modules. | `Zaik.Adapters.Home.MQTT` after namespace migration. |
+| `Zaik.MQTT.Handler` | Behaviour for MQTT publish handlers. | Keep as generic transport extension point or move under adapters/runtime. |
 
 ## Compatibility rule during reorganization
 

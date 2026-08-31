@@ -3,6 +3,8 @@ defmodule Zaik.Home.Zigbee2MQTT do
   Translates Zigbee2MQTT MQTT topics into Zaik home device state.
   """
 
+  @behaviour Zaik.MQTT.Handler
+
   require Logger
 
   def config do

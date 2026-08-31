@@ -93,6 +93,7 @@ config :zaik, :mqtt,
   port: 1883,
   client_id: "zaik",
   topics: ["zigbee2mqtt/#"],
+  handlers: [Zaik.Home.Zigbee2MQTT],
   reconnect_interval_ms: 5_000,
   connect_timeout_ms: 5_000
 
