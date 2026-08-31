@@ -1,7 +1,6 @@
 defmodule Zaik.Messaging.SignalPoller do
   @moduledoc """
-  Polls `signal-cli-rest-api` for inbound Signal messages and routes them to
-  `Zaik.CommandProcessor`.
+  Polls Signal messages and routes allowed messages through `Zaik.Ingress`.
   """
 
   use GenServer
@@ -118,37 +117,27 @@ defmodule Zaik.Messaging.SignalPoller do
   end
 
   defp process_message(state, message) do
-    with {:ok, session} <-
-           Zaik.Messaging.SessionMapper.get_or_create_session(:signal, message.sender),
-         {:ok, _entry_id} <-
-           Zaik.MemoryStore.append_message(session.id, :user, message.body,
-             metadata: %{
-               sender: message.sender,
-               channel: :signal,
-               signal_timestamp: message.timestamp
-             }
-           ) do
-      context = %{channel: :signal, sender: message.sender, session_id: session.id}
-      response = Zaik.ChatRouter.process(message.body, context)
+    ingress_message = %Zaik.Ingress.Message{
+      channel: :signal,
+      sender_id: message.sender,
+      text: message.body,
+      timestamp: message.timestamp,
+      session_key: message.sender,
+      metadata: %{
+        sender: message.sender,
+        signal_timestamp: message.timestamp
+      }
+    }
 
+    with {:ok, %{response: response}} <- Zaik.Ingress.handle_message(ingress_message) do
       if respond_to_signal_message?(response) do
         send_result = state.client.send_message(message.sender, response, state.account)
-
-        Zaik.MemoryStore.append_message(session.id, :agent, response,
-          metadata: %{channel: :signal, send_result: inspect(send_result)}
-        )
 
         case send_result do
           {:ok, _} -> :ok
           {:error, reason} -> {:error, {:send_failed, reason}}
         end
       else
-        Zaik.SessionStore.append(session.id, %{
-          type: "signal_event",
-          event: "ignored_unknown_command",
-          content: message.body
-        })
-
         :ok
       end
     end

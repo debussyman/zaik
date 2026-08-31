@@ -30,7 +30,7 @@ Local-first state and history:
 Normal free-form chat uses one house-agent brain:
 
 ```text
-Chat surface -> Zaik.ChatRouter -> Zaik.AgentChat -> supervised read-only tools
+Chat adapter -> Zaik.Ingress.Message -> Zaik.Ingress -> Zaik.ChatRouter -> Zaik.AgentChat -> supervised read-only tools
 ```
 
 `Zaik.AgentChat` can ask Elixir to run validated read-only SQL against documented views, then answers from tool results. Write/control actions should become human-confirmed proposals before execution.

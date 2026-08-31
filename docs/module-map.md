@@ -76,11 +76,13 @@ Text routing and explicit deterministic commands.
 
 | Current module/file | Role | Future target |
 | --- | --- | --- |
-| `Zaik.ChatRouter` | Routes explicit commands vs normal free-form chat. | `Zaik.Ingress.ChatRouter` |
+| `Zaik.Ingress.Message` | Normalized inbound message struct for protocol adapters. | Keep as shared ingress contract. |
+| `Zaik.Ingress` | Shared session mapping, memory writes, chat routing, and agent reply memory writes. | Keep as shared ingress flow. |
+| `Zaik.ChatRouter` | Routes explicit commands vs normal free-form chat. | `Zaik.Ingress.ChatRouter` or keep as facade after command split. |
 | `Zaik.CommandProcessor` | Monolithic command handler. | Split into `Zaik.Commands.*` groups. |
 | `Zaik.Messaging.SessionMapper` | Maps channel/chat keys to Zaik sessions. | Shared ingress/session utility. |
 
-Next planned slice: introduce a common `Zaik.Ingress.Message` struct and shared ingress flow so protocol adapters do less application-level work.
+Telegram and optional legacy Signal now translate updates into `Zaik.Ingress.Message` and call `Zaik.Ingress.handle_message/2`. The pollers still own protocol-specific polling, allowlists, addressing, and sending replies.
 
 ## LLM provider layer
 

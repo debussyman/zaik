@@ -153,43 +153,29 @@ defmodule Zaik.Messaging.TelegramPoller do
   end
 
   defp process_message(state, message) do
-    session_key = session_key(message)
-
-    with {:ok, session} <-
-           Zaik.Messaging.SessionMapper.get_or_create_session(:telegram, session_key),
-         {:ok, _entry_id} <-
-           Zaik.MemoryStore.append_message(session.id, :user, message.text,
-             metadata: %{
-               sender_id: message.sender_id,
-               sender_username: message.sender_username,
-               sender_name: message.sender_name,
-               chat_id: message.chat_id,
-               chat_type: message.chat_type,
-               chat_title: message.chat_title,
-               telegram_message_id: message.message_id,
-               telegram_update_id: message.update_id,
-               channel: :telegram
-             }
-           ) do
-      context = %{
-        channel: :telegram,
-        sender: message.sender_id,
-        sender_id: message.sender_id,
-        chat_id: message.chat_id,
-        chat_type: message.chat_type,
-        session_id: session.id
+    ingress_message = %Zaik.Ingress.Message{
+      channel: :telegram,
+      sender_id: message.sender_id,
+      sender_username: message.sender_username,
+      sender_name: message.sender_name,
+      chat_id: message.chat_id,
+      chat_type: message.chat_type,
+      chat_title: message.chat_title,
+      text: message.text,
+      message_id: message.message_id,
+      update_id: message.update_id,
+      timestamp: message.timestamp,
+      metadata: %{
+        telegram_message_id: message.message_id,
+        telegram_update_id: message.update_id
       }
+    }
 
-      response = Zaik.ChatRouter.process(message.text, context)
-
+    with {:ok, %{response: response}} <- Zaik.Ingress.handle_message(ingress_message) do
       send_result =
         state.client.send_message(message.chat_id, response,
           reply_to_message_id: message.message_id
         )
-
-      Zaik.MemoryStore.append_message(session.id, :agent, response,
-        metadata: %{channel: :telegram, send_result: inspect(send_result)}
-      )
 
       case send_result do
         {:ok, _} -> :ok
@@ -309,12 +295,6 @@ defmodule Zaik.Messaging.TelegramPoller do
     |> String.trim_leading(",")
     |> String.trim()
   end
-
-  defp session_key(%{chat_type: chat_type, chat_id: chat_id})
-       when chat_type in ["group", "supergroup"],
-       do: "chat:#{chat_id}"
-
-  defp session_key(%{sender_id: sender_id}), do: "user:#{sender_id}"
 
   defp schedule_poll(delay_ms) do
     Process.send_after(self(), :poll, delay_ms)

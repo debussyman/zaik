@@ -554,8 +554,8 @@ lib/
 - [x] Mark legacy intent parser as deprecated; normal free-form chat uses `Zaik.AgentChat`.
 - [x] Make `TaskResolver` config-driven while preserving defaults.
 - [x] Make MQTT handler modules configurable.
-- [ ] Introduce `Zaik.Ingress.Message` and shared ingress flow.
-- [ ] Start slimming Telegram/Signal pollers into protocol adapters.
+- [x] Introduce `Zaik.Ingress.Message` and shared ingress flow.
+- [x] Start slimming Telegram/Signal pollers into protocol adapters.
 - [ ] Ensure all tests pass.
 
 ### Phase 3: Namespace Reorganization

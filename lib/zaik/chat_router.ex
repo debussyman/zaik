@@ -39,7 +39,7 @@ defmodule Zaik.ChatRouter do
 
   defp fallback_response,
     do:
-      "I'm not sure how to answer that yet. Try asking about home, Lily's room, Zaik health, or use `help`."
+      "I'm not sure how to answer that yet. Try asking about home, a known room/sensor, Zaik health, or use `help`."
 
   defp explicit_command_response?(response) when is_binary(response),
     do: not String.starts_with?(response, "Unknown command.")

@@ -107,7 +107,7 @@ Zaik.mqtt_status()
 
 ## Text / messaging chat
 
-Signal and Telegram ingress go through `Zaik.ChatRouter`: exact commands still work, and free-form messages route to one unified house-agent brain, `Zaik.AgentChat`.
+Messaging adapters normalize inbound chat into `Zaik.Ingress.Message` and call `Zaik.Ingress`: exact commands still work, and free-form messages route through `Zaik.ChatRouter` to one unified house-agent brain, `Zaik.AgentChat`.
 
 Explicit deterministic commands still use trusted Elixir command handlers. Normal free-form chat uses `Zaik.AgentChat`: a bounded read-only agent loop where the model asks Elixir to run safe SQL tools over documented SQLite views, then answers from the tool results.
 
@@ -570,6 +570,7 @@ lib/zaik/dispatcher.ex              Dynamic task dispatcher
 lib/zaik/agent/*.ex                 Task runner and workloads
 lib/zaik/session*.ex                Filesystem-backed sessions
 lib/zaik/context_builder.ex         Session context assembly
+lib/zaik/ingress*.ex                Shared normalized message ingress
 lib/zaik/command_processor.ex       Explicit text commands
 lib/zaik/messaging/*.ex             Telegram and optional Signal adapters
 lib/zaik/llm*.ex                    Pluggable LLM facade and providers
