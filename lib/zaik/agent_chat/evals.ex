@@ -31,6 +31,37 @@ defmodule Zaik.AgentChat.Evals do
     end
   end
 
+  defmodule CannedCoverExecutor do
+    @moduledoc false
+    @behaviour Zaik.Home.Executor
+
+    def capability, do: "cover"
+
+    def prepare(_entity, %{"preset" => "above AC"}, _context),
+      do: {:ok, %{"position" => 71}}
+
+    def prepare(_entity, target, _context), do: {:ok, target}
+
+    def execute(entity, target, context) do
+      call = %{
+        tool: "execute_home_plan",
+        args: %{"device" => entity.name, "target" => target}
+      }
+
+      send(context.eval_pid, {:zaik_agent_eval_control_call, call})
+
+      {:ok,
+       %{
+         entity_id: entity.id,
+         device: entity.name,
+         capability: "cover",
+         target: target,
+         status: "accepted",
+         verified: false
+       }}
+    end
+  end
+
   defmodule CannedSQLTool do
     @moduledoc false
 
@@ -298,16 +329,18 @@ defmodule Zaik.AgentChat.Evals do
         prompt: "Set up Lily's room for bedtime with AC",
         context: eval_context(),
         max_tool_calls: 4,
+        expected_registered_tool: "execute_home_plan",
+        expected_registered_arg_terms: ["lily", "left", "right", "above", "ac"],
         expected_control_calls: [
           %{
-            tool: "control_blind",
+            tool: "execute_home_plan",
             device_terms: ["lily", "left", "blind"],
             target_terms: ["close"]
           },
           %{
-            tool: "control_blind",
+            tool: "execute_home_plan",
             device_terms: ["lily", "right", "blind"],
-            target_terms: ["above", "ac"]
+            target_terms: ["position", "71"]
           }
         ],
         forbidden_query_terms: ["sensor_readings"],
@@ -359,10 +392,25 @@ defmodule Zaik.AgentChat.Evals do
       %{"area_id" => "lily_bedroom", "source" => "eval"}
     )
 
+    Zaik.Home.DeviceStore.upsert_device(
+      device_store,
+      "Lily's bedroom left blind",
+      %{"position" => 100, "state" => "OPEN"},
+      %{"ieee_address" => "eval-left", "area_id" => "lily_bedroom", "source" => "eval"}
+    )
+
+    Zaik.Home.DeviceStore.upsert_device(
+      device_store,
+      "Lily's bedroom right blind",
+      %{"position" => 100, "state" => "OPEN"},
+      %{"ieee_address" => "eval-right", "area_id" => "lily_bedroom", "source" => "eval"}
+    )
+
     context =
       Map.get(case_def, :context, %{})
       |> Map.put(:eval_pid, self())
       |> Map.put(:device_store, device_store)
+      |> Map.put(:executor_opts, modules: [CannedCoverExecutor])
 
     response =
       Zaik.AgentChat.respond(case_def.prompt, context,

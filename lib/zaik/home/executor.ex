@@ -8,6 +8,10 @@ defmodule Zaik.Home.Executor do
   """
 
   @callback capability() :: String.t()
+  @callback prepare(Zaik.Home.Entity.t(), target :: map(), context :: map()) ::
+              {:ok, map()} | {:error, term()}
   @callback execute(Zaik.Home.Entity.t(), target :: map(), context :: map()) ::
               {:ok, map()} | {:error, term()}
+
+  @optional_callbacks prepare: 3
 end

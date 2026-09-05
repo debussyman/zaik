@@ -224,26 +224,33 @@ defmodule Zaik.AgentChat.Prompts do
   end
 
   defp domain_policy(:home_control, text) do
+    required_tool = home_control_required_tool(text)
+
     """
     DOMAIN: home control.
+    Required action tool: #{required_tool}
 
     You may use these supervised tools:
-    - sql_query for read-only home/ops memory.
-    - control_blind for low-risk blind/window-covering actions only.
+    - execute_home_plan for requests requiring two or more coordinated changes. This is preferred for room setups and skills with multiple steps.
+    - control_device for one low-risk entity/capability target.
+    - control_blind is a temporary compatibility tool for one blind action.
+    - get_home_state and sql_query are read tools when state is genuinely needed before planning.
 
-    Valid control_blind shapes:
-    {"type":"tool_call","tool":"control_blind","args":{"device":"Lily's bedroom left blind","target":{"state":"CLOSE"}}}
-    {"type":"tool_call","tool":"control_blind","args":{"device":"Lily's bedroom right blind","target":{"preset":"above AC"}}}
-    {"type":"tool_call","tool":"control_blind","args":{"device":"Lily's bedroom right blind","target":{"position":71}}}
+    Valid multi-action shape:
+    {"type":"tool_call","tool":"execute_home_plan","args":{"goal":"Set up Lily's room for bedtime with AC","actions":[{"device":"Lily's bedroom left blind","capability":"cover","target":{"state":"CLOSE"}},{"device":"Lily's bedroom right blind","capability":"cover","target":{"preset":"above AC"}}]}}
+
+    Valid single-action shape:
+    {"type":"tool_call","tool":"control_device","args":{"device":"Lily's bedroom left blind","capability":"cover","target":{"state":"CLOSE"}}}
 
     Rules:
     - Choose actions from relevant skills, current devices, and presets below.
-    - Do not invent devices, presets, MQTT topics, or MQTT payloads.
+    - Do not invent devices, capabilities, presets, MQTT topics, or MQTT payloads.
     - Use exact device names when calling tools.
-    - For multiple changes, call one tool at a time. After each HOME TOOL RESULT, decide whether another action is still needed.
+    - Put every required change into one execute_home_plan call. Elixir preflights every action and preset before the first command is sent.
     - Blinds are currently low-risk and may be controlled directly.
+    - A skill name is context, never a tool name.
     - If a needed device or preset is missing, ask a concise clarification instead of guessing.
-    - Never say an action is done, ready, closed, opened, or set before you receive a HOME TOOL RESULT confirming the tool call succeeded.
+    - A tool result with status=accepted means commands were accepted, not that physical target state was verified. Claim physical completion only when verified=true.
 
     #{home_control_context(text)}
     """
@@ -252,6 +259,14 @@ defmodule Zaik.AgentChat.Prompts do
 
   defp domain_policy(:home_readings, text), do: home_readings_domain_policy(text)
   defp domain_policy(domain, _text), do: domain_policy(domain)
+
+  defp home_control_required_tool(text) do
+    normalized = normalize_home_name(text)
+
+    if Regex.match?(~r/\b(set up|setup|prepare|ready|routine|scene|bedtime)\b/, normalized),
+      do: "execute_home_plan",
+      else: "control_device"
+  end
 
   defp house_identity(:general) do
     """
@@ -277,12 +292,10 @@ defmodule Zaik.AgentChat.Prompts do
 
     CRITICAL OUTPUT CONTRACT:
     - Return exactly one valid JSON object and nothing else.
-    - To act, return ONLY one tool call at a time:
-      {"type":"tool_call","tool":"control_blind","args":{"device":"exact device name","target":{"state":"OPEN|CLOSE|STOP"}}}
-      or {"type":"tool_call","tool":"control_blind","args":{"device":"exact device name","target":{"preset":"preset name"}}}
-      or {"type":"tool_call","tool":"control_blind","args":{"device":"exact device name","target":{"position":0}}}
-    - After tool results, either call the next required tool or return {"type":"final","answer":"..."}.
-    - Never return a final answer claiming the room/device is changed before a HOME TOOL RESULT confirms success.
+    - For multiple actions, return one execute_home_plan call containing the complete actions array.
+    - For one action, return one control_device call.
+    - After a tool result, return {"type":"final","answer":"..."} unless a read result shows clarification is needed.
+    - Never claim physical completion unless a tool result reports verified=true. If it reports status=accepted, say the command or plan was accepted/sent.
     - Do not output markdown, comments, code fences, MQTT topics, or trailing text.
     """
     |> String.trim()
@@ -345,7 +358,7 @@ defmodule Zaik.AgentChat.Prompts do
   end
 
   defp mode_instruction(:home_control) do
-    "HOME CONTROL MODE: If the user is asking for a low-risk blind change and the needed device/preset is known, return one control_blind tool_call. If not enough information is known, return a final clarification question."
+    "HOME CONTROL MODE: For two or more coordinated changes return one complete execute_home_plan call. For one change return control_device. If required information is missing, return a clarification question."
   end
 
   defp mode_instruction(:home_readings) do

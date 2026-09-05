@@ -6,6 +6,30 @@ defmodule Zaik.Home.Executors.Cover do
   def capability, do: "cover"
 
   @impl true
+  def prepare(entity, %{"preset" => preset_name}, context) do
+    store = value(context, :preset_store) || Zaik.Home.DevicePresetStore
+
+    with {:ok, preset} <-
+           Zaik.Home.DevicePresetStore.get(
+             entity.name,
+             preset_name,
+             [capability: "cover"],
+             store
+           ),
+         target when is_map(target) <- preset["target"],
+         {:ok, normalized_target} <- Zaik.Home.Capabilities.Cover.validate_target(target) do
+      {:ok, normalized_target}
+    else
+      {:error, :not_found} -> {:error, {:preset_not_found, preset_name}}
+      nil -> {:error, {:preset_not_found, preset_name}}
+      {:error, reason} -> {:error, reason}
+      _ -> {:error, {:invalid_preset_target, preset_name}}
+    end
+  end
+
+  def prepare(_entity, target, _context), do: {:ok, target}
+
+  @impl true
   def execute(entity, target, context) do
     opts =
       []

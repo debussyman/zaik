@@ -70,6 +70,14 @@ defmodule Zaik.Home.WorldTest do
     assert expanded.count == 1
     assert baseline.entities == expanded.entities
     assert hd(expanded.entities).name == "Lily's room multi-sensor"
+
+    assert {:ok, right_blind} =
+             Zaik.Home.World.get("lily bedroom right blind",
+               device_store: store,
+               capability: "cover"
+             )
+
+    assert right_blind.name == "Lily's bedroom right blind"
   end
 
   test "bootstrap state remains distinguishable from a fresh observation", %{store: store} do

@@ -17,13 +17,14 @@ Implemented:
 - home actions run under `Zaik.Tools.TaskSupervisor` with a bounded timeout;
 - `Zaik.Home.ActionLedger` provides persistent request/action idempotency;
 - action results distinguish broker acceptance from verified physical state;
+- `Zaik.Home.ActionPlan` resolves and validates every entity, capability,
+  executor, target, and preset before the first side effect;
+- multi-action execution reports accepted, verified, failed, or structured
+  partial completion without hiding already completed actions;
 - Zigbee2MQTT state-file bootstrap no longer manufactures history rows.
 
 Remaining:
 
-- represent multi-action requests as a plan and validate every step before the
-  first side effect;
-- track partial completion explicitly;
 - correlate MQTT reports with action IDs and verify target convergence;
 - define retry policy for accepted-but-unverified and ambiguous outcomes.
 
@@ -59,14 +60,16 @@ Implemented foundation:
 - generic AgentChat dispatch for newly registered tools;
 - `control_device` resolves entity + capability + semantic target before
   adapter execution;
+- `execute_home_plan` preflights coordinated actions and is now preferred by
+  multi-action home-control prompts and skills;
 - cover control is the first capability executor;
 - existing `sql_query` and `control_blind` remain compatibility paths.
 
 Remaining:
 
 - generate the planner's available-tool section from registry descriptors;
-- migrate skills from `control_blind` to capability targets;
-- route existing SQL and blind calls entirely through generic dispatch;
+- migrate remaining skills from device-specific tools to capability targets;
+- route existing SQL and blind compatibility calls entirely through generic dispatch;
 - enforce skill `allowed_tools` and risk declarations at the execution boundary;
 - require capability contract and baseline composability tests for each module;
 - make application child composition runtime-configurable by domain/adapter.

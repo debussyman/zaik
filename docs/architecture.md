@@ -33,7 +33,7 @@ Normal free-form chat uses one house-agent brain:
 Chat adapter -> Zaik.Ingress.Message -> Zaik.Ingress -> Zaik.ChatRouter -> Zaik.AgentChat -> registered tools
 ```
 
-`Zaik.AgentChat` can use bounded read tools and validated home actions. Tool and home-capability modules are discovered at runtime through registries that do not cache module code, preserving Elixir's hot-code-loading path. Home actions run in supervised tasks and use a request-scoped SQLite idempotency ledger. Low-risk controls may execute directly; higher-risk capabilities remain intended for proposal/confirmation policy.
+`Zaik.AgentChat` can use bounded read tools and validated home actions. Tool and home-capability modules are discovered at runtime through registries that do not cache module code, preserving Elixir's hot-code-loading path. Home actions run in supervised tasks and use a request-scoped SQLite idempotency ledger. Coordinated changes are represented as one `Zaik.Home.ActionPlan`; every action is preflighted before execution and later failures retain structured partial-completion results. Low-risk controls may execute directly; higher-risk capabilities remain intended for proposal/confirmation policy.
 
 ### Adapters
 

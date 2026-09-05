@@ -182,6 +182,13 @@ defmodule Zaik.AgentChatTest do
     end
   end
 
+  defmodule FailingControlTool do
+    def run(tool, args, context) do
+      send(Map.fetch!(context, :test_pid), {:failing_control_called, tool, args})
+      {:error, :transport_failed}
+    end
+  end
+
   defmodule MalformedFinalClient do
     def chat(_prompt, opts) do
       messages = Keyword.fetch!(opts, :messages)
@@ -596,6 +603,56 @@ defmodule Zaik.AgentChatTest do
     defp typed_tool_result?(_message), do: false
   end
 
+  defmodule PlanCoverExecutor do
+    @behaviour Zaik.Home.Executor
+
+    def capability, do: "cover"
+    def prepare(_entity, target, _context), do: {:ok, target}
+
+    def execute(entity, target, context) do
+      send(context.test_pid, {:plan_action_executed, entity.id, target})
+      {:ok, %{status: "accepted", verified: false, entity_id: entity.id, target: target}}
+    end
+  end
+
+  defmodule HomePlanClient do
+    def chat(_prompt, opts) do
+      messages = Keyword.fetch!(opts, :messages)
+
+      response =
+        if Enum.any?(messages, &tool_result?/1) do
+          Jason.encode!(%{"type" => "final", "answer" => "Both commands were accepted."})
+        else
+          Jason.encode!(%{
+            "type" => "tool_call",
+            "tool" => "execute_home_plan",
+            "args" => %{
+              "goal" => "bedtime",
+              "actions" => [
+                %{
+                  "device" => "Left blind",
+                  "capability" => "cover",
+                  "target" => %{"state" => "CLOSE"}
+                },
+                %{
+                  "device" => "Right blind",
+                  "capability" => "cover",
+                  "target" => %{"position" => 71}
+                }
+              ]
+            }
+          })
+        end
+
+      {:ok, %{model: "home-plan", response: response, done: true, raw: %{}}}
+    end
+
+    defp tool_result?(%{content: content}) when is_binary(content),
+      do: String.starts_with?(String.trim_leading(content), "TOOL RESULT")
+
+    defp tool_result?(_message), do: false
+  end
+
   defmodule HistoricalToolCorrectionClient do
     def chat(_prompt, opts) do
       messages = Keyword.fetch!(opts, :messages)
@@ -948,6 +1005,34 @@ defmodule Zaik.AgentChatTest do
              )
   end
 
+  test "executes a registered preflighted home plan through the generic agent loop" do
+    {:ok, store} = start_supervised({Zaik.Home.DeviceStore, name: nil})
+
+    Zaik.Home.DeviceStore.upsert_device(store, "Left blind", %{"position" => 100}, %{
+      "ieee_address" => "left"
+    })
+
+    Zaik.Home.DeviceStore.upsert_device(store, "Right blind", %{"position" => 100}, %{
+      "ieee_address" => "right"
+    })
+
+    context = %{
+      device_store: store,
+      executor_opts: [modules: [PlanCoverExecutor]],
+      test_pid: self()
+    }
+
+    assert {:ok, "Both commands were accepted."} =
+             Zaik.AgentChat.respond("Prepare the room", context,
+               client: HomePlanClient,
+               prompt_domain: :home_control,
+               config: %{enabled: true, fallback_enabled: false, max_tool_calls: 2}
+             )
+
+    assert_received {:plan_action_executed, "left", %{"state" => "CLOSE"}}
+    assert_received {:plan_action_executed, "right", %{"position" => 71}}
+  end
+
   test "does not execute a current-state tool for a historical request" do
     assert {:ok, "The temperature changed by 1°F."} =
              Zaik.AgentChat.respond(
@@ -997,6 +1082,20 @@ defmodule Zaik.AgentChatTest do
 
     assert_received {:control_tool_called, "control_blind", _args}
     refute_received {:control_tool_called, "control_blind", _args}
+  end
+
+  test "suppresses a repeated equivalent action after a failed attempt" do
+    assert {:ok, answer} =
+             Zaik.AgentChat.respond("Close the office blind", %{test_pid: self()},
+               client: DuplicateControlClient,
+               control_tool: FailingControlTool,
+               prompt_domain: :home_control,
+               config: %{enabled: true, fallback_enabled: false, max_tool_calls: 3}
+             )
+
+    assert answer =~ "No successful action result"
+    assert_received {:failing_control_called, "control_blind", _args}
+    refute_received {:failing_control_called, "control_blind", _args}
   end
 
   test "a successful SQL read does not confirm a home action" do

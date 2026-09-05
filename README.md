@@ -109,7 +109,7 @@ Zaik.mqtt_status()
 
 Messaging adapters normalize inbound chat into `Zaik.Ingress.Message` and call `Zaik.Ingress`: exact commands still work, and free-form messages route through `Zaik.ChatRouter` to one unified house-agent brain, `Zaik.AgentChat`.
 
-Explicit deterministic commands still use trusted Elixir command handlers. Normal free-form chat uses `Zaik.AgentChat`: a bounded tool loop where the model asks Elixir to run safe SQL tools over documented SQLite views, or low-risk validated home-control tools such as `control_blind`, then answers from the tool results.
+Explicit deterministic commands still use trusted Elixir command handlers. Normal free-form chat uses `Zaik.AgentChat`: a bounded registered-tool loop. Current home state uses typed capability tools, history uses bounded read-only SQL, single low-risk actions use `control_device`, and coordinated changes use a preflighted `execute_home_plan`. Elixir resolves devices, presets, capabilities, and targets before execution.
 
 Telegram is the preferred multi-person chat path because Zaik appears as its own bot identity instead of speaking as your linked Signal account.
 

@@ -128,11 +128,13 @@ Home automation is one optional domain, not the whole harness.
 | `Zaik.Home.Executor` | Behaviour for adapter execution of validated capability targets. | Keep as the capability executor contract. |
 | `Zaik.Home.Executors.Registry` | Uncached runtime executor discovery. | Keep as the hot-load-friendly executor registry. |
 | `Zaik.Home.ActionLedger` | SQLite request-scoped action idempotency ledger. | Keep in the home execution/policy layer. |
+| `Zaik.Home.ActionPlan` | Preflights coordinated actions and reports partial completion. | Keep as the multi-action execution boundary. |
 | `Zaik.Home.HistoryStore` | SQLite home readings/history. | `Zaik.Domains.Home.HistoryStore` |
 | `Zaik.Home.Trends` | Home sensor trend summaries. | `Zaik.Domains.Home.Trends` |
 | `Zaik.Home.DevicePresetStore` | SQLite store for generic named device targets/presets. | `Zaik.Domains.Home.DevicePresetStore` |
 | `Zaik.Home.Tools.GetState` / `ListDevices` | Typed registered read tools over `Zaik.Home.World`. | Keep as primary current-state tools. |
 | `Zaik.Home.Tools.ControlDevice` | Generic entity/capability/target control tool. | Replace device-class-specific model tools over time. |
+| `Zaik.Home.Tools.ExecutePlan` | Registered preflighted multi-action control tool. | Keep as the coordinated-action tool. |
 | `Zaik.Home.ControlTool` / `Zaik.Home.Tools.ControlBlind` | Compatibility blind-control surfaces for AgentChat. | Retire after skills/prompts use `control_device`. |
 | `Zaik.Home.Blinds` | Deterministic read/control layer for known Zigbee2MQTT blinds/window coverings using generic device presets. | `Zaik.Domains.Home.Blinds` |
 | `Zaik.Home.Zigbee2MQTT` | Zigbee2MQTT payload handling. | `Zaik.Adapters.Home.Zigbee2MQTT` or bridge into home domain. |

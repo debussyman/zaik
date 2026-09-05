@@ -44,7 +44,7 @@ defmodule Zaik.AgentChat.RoutingEvals do
         expected_domain: :home_control,
         prompt_must_include: [
           "DOMAIN: home control",
-          "control_blind",
+          "execute_home_plan",
           "lily_bedtime_with_ac",
           "above AC"
         ],
@@ -55,7 +55,7 @@ defmodule Zaik.AgentChat.RoutingEvals do
         kind: :domain,
         prompt: "Open Lily's left blind",
         expected_domain: :home_control,
-        prompt_must_include: ["DOMAIN: home control", "control_blind"],
+        prompt_must_include: ["DOMAIN: home control", "control_device"],
         prompt_must_not_include: []
       },
       %{
@@ -237,8 +237,9 @@ defmodule Zaik.AgentChat.RoutingEvals do
     domain: home
     risk: low
     allowed_tools:
-      - sql_query
-      - control_blind
+      - get_home_state
+      - execute_home_plan
+      - control_device
     triggers:
       - Lily bedtime with AC
       - set up Lily's room for bedtime with AC

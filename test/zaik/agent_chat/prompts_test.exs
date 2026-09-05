@@ -69,7 +69,8 @@ defmodule Zaik.AgentChat.PromptsTest do
     prompt = Zaik.AgentChat.Prompts.planner("Set up Lily's room for bedtime with AC", %{})
 
     assert prompt =~ "DOMAIN: home control"
-    assert prompt =~ "control_blind"
+    assert prompt =~ "execute_home_plan"
+    assert prompt =~ "control_device"
     assert prompt =~ "RELEVANT SKILLS"
     assert prompt =~ "CURRENT BLINDS"
     assert prompt =~ "DEVICE PRESETS"

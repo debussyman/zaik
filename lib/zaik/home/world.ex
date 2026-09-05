@@ -103,11 +103,15 @@ defmodule Zaik.Home.World do
 
   defp filter_query(entities, query) do
     normalized_query = normalize(query)
+    lookup_query = normalize_lookup(query)
 
     Enum.filter(entities, fn entity ->
-      normalize(entity.id) == normalized_query or normalize(entity.name) == normalized_query or
-        String.contains?(normalize(entity.name), normalized_query) or
-        String.contains?(normalize(entity.area_id || ""), normalized_query)
+      normalize(entity.id) == normalized_query or
+        normalize_lookup(entity.name) == lookup_query or
+        String.contains?(normalize_lookup(entity.name), lookup_query) or
+        fuzzy_tokens_match?(lookup_query, normalize_lookup(entity.name)) or
+        String.contains?(normalize_lookup(entity.area_id || ""), lookup_query) or
+        fuzzy_tokens_match?(lookup_query, normalize_lookup(entity.area_id || ""))
     end)
   end
 
@@ -134,6 +138,29 @@ defmodule Zaik.Home.World do
 
   defp format_datetime(%DateTime{} = datetime), do: DateTime.to_iso8601(datetime)
   defp format_datetime(value), do: value
+
+  defp fuzzy_tokens_match?(query, candidate) do
+    query_tokens = String.split(query, " ", trim: true)
+    candidate_tokens = String.split(candidate, " ", trim: true)
+
+    query_tokens != [] and
+      Enum.all?(query_tokens, fn query_token ->
+        Enum.any?(candidate_tokens, fn candidate_token ->
+          query_token == candidate_token or String.starts_with?(candidate_token, query_token) or
+            String.starts_with?(query_token, candidate_token)
+        end)
+      end)
+  end
+
+  defp normalize_lookup(value) do
+    value
+    |> to_string()
+    |> String.trim()
+    |> String.downcase()
+    |> String.replace(~r/['’]/, "")
+    |> String.replace(~r/[^a-z0-9]+/, " ")
+    |> String.replace(~r/\s+/, " ")
+  end
 
   defp normalize(value) do
     value

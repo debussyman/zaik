@@ -32,6 +32,20 @@ defmodule Zaik.Home.Executors.Registry do
     end)
   end
 
+  def prepare(capability, entity, target, context \\ %{}, opts \\ []) do
+    with {:ok, module} <- fetch(capability, opts) do
+      if function_exported?(module, :prepare, 3) do
+        module.prepare(entity, target, context)
+      else
+        {:ok, target}
+      end
+    end
+  rescue
+    error -> {:error, {:executor_prepare_exception, capability, error}}
+  catch
+    :exit, reason -> {:error, {:executor_prepare_exit, capability, reason}}
+  end
+
   def execute(capability, entity, target, context \\ %{}, opts \\ []) do
     with {:ok, module} <- fetch(capability, opts) do
       module.execute(entity, target, context)

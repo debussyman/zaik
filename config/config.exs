@@ -132,6 +132,7 @@ config :zaik, :home_capabilities, additional_modules: []
 config :zaik, :home_executors, additional_modules: []
 
 config :zaik, :tool_execution, action_timeout_ms: 30_000
+config :zaik, :home_action_plans, max_actions: 10
 
 config :zaik, :home_action_ledger,
   enabled: true,

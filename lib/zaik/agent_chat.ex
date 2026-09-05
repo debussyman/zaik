@@ -266,6 +266,11 @@ defmodule Zaik.AgentChat do
                 repair_count + 1
               )
 
+            unconfirmed_home_action_claim?(messages, answer, tool_calls) ->
+              {{:ok,
+                "I couldn't confirm that the requested home action completed. No successful action result was recorded."},
+               tool_calls}
+
             home_reading_final_without_tool?(messages, tool_calls, repair_count) ->
               loop(
                 client,
@@ -525,17 +530,11 @@ defmodule Zaik.AgentChat do
          tool,
          args
        ) do
-    duplicate? = successful_equivalent_control?(tool_calls, tool, args)
+    duplicate? = equivalent_action_attempt?(tool_calls, tool, args)
 
     tool_result =
       if duplicate? do
-        {:ok,
-         %{
-           tool: tool,
-           status: "duplicate_suppressed",
-           duplicate: true,
-           args: args
-         }}
+        duplicate_action_result(tool_calls, tool, args)
       else
         Zaik.Tools.Executor.run_action(tool, args, context, fn ->
           control_tool.run(tool, args, context)
@@ -567,7 +566,7 @@ defmodule Zaik.AgentChat do
       You have one or more HOME TOOL RESULT messages.
       If the user's requested home setup is complete, return {"type":"final","answer":"..."}.
       If another validated low-risk blind action is required, return one control_blind tool_call.
-      Do not repeat a successful equivalent control. Remaining tool calls before forced finalization: #{max(cfg.max_tool_calls - next_tool_count, 0)}.
+      Do not repeat an equivalent control that was already attempted. Remaining tool calls before forced finalization: #{max(cfg.max_tool_calls - next_tool_count, 0)}.
       """
     }
 
@@ -601,11 +600,11 @@ defmodule Zaik.AgentChat do
         tool = descriptor.name
 
         duplicate? =
-          descriptor.kind == :action and successful_equivalent_control?(tool_calls, tool, args)
+          descriptor.kind == :action and equivalent_action_attempt?(tool_calls, tool, args)
 
         tool_result =
           if duplicate? do
-            {:ok, %{tool: tool, status: "duplicate_suppressed", duplicate: true, args: args}}
+            duplicate_action_result(tool_calls, tool, args)
           else
             Zaik.Tools.Executor.run(tool, args, context)
           end
@@ -633,11 +632,12 @@ defmodule Zaik.AgentChat do
 
         continuation_instruction = %{
           role: "system",
-          content: """
-          TOOL CONTINUATION MODE.
-          Use the TOOL RESULT as grounded evidence. If you can answer the original request, return {"type":"final","answer":"..."}.
-          Otherwise return one available tool call. Do not repeat a successful equivalent action. Remaining tool calls before forced finalization: #{max(cfg.max_tool_calls - next_tool_count, 0)}.
-          """
+          content:
+            registered_tool_continuation(
+              tool,
+              tool_result,
+              max(cfg.max_tool_calls - next_tool_count, 0)
+            )
         }
 
         loop(
@@ -655,6 +655,27 @@ defmodule Zaik.AgentChat do
       {:error, reason} ->
         {{:error, reason}, tool_calls}
     end
+  end
+
+  defp registered_tool_continuation("execute_home_plan", {:error, _reason}, remaining) do
+    """
+    HOME PLAN CORRECTION MODE.
+    The plan was rejected during preflight and no plan action was executed.
+    Return one corrected execute_home_plan call. Do not switch to individual control tools.
+    `args.plan` must not be a skill name. Use `args.actions`, an array containing every action.
+    Each action must contain `device`, `capability`, and an object `target`, for example:
+    {"device":"exact known device name","capability":"cover","target":{"state":"CLOSE"}}
+    or {"device":"exact known device name","capability":"cover","target":{"preset":"known preset name"}}
+    Remaining tool calls before forced finalization: #{remaining}.
+    """
+  end
+
+  defp registered_tool_continuation(_tool, _result, remaining) do
+    """
+    TOOL CONTINUATION MODE.
+    Use the TOOL RESULT as grounded evidence. If you can answer the original request, return {"type":"final","answer":"..."}.
+    Otherwise return one available tool call. Do not repeat an equivalent action that was already attempted; report its result instead. Remaining tool calls before forced finalization: #{remaining}.
+    """
   end
 
   defp notify_tool_observer(context, descriptor, args, result) do
@@ -752,8 +773,13 @@ defmodule Zaik.AgentChat do
   end
 
   defp home_control_final_without_tool?(messages, answer, tool_calls, repair_count) do
-    repair_count < @max_planner_repairs and home_control_mode?(messages) and
-      not successful_control_tool?(tool_calls) and action_claim_answer?(answer)
+    repair_count < @max_planner_repairs and
+      unconfirmed_home_action_claim?(messages, answer, tool_calls)
+  end
+
+  defp unconfirmed_home_action_claim?(messages, answer, tool_calls) do
+    home_control_mode?(messages) and not successful_control_tool?(tool_calls) and
+      action_claim_answer?(answer)
   end
 
   defp home_control_mode?(messages) do
@@ -772,7 +798,20 @@ defmodule Zaik.AgentChat do
 
     not String.contains?(normalized, "?") and
       Enum.any?(
-        ["done", "ready", "closed", "opened", "set", "now", "i'll", "i will"],
+        [
+          "done",
+          "ready",
+          "closed",
+          "opened",
+          "set",
+          "accepted",
+          "sent",
+          "applied",
+          "completed",
+          "now",
+          "i'll",
+          "i will"
+        ],
         &String.contains?(normalized, &1)
       )
   end
@@ -785,7 +824,7 @@ defmodule Zaik.AgentChat do
         content: """
         HOME CONTROL TOOL CORRECTION.
         A skill name is context, not an executable tool. No action was executed.
-        Return exactly one control_blind tool call with args.device and args.target using a known device and target from the original prompt. Or return a final clarification question if the request cannot be resolved.
+        For multiple coordinated changes, return one execute_home_plan call containing every action with device, capability, and target. For one change, return control_device. Use only known devices/presets from the original prompt, or return a clarification question.
         """
       }
     ]
@@ -799,8 +838,8 @@ defmodule Zaik.AgentChat do
         content: """
         HOME CONTROL CORRECTION.
         You claimed the home action was done, but no HOME TOOL RESULT exists, so nothing was executed.
-        If the requested low-risk blind action is possible from the known skill/device/preset context, return the first required control_blind tool_call now.
-        If it is not possible, return a concise clarification question.
+        If the request requires multiple coordinated changes, return one execute_home_plan call containing all actions. If it requires one change, return control_device. Use only known skill/device/preset context.
+        If the request cannot be resolved safely, return a concise clarification question.
         Do not say anything is done until a HOME TOOL RESULT confirms it.
         """
       }
@@ -811,7 +850,9 @@ defmodule Zaik.AgentChat do
     required_tool =
       Enum.find_value(messages, fn
         %{role: "system", content: content} when is_binary(content) ->
-          case Regex.run(~r/Required first tool:\s*([a-z_]+)/i, content, capture: :all_but_first) do
+          case Regex.run(~r/Required (?:first|action) tool:\s*([a-z_]+)/i, content,
+                 capture: :all_but_first
+               ) do
             [tool] -> String.downcase(tool)
             _ -> nil
           end
@@ -889,11 +930,25 @@ defmodule Zaik.AgentChat do
     Enum.any?(tool_calls, &(Map.get(&1, :kind) == :action))
   end
 
-  defp successful_equivalent_control?(tool_calls, tool, args) do
+  defp equivalent_action_attempt?(tool_calls, tool, args) do
     Enum.any?(tool_calls, fn call ->
       Map.get(call, :kind) == :action and Map.get(call, :tool) == tool and
-        Map.get(call, :args) == args and Map.get(call, :ok)
+        Map.get(call, :args) == args
     end)
+  end
+
+  defp duplicate_action_result(tool_calls, tool, args) do
+    previous =
+      Enum.find(Enum.reverse(tool_calls), fn call ->
+        Map.get(call, :kind) == :action and Map.get(call, :tool) == tool and
+          Map.get(call, :args) == args
+      end)
+
+    if Map.get(previous || %{}, :ok) do
+      {:ok, %{tool: tool, status: "duplicate_suppressed", duplicate: true, args: args}}
+    else
+      {:error, :duplicate_action_attempt_suppressed}
+    end
   end
 
   defp record_run_trace(
@@ -1283,7 +1338,15 @@ defmodule Zaik.AgentChat do
 
   defp normalize_limit(_value, default), do: default
 
-  defp normalize_tool_result({:ok, result}), do: Map.put(result, :ok, true)
+  defp normalize_tool_result({:ok, result}) when is_map(result), do: Map.put(result, :ok, true)
+  defp normalize_tool_result({:ok, result}), do: %{ok: true, result: result}
+
+  defp normalize_tool_result({:error, {:action_plan_failed, report}}),
+    do: %{ok: false, error: "action_plan_failed", report: report}
+
+  defp normalize_tool_result({:error, {:invalid_action_plan, errors}}),
+    do: %{ok: false, error: "invalid_action_plan", errors: errors}
+
   defp normalize_tool_result({:error, reason}), do: %{ok: false, error: inspect(reason)}
   defp normalize_tool_result(other), do: %{ok: false, error: inspect(other)}
 
