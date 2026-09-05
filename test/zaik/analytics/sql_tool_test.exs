@@ -40,6 +40,52 @@ defmodule Zaik.Analytics.SQLToolTest do
              Zaik.Analytics.SQLTool.validate("SELECT temperature_c FROM readings", :home)
   end
 
+  test "rejects common hallucinated home columns" do
+    assert {:error, {:unknown_home_column, "room_name"}} =
+             Zaik.Analytics.SQLTool.validate(
+               "SELECT temperature_f FROM home_readings WHERE lower(room_name) LIKE '%lily%' LIMIT 1",
+               :home
+             )
+
+    assert {:error, {:unknown_home_column, "friendly_name"}} =
+             Zaik.Analytics.SQLTool.validate(
+               "SELECT temperature_f FROM home_readings WHERE lower(friendly_name) LIKE '%lily%' LIMIT 1",
+               :home
+             )
+
+    assert {:error, {:unknown_home_column, "device"}} =
+             Zaik.Analytics.SQLTool.validate(
+               "SELECT temperature_f FROM home_readings WHERE lower(device) LIKE '%lily%' LIMIT 1",
+               :home
+             )
+
+    assert {:error, {:unknown_home_column, "created_at"}} =
+             Zaik.Analytics.SQLTool.validate(
+               "SELECT created_at, temperature_f FROM home_readings WHERE lower(room) LIKE '%lily%' LIMIT 10",
+               :home
+             )
+  end
+
+  test "requires non-null filter for latest temperature lookups" do
+    assert {:error, {:missing_non_null_filter, "temperature_f"}} =
+             Zaik.Analytics.SQLTool.validate(
+               "SELECT recorded_at, temperature_f FROM home_readings WHERE lower(device_name) LIKE '%lily%' ORDER BY recorded_at DESC LIMIT 1",
+               :home
+             )
+
+    assert {:error, {:mis_scoped_non_null_filter, "temperature_f"}} =
+             Zaik.Analytics.SQLTool.validate(
+               "SELECT recorded_at, temperature_f FROM home_readings WHERE lower(device_name) LIKE '%lily%' OR lower(room) LIKE '%lily%' AND temperature_f IS NOT NULL ORDER BY recorded_at DESC LIMIT 1",
+               :home
+             )
+
+    assert {:ok, _} =
+             Zaik.Analytics.SQLTool.validate(
+               "SELECT recorded_at, temperature_f FROM home_readings WHERE (lower(device_name) LIKE '%lily%' OR lower(room) LIKE '%lily%') AND temperature_f IS NOT NULL ORDER BY recorded_at DESC LIMIT 1",
+               :home
+             )
+  end
+
   test "runs safe ops queries with row maps" do
     task_id = "sql-tool-#{System.unique_integer([:positive])}"
     task = Zaik.Task.new(:echo, %{message: "hello"}, id: task_id)

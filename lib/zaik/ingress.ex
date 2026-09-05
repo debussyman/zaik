@@ -98,6 +98,8 @@ defmodule Zaik.Ingress do
       sender_id: message.sender_id,
       chat_id: message.chat_id,
       chat_type: message.chat_type,
+      message_id: message.message_id,
+      update_id: message.update_id,
       session_id: session.id
     }
   end

@@ -1,10 +1,11 @@
 defmodule Zaik.AgentChat do
   @moduledoc """
-  Bounded read-only tool-using conversational agent for Zaik.
+  Bounded tool-using conversational house agent for Zaik.
 
-  Deterministic commands/intents should remain the fast path. This module is for
-  follow-up or analytical questions where the model can request trusted tools
-  and then produce a grounded answer from tool results.
+  Deterministic commands remain the fast path. This module is for normal
+  free-form chat where the model can request trusted tools — read-only SQL or
+  validated low-risk home-control tools — and then produce a grounded answer
+  from tool results.
   """
 
   require Logger
@@ -13,6 +14,7 @@ defmodule Zaik.AgentChat do
   @default_fallback_model "qwen3-coder:30b"
   @default_max_tool_calls 3
   @max_planner_repairs 1
+  @max_tool_selection_repairs 2
 
   def config do
     configured = Application.get_env(:zaik, :agent_chat, [])
@@ -47,18 +49,25 @@ defmodule Zaik.AgentChat do
     if cfg.enabled do
       client = Keyword.get(opts, :client, Zaik.LLM)
       sql_tool = Keyword.get(opts, :sql_tool, Zaik.Analytics.SQLTool)
+      control_tool = Keyword.get(opts, :control_tool, Zaik.Home.ControlTool)
 
       messages = base_messages(text, context, Keyword.get(opts, :prompt_domain))
-      respond_with_fallback(client, sql_tool, messages, cfg, text, context)
+
+      tool_context =
+        context
+        |> Map.put(:sql_tool, sql_tool)
+        |> Map.put(:control_tool, control_tool)
+
+      respond_with_fallback(client, sql_tool, control_tool, messages, cfg, text, tool_context)
     else
       {:error, :disabled}
     end
   end
 
-  defp respond_with_fallback(client, sql_tool, messages, cfg, text, context) do
+  defp respond_with_fallback(client, sql_tool, control_tool, messages, cfg, text, context) do
     started_mono = System.monotonic_time(:millisecond)
     started_at = DateTime.utc_now()
-    primary = run_attempt(client, sql_tool, messages, cfg)
+    primary = run_attempt(client, sql_tool, control_tool, messages, cfg, context)
 
     {public_result, fallback} =
       if fallback_needed?(primary) and fallback_available?(cfg) do
@@ -80,7 +89,7 @@ defmodule Zaik.AgentChat do
           }
         })
 
-        fallback = run_attempt(client, sql_tool, messages, fallback_cfg)
+        fallback = run_attempt(client, sql_tool, control_tool, messages, fallback_cfg, context)
 
         result =
           case fallback.result do
@@ -114,7 +123,11 @@ defmodule Zaik.AgentChat do
   end
 
   defp fallback_needed?(%{result: result, tool_calls: tool_calls}) do
-    fallback_needed_result?(result) or contradictory_empty_answer?(result, tool_calls)
+    # A fallback attempt starts from the original user request. Replaying it after
+    # any home-action attempt could duplicate a side effect, including actions
+    # whose transport outcome was ambiguous. Reads may still use model fallback.
+    not action_attempted?(tool_calls) and
+      (fallback_needed_result?(result) or contradictory_empty_answer?(result, tool_calls))
   end
 
   defp fallback_needed_result?({:error, _reason}), do: true
@@ -165,14 +178,20 @@ defmodule Zaik.AgentChat do
       String.contains?(normalized, "i do not have memory") or
       String.contains?(normalized, "i don't have access") or
       String.contains?(normalized, "i do not have access") or
+      String.contains?(normalized, "does not have access") or
+      String.contains?(normalized, "don't have access") or
+      String.contains?(normalized, "do not have access") or
+      String.contains?(normalized, "couldn't retrieve") or
+      String.contains?(normalized, "could not retrieve") or
       String.contains?(normalized, "can't retrieve") or
       String.contains?(normalized, "cannot retrieve") or
+      String.contains?(normalized, "issue with accessing the sensor data") or
       String.contains?(normalized, "each conversation is independent")
   end
 
-  defp run_attempt(client, sql_tool, messages, cfg) do
+  defp run_attempt(client, sql_tool, control_tool, messages, cfg, context) do
     started_mono = System.monotonic_time(:millisecond)
-    {result, tool_calls} = loop(client, sql_tool, messages, cfg, 0, [], 0)
+    {result, tool_calls} = loop(client, sql_tool, control_tool, messages, cfg, context, 0, [], 0)
 
     %{
       model: cfg.model,
@@ -182,21 +201,41 @@ defmodule Zaik.AgentChat do
     }
   end
 
-  defp loop(client, _sql_tool, messages, cfg, tool_count, tool_calls, _repair_count)
+  defp loop(
+         client,
+         _sql_tool,
+         _control_tool,
+         messages,
+         cfg,
+         _context,
+         tool_count,
+         tool_calls,
+         _repair_count
+       )
        when tool_count >= cfg.max_tool_calls do
-    if sql_tool_result_messages(messages) == [] do
+    if tool_result_messages(messages) == [] do
       {{:ok,
-        "I reached my read-only analysis limit before I could finish. Try asking a narrower question."},
+        "I reached my tool-use limit before I could finish. Try asking a narrower question."},
        tool_calls}
     else
       result =
-        final_answer(client, user_text_from(messages), sql_tool_result_messages(messages), cfg)
+        final_answer(client, user_text_from(messages), tool_result_messages(messages), cfg)
 
       {result, tool_calls}
     end
   end
 
-  defp loop(client, sql_tool, messages, cfg, tool_count, tool_calls, repair_count) do
+  defp loop(
+         client,
+         sql_tool,
+         control_tool,
+         messages,
+         cfg,
+         context,
+         tool_count,
+         tool_calls,
+         repair_count
+       ) do
     with {:ok, result} <-
            client.chat("",
              messages: messages,
@@ -213,54 +252,185 @@ defmodule Zaik.AgentChat do
          {:ok, action} <- decode_action(result.response) do
       case action do
         %{"type" => "final", "answer" => answer} when is_binary(answer) ->
-          {{:ok, String.trim(answer)}, tool_calls}
+          cond do
+            home_control_final_without_tool?(messages, answer, tool_calls, repair_count) ->
+              loop(
+                client,
+                sql_tool,
+                control_tool,
+                messages ++ home_control_correction_messages(answer),
+                cfg,
+                context,
+                tool_count,
+                tool_calls,
+                repair_count + 1
+              )
+
+            home_reading_final_without_tool?(messages, tool_calls, repair_count) ->
+              loop(
+                client,
+                sql_tool,
+                control_tool,
+                messages ++ home_reading_correction_messages(answer),
+                cfg,
+                context,
+                tool_count,
+                tool_calls,
+                repair_count + 1
+              )
+
+            true ->
+              {{:ok, String.trim(answer)}, tool_calls}
+          end
 
         %{"type" => "tool_call", "tool" => "sql_query", "args" => args} = action
         when is_map(args) ->
           case final_answer_text(action) do
             {:ok, answer} ->
-              if tool_success?(tool_calls) do
+              if successful_sql_tool?(tool_calls) do
                 {{:ok, String.trim(answer)}, tool_calls}
               else
-                run_sql_tool(client, sql_tool, messages, cfg, tool_count, tool_calls, args)
+                run_sql_tool(
+                  client,
+                  sql_tool,
+                  control_tool,
+                  messages,
+                  cfg,
+                  context,
+                  tool_count,
+                  tool_calls,
+                  args
+                )
               end
 
             _ ->
-              run_sql_tool(client, sql_tool, messages, cfg, tool_count, tool_calls, args)
+              run_sql_tool(
+                client,
+                sql_tool,
+                control_tool,
+                messages,
+                cfg,
+                context,
+                tool_count,
+                tool_calls,
+                args
+              )
+          end
+
+        %{"type" => "tool_call", "tool" => "control_blind", "args" => args}
+        when is_map(args) ->
+          run_control_tool(
+            client,
+            sql_tool,
+            control_tool,
+            messages,
+            cfg,
+            context,
+            tool_count,
+            tool_calls,
+            "control_blind",
+            args
+          )
+
+        %{"type" => "tool_call", "tool" => tool, "args" => args}
+        when is_binary(tool) and is_map(args) ->
+          case required_tool_mismatch(messages, tool) do
+            {:mismatch, required_tool} when repair_count < @max_tool_selection_repairs ->
+              loop(
+                client,
+                sql_tool,
+                control_tool,
+                messages ++ tool_selection_correction_messages(tool, required_tool),
+                cfg,
+                context,
+                tool_count,
+                tool_calls,
+                repair_count + 1
+              )
+
+            {:mismatch, required_tool} ->
+              {{:error, {:required_tool_not_selected, required_tool, tool}}, tool_calls}
+
+            :ok ->
+              run_registered_tool(
+                client,
+                sql_tool,
+                control_tool,
+                messages,
+                cfg,
+                context,
+                tool_count,
+                tool_calls,
+                tool,
+                args
+              )
           end
 
         _ ->
-          if sql_tool_result_messages(messages) == [] do
-            {{:error, {:invalid_agent_action, action}}, tool_calls}
-          else
-            {final_answer(
-               client,
-               user_text_from(messages),
-               sql_tool_result_messages(messages),
-               cfg
-             ), tool_calls}
+          cond do
+            home_control_mode?(messages) and repair_count < @max_tool_selection_repairs ->
+              loop(
+                client,
+                sql_tool,
+                control_tool,
+                messages ++ invalid_home_control_action_messages(action),
+                cfg,
+                context,
+                tool_count,
+                tool_calls,
+                repair_count + 1
+              )
+
+            tool_result_messages(messages) == [] ->
+              {{:error, {:invalid_agent_action, action}}, tool_calls}
+
+            true ->
+              {final_answer(
+                 client,
+                 user_text_from(messages),
+                 tool_result_messages(messages),
+                 cfg
+               ), tool_calls}
           end
       end
     else
       {:error, reason} ->
-        if planner_repairable?(reason, repair_count) do
-          loop(
-            client,
-            sql_tool,
-            messages ++ planner_repair_messages(reason),
-            cfg,
-            tool_count,
-            tool_calls,
-            repair_count + 1
-          )
-        else
-          Logger.debug("Agent chat failed: #{inspect(reason)}")
-          {{:error, reason}, tool_calls}
+        cond do
+          tool_result_messages(messages) != [] ->
+            {final_answer(client, user_text_from(messages), tool_result_messages(messages), cfg),
+             tool_calls}
+
+          planner_repairable?(reason, repair_count) ->
+            loop(
+              client,
+              sql_tool,
+              control_tool,
+              messages ++ planner_repair_messages(reason),
+              cfg,
+              context,
+              tool_count,
+              tool_calls,
+              repair_count + 1
+            )
+
+          true ->
+            Logger.debug("Agent chat failed: #{inspect(reason)}")
+            {{:error, reason}, tool_calls}
         end
     end
   end
 
-  defp run_sql_tool(client, sql_tool, messages, cfg, tool_count, tool_calls, args) do
+  defp run_sql_tool(
+         client,
+         sql_tool,
+         control_tool,
+         messages,
+         cfg,
+         context,
+         tool_count,
+         tool_calls,
+         args
+       ) do
     db = args |> Map.get("database", "ops") |> normalize_database()
     query = Map.get(args, "query")
     limit = normalize_limit(Map.get(args, "limit"), 200)
@@ -307,8 +477,10 @@ defmodule Zaik.AgentChat do
         loop(
           client,
           sql_tool,
+          control_tool,
           messages ++ [assistant_message, tool_message, continuation_instruction],
           cfg,
+          context,
           next_tool_count,
           tool_calls,
           0
@@ -317,15 +489,23 @@ defmodule Zaik.AgentChat do
       {:error, _reason} ->
         correction_instruction = %{
           role: "system",
-          content:
-            "The SQL TOOL RESULT contains an error. Return one corrected sql_query tool_call JSON object."
+          content: """
+          The SQL TOOL RESULT contains an error. Return one corrected sql_query tool_call JSON object.
+          If the error mentions {:missing_non_null_filter, "temperature_f"}, add `AND temperature_f IS NOT NULL` to home_readings temperature queries so blind/cover rows with null temperatures do not mask the room sensor.
+          If the error mentions {:mis_scoped_non_null_filter, "temperature_f"}, parenthesize room/device OR filters before adding `AND temperature_f IS NOT NULL`, e.g. `WHERE (lower(device_name) LIKE '%lily%' OR lower(room) LIKE '%lily%') AND temperature_f IS NOT NULL`.
+          If the error mentions {:unknown_home_column, ...} on home_readings, use only the documented columns. Use `recorded_at` for time, `temperature_c` or `temperature_f` for temperature, and `room` or `device_name` for entity matching.
+          If the error mentions a disallowed relation for a home-reading request, use database home and the home_readings view. Never use sensor_readings or zaik_sensor_readings.
+          Use only documented views from the original prompt.
+          """
         }
 
         loop(
           client,
           sql_tool,
+          control_tool,
           messages ++ [assistant_message, tool_message, correction_instruction],
           cfg,
+          context,
           next_tool_count,
           tool_calls,
           0
@@ -333,8 +513,180 @@ defmodule Zaik.AgentChat do
     end
   end
 
+  defp run_control_tool(
+         client,
+         sql_tool,
+         control_tool,
+         messages,
+         cfg,
+         context,
+         tool_count,
+         tool_calls,
+         tool,
+         args
+       ) do
+    duplicate? = successful_equivalent_control?(tool_calls, tool, args)
+
+    tool_result =
+      if duplicate? do
+        {:ok,
+         %{
+           tool: tool,
+           status: "duplicate_suppressed",
+           duplicate: true,
+           args: args
+         }}
+      else
+        Zaik.Tools.Executor.run_action(tool, args, context, fn ->
+          control_tool.run(tool, args, context)
+        end)
+      end
+
+    tool_message = %{
+      role: "user",
+      content: """
+      HOME TOOL RESULT
+      tool: #{tool}
+      args_json: #{Jason.encode!(args)}
+      result_json: #{Jason.encode!(normalize_tool_result(tool_result))}
+      """
+    }
+
+    assistant_message = %{
+      role: "assistant",
+      content: Jason.encode!(%{type: "tool_call", tool: tool, args: args})
+    }
+
+    tool_calls = tool_calls ++ [trace_control_tool_call(tool, args, tool_result, duplicate?)]
+    next_tool_count = tool_count + 1
+
+    continuation_instruction = %{
+      role: "system",
+      content: """
+      HOME CONTROL CONTINUATION MODE.
+      You have one or more HOME TOOL RESULT messages.
+      If the user's requested home setup is complete, return {"type":"final","answer":"..."}.
+      If another validated low-risk blind action is required, return one control_blind tool_call.
+      Do not repeat a successful equivalent control. Remaining tool calls before forced finalization: #{max(cfg.max_tool_calls - next_tool_count, 0)}.
+      """
+    }
+
+    loop(
+      client,
+      sql_tool,
+      control_tool,
+      messages ++ [assistant_message, tool_message, continuation_instruction],
+      cfg,
+      context,
+      next_tool_count,
+      tool_calls,
+      0
+    )
+  end
+
+  defp run_registered_tool(
+         client,
+         sql_tool,
+         control_tool,
+         messages,
+         cfg,
+         context,
+         tool_count,
+         tool_calls,
+         tool,
+         args
+       ) do
+    case Zaik.Tools.Registry.fetch(tool) do
+      {:ok, %{descriptor: descriptor}} ->
+        tool = descriptor.name
+
+        duplicate? =
+          descriptor.kind == :action and successful_equivalent_control?(tool_calls, tool, args)
+
+        tool_result =
+          if duplicate? do
+            {:ok, %{tool: tool, status: "duplicate_suppressed", duplicate: true, args: args}}
+          else
+            Zaik.Tools.Executor.run(tool, args, context)
+          end
+
+        notify_tool_observer(context, descriptor, args, tool_result)
+
+        tool_message = %{
+          role: "user",
+          content: """
+          TOOL RESULT
+          tool: #{tool}
+          kind: #{descriptor.kind}
+          args_json: #{Jason.encode!(args)}
+          result_json: #{Jason.encode!(normalize_tool_result(tool_result))}
+          """
+        }
+
+        assistant_message = %{
+          role: "assistant",
+          content: Jason.encode!(%{type: "tool_call", tool: tool, args: args})
+        }
+
+        call = trace_registered_tool_call(descriptor, args, tool_result, duplicate?)
+        next_tool_count = tool_count + 1
+
+        continuation_instruction = %{
+          role: "system",
+          content: """
+          TOOL CONTINUATION MODE.
+          Use the TOOL RESULT as grounded evidence. If you can answer the original request, return {"type":"final","answer":"..."}.
+          Otherwise return one available tool call. Do not repeat a successful equivalent action. Remaining tool calls before forced finalization: #{max(cfg.max_tool_calls - next_tool_count, 0)}.
+          """
+        }
+
+        loop(
+          client,
+          sql_tool,
+          control_tool,
+          messages ++ [assistant_message, tool_message, continuation_instruction],
+          cfg,
+          context,
+          next_tool_count,
+          tool_calls ++ [call],
+          0
+        )
+
+      {:error, reason} ->
+        {{:error, reason}, tool_calls}
+    end
+  end
+
+  defp notify_tool_observer(context, descriptor, args, result) do
+    case Map.get(context, :eval_pid) || Map.get(context, "eval_pid") do
+      pid when is_pid(pid) ->
+        send(pid, {
+          :zaik_agent_eval_registered_tool_call,
+          %{tool: descriptor.name, kind: descriptor.kind, args: args, result: result}
+        })
+
+      _ ->
+        :ok
+    end
+  end
+
+  defp trace_registered_tool_call(descriptor, args, tool_result, duplicate?) do
+    %{
+      kind: descriptor.kind,
+      risk: descriptor.risk,
+      tool: descriptor.name,
+      args: args,
+      duplicate: duplicate?,
+      ok: match?({:ok, _result}, tool_result),
+      result: tool_result_summary(tool_result),
+      error: tool_error(tool_result)
+    }
+  end
+
   defp trace_tool_call(db, query, limit, tool_result) do
     %{
+      kind: :read,
+      tool: "sql_query",
       database: db,
       query: query,
       limit: limit,
@@ -344,12 +696,153 @@ defmodule Zaik.AgentChat do
     }
   end
 
+  defp trace_control_tool_call(tool, args, tool_result, duplicate?) do
+    %{
+      kind: :action,
+      tool: tool,
+      args: args,
+      duplicate: duplicate?,
+      ok: match?({:ok, _result}, tool_result),
+      result: tool_result_summary(tool_result),
+      error: tool_error(tool_result)
+    }
+  end
+
+  defp tool_result_summary({:ok, result}) when is_map(result), do: result
+  defp tool_result_summary({:ok, result}), do: result
+  defp tool_result_summary(_tool_result), do: nil
+
   defp tool_row_count({:ok, %{row_count: row_count}}), do: row_count
   defp tool_row_count({:ok, %{"row_count" => row_count}}), do: row_count
   defp tool_row_count(_tool_result), do: nil
 
   defp tool_error({:error, reason}), do: inspect(reason)
   defp tool_error(_tool_result), do: nil
+
+  defp home_reading_final_without_tool?(messages, tool_calls, repair_count) do
+    repair_count < @max_planner_repairs and home_reading_mode?(messages) and
+      not successful_read_tool?(tool_calls)
+  end
+
+  defp home_reading_mode?(messages) do
+    Enum.any?(messages, fn
+      %{role: "system", content: content} when is_binary(content) ->
+        String.contains?(content, "DOMAIN: home sensor readings and trends") or
+          String.contains?(content, "HOME STATE MODE")
+
+      _ ->
+        false
+    end)
+  end
+
+  defp home_reading_correction_messages(answer) do
+    [
+      %{role: "assistant", content: Jason.encode!(%{type: "final", answer: answer})},
+      %{
+        role: "system",
+        content: """
+        HOME STATE CORRECTION.
+        You answered without a successful read tool result, so the answer is ungrounded.
+        For a current/latest state request, return get_home_state using room/device words copied from the exact user request and the requested capability.
+        For history, a time window, or a trend, return sql_query using database home and only the home_readings view.
+        Never use sensor_readings or zaik_sensor_readings. Do not answer until a read tool succeeds.
+        """
+      }
+    ]
+  end
+
+  defp home_control_final_without_tool?(messages, answer, tool_calls, repair_count) do
+    repair_count < @max_planner_repairs and home_control_mode?(messages) and
+      not successful_control_tool?(tool_calls) and action_claim_answer?(answer)
+  end
+
+  defp home_control_mode?(messages) do
+    Enum.any?(messages, fn
+      %{role: "system", content: content} when is_binary(content) ->
+        String.contains?(content, "DOMAIN: home control") or
+          String.contains?(content, "HOME CONTROL MODE")
+
+      _ ->
+        false
+    end)
+  end
+
+  defp action_claim_answer?(answer) when is_binary(answer) do
+    normalized = String.downcase(answer)
+
+    not String.contains?(normalized, "?") and
+      Enum.any?(
+        ["done", "ready", "closed", "opened", "set", "now", "i'll", "i will"],
+        &String.contains?(normalized, &1)
+      )
+  end
+
+  defp invalid_home_control_action_messages(action) do
+    [
+      %{role: "assistant", content: Jason.encode!(action)},
+      %{
+        role: "system",
+        content: """
+        HOME CONTROL TOOL CORRECTION.
+        A skill name is context, not an executable tool. No action was executed.
+        Return exactly one control_blind tool call with args.device and args.target using a known device and target from the original prompt. Or return a final clarification question if the request cannot be resolved.
+        """
+      }
+    ]
+  end
+
+  defp home_control_correction_messages(answer) do
+    [
+      %{role: "assistant", content: Jason.encode!(%{type: "final", answer: answer})},
+      %{
+        role: "system",
+        content: """
+        HOME CONTROL CORRECTION.
+        You claimed the home action was done, but no HOME TOOL RESULT exists, so nothing was executed.
+        If the requested low-risk blind action is possible from the known skill/device/preset context, return the first required control_blind tool_call now.
+        If it is not possible, return a concise clarification question.
+        Do not say anything is done until a HOME TOOL RESULT confirms it.
+        """
+      }
+    ]
+  end
+
+  defp required_tool_mismatch(messages, proposed_tool) do
+    required_tool =
+      Enum.find_value(messages, fn
+        %{role: "system", content: content} when is_binary(content) ->
+          case Regex.run(~r/Required first tool:\s*([a-z_]+)/i, content, capture: :all_but_first) do
+            [tool] -> String.downcase(tool)
+            _ -> nil
+          end
+
+        _ ->
+          nil
+      end)
+
+    if is_binary(required_tool) and required_tool != proposed_tool do
+      {:mismatch, required_tool}
+    else
+      :ok
+    end
+  end
+
+  defp tool_selection_correction_messages(proposed_tool, required_tool) do
+    [
+      %{
+        role: "assistant",
+        content: Jason.encode!(%{type: "tool_call", tool: proposed_tool, args: %{}})
+      },
+      %{
+        role: "system",
+        content: """
+        TOOL SELECTION CORRECTION.
+        The request requires #{required_tool}; #{proposed_tool} cannot answer the requested historical/time-window semantics and was not executed.
+        Return one valid #{required_tool} tool call now, following the schema and exact entity lookup text in the original system prompt.
+        """
+      }
+    ]
+  end
 
   defp planner_repairable?(%Jason.DecodeError{}, repair_count),
     do: repair_count < @max_planner_repairs
@@ -380,7 +873,28 @@ defmodule Zaik.AgentChat do
     ]
   end
 
-  defp tool_success?(tool_calls), do: Enum.any?(tool_calls, &Map.get(&1, :ok))
+  defp successful_read_tool?(tool_calls) do
+    Enum.any?(tool_calls, &(Map.get(&1, :kind) == :read and Map.get(&1, :ok)))
+  end
+
+  defp successful_sql_tool?(tool_calls) do
+    Enum.any?(tool_calls, &(Map.get(&1, :tool) == "sql_query" and Map.get(&1, :ok)))
+  end
+
+  defp successful_control_tool?(tool_calls) do
+    Enum.any?(tool_calls, &(Map.get(&1, :kind) == :action and Map.get(&1, :ok)))
+  end
+
+  defp action_attempted?(tool_calls) do
+    Enum.any?(tool_calls, &(Map.get(&1, :kind) == :action))
+  end
+
+  defp successful_equivalent_control?(tool_calls, tool, args) do
+    Enum.any?(tool_calls, fn call ->
+      Map.get(call, :kind) == :action and Map.get(call, :tool) == tool and
+        Map.get(call, :args) == args and Map.get(call, :ok)
+    end)
+  end
 
   defp record_run_trace(
          text,
@@ -424,7 +938,7 @@ defmodule Zaik.AgentChat do
   end
 
   defp trace_context(context) when is_map(context) do
-    [:channel, :sender_id, :sender, :chat_id, :chat_type, :session_id]
+    [:channel, :sender_id, :sender, :chat_id, :chat_type, :message_id, :update_id, :session_id]
     |> Enum.reduce(%{}, fn key, acc ->
       case Map.get(context, key) || Map.get(context, to_string(key)) do
         nil -> acc
@@ -514,7 +1028,7 @@ defmodule Zaik.AgentChat do
   defp user_text_from(messages) do
     messages
     |> Enum.filter(&(&1.role == "user"))
-    |> Enum.reject(&sql_tool_result_message?/1)
+    |> Enum.reject(&tool_result_message?/1)
     |> List.last()
     |> case do
       %{content: content} -> content
@@ -522,7 +1036,12 @@ defmodule Zaik.AgentChat do
     end
   end
 
-  defp sql_tool_result_messages(messages), do: Enum.filter(messages, &sql_tool_result_message?/1)
+  defp tool_result_messages(messages), do: Enum.filter(messages, &tool_result_message?/1)
+
+  defp tool_result_message?(message),
+    do:
+      sql_tool_result_message?(message) or home_tool_result_message?(message) or
+        registered_tool_result_message?(message)
 
   defp sql_tool_result_message?(%{role: "user", content: content}) when is_binary(content) do
     content
@@ -531,6 +1050,23 @@ defmodule Zaik.AgentChat do
   end
 
   defp sql_tool_result_message?(_message), do: false
+
+  defp home_tool_result_message?(%{role: "user", content: content}) when is_binary(content) do
+    content
+    |> String.trim_leading()
+    |> String.starts_with?("HOME TOOL RESULT")
+  end
+
+  defp home_tool_result_message?(_message), do: false
+
+  defp registered_tool_result_message?(%{role: "user", content: content})
+       when is_binary(content) do
+    content
+    |> String.trim_leading()
+    |> String.starts_with?("TOOL RESULT")
+  end
+
+  defp registered_tool_result_message?(_message), do: false
 
   defp base_messages(text, context, prompt_domain) do
     [
@@ -554,9 +1090,24 @@ defmodule Zaik.AgentChat do
   end
 
   defp decode_non_json_action(response) do
-    case extract_sql_query(response) do
-      {:ok, query} -> {:ok, normalize_tool_call("sql_query", %{"query" => query})}
-      :error -> {:error, %Jason.DecodeError{data: response, position: 0, token: nil}}
+    case extract_final_answer_jsonish(response) do
+      {:ok, answer} ->
+        {:ok, %{"type" => "final", "answer" => answer}}
+
+      :error ->
+        case extract_sql_query(response) do
+          {:ok, query} -> {:ok, normalize_tool_call("sql_query", %{"query" => query})}
+          :error -> {:error, %Jason.DecodeError{data: response, position: 0, token: nil}}
+        end
+    end
+  end
+
+  defp extract_final_answer_jsonish(response) do
+    case Regex.run(~r/^\s*\{.*"type"\s*:\s*"final".*"answer"\s*:\s*"(.+)"\s*\}\s*$/s, response,
+           capture: :all_but_first
+         ) do
+      [answer] -> {:ok, String.replace(answer, ~s(\\"), ~s("))}
+      _ -> :error
     end
   end
 
@@ -661,18 +1212,30 @@ defmodule Zaik.AgentChat do
   defp normalize_tool_call(tool, args) when is_map(args) do
     query = Map.get(args, "query")
 
-    if sql_tool_name?(tool) and is_binary(query) do
-      %{
-        "type" => "tool_call",
-        "tool" => "sql_query",
-        "args" => %{
-          "database" => infer_database(query, Map.get(args, "database")),
-          "query" => query,
-          "limit" => Map.get(args, "limit", 200)
+    cond do
+      sql_tool_name?(tool) and is_binary(query) ->
+        %{
+          "type" => "tool_call",
+          "tool" => "sql_query",
+          "args" => %{
+            "database" => infer_database(query, Map.get(args, "database")),
+            "query" => query,
+            "limit" => Map.get(args, "limit", 200)
+          }
         }
-      }
-    else
-      %{"type" => "invalid_tool_call", "tool" => tool, "args" => args}
+
+      home_control_tool_name?(tool) ->
+        %{"type" => "tool_call", "tool" => "control_blind", "args" => args}
+
+      is_binary(tool) or is_atom(tool) ->
+        %{
+          "type" => "tool_call",
+          "tool" => tool |> to_string() |> String.downcase(),
+          "args" => args
+        }
+
+      true ->
+        %{"type" => "invalid_tool_call", "tool" => tool, "args" => args}
     end
   end
 
@@ -681,13 +1244,18 @@ defmodule Zaik.AgentChat do
 
   defp sql_tool_name?(_tool), do: false
 
+  defp home_control_tool_name?(tool) when tool in ["control_blind", "set_blind", "blind_control"],
+    do: true
+
+  defp home_control_tool_name?(_tool), do: false
+
   defp infer_database(query, requested) do
     downcased = String.downcase(query)
 
     cond do
+      requested in ["ops", "home"] -> requested
       String.contains?(downcased, "zaik_") -> "ops"
       String.contains?(downcased, "home_") -> "home"
-      requested in ["ops", "home"] -> requested
       true -> "ops"
     end
   end

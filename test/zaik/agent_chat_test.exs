@@ -48,6 +48,140 @@ defmodule Zaik.AgentChatTest do
     end
   end
 
+  defmodule HomeControlCorrectionClient do
+    def chat(_prompt, opts) do
+      messages = Keyword.fetch!(opts, :messages)
+
+      response =
+        cond do
+          Enum.any?(messages, &home_tool_result_message?/1) ->
+            Jason.encode!(%{"type" => "final", "answer" => "Done after tool result."})
+
+          Enum.any?(messages, &home_control_correction?/1) ->
+            Jason.encode!(%{
+              "type" => "tool_call",
+              "tool" => "control_blind",
+              "args" => %{
+                "device" => "Lily's bedroom left blind",
+                "target" => %{"state" => "CLOSE"}
+              }
+            })
+
+          true ->
+            Jason.encode!(%{"type" => "final", "answer" => "Done. Lily's room is ready."})
+        end
+
+      {:ok, %{model: "home-control-correction", response: response, done: true, raw: %{}}}
+    end
+
+    defp home_control_correction?(%{content: content}) when is_binary(content),
+      do: String.contains?(content, "HOME CONTROL CORRECTION")
+
+    defp home_control_correction?(_message), do: false
+
+    defp home_tool_result_message?(%{role: "user", content: content}) do
+      String.starts_with?(String.trim_leading(content), "HOME TOOL RESULT")
+    end
+
+    defp home_tool_result_message?(_message), do: false
+  end
+
+  defmodule InvalidSkillToolClient do
+    def chat(_prompt, opts) do
+      messages = Keyword.fetch!(opts, :messages)
+
+      response =
+        cond do
+          Enum.any?(messages, &home_tool_result_message?/1) ->
+            Jason.encode!(%{"type" => "final", "answer" => "The command was accepted."})
+
+          Enum.any?(messages, &tool_correction?/1) ->
+            Jason.encode!(%{
+              "type" => "tool_call",
+              "tool" => "control_blind",
+              "args" => %{
+                "device" => "Lily's bedroom left blind",
+                "target" => %{"state" => "CLOSE"}
+              }
+            })
+
+          true ->
+            Jason.encode!(%{"type" => "tool_call", "tool" => "lily_bedtime_with_ac"})
+        end
+
+      {:ok, %{model: "skill-tool-repair", response: response, done: true, raw: %{}}}
+    end
+
+    defp tool_correction?(%{content: content}) when is_binary(content),
+      do: String.contains?(content, "HOME CONTROL TOOL CORRECTION")
+
+    defp tool_correction?(_message), do: false
+
+    defp home_tool_result_message?(%{role: "user", content: content}) when is_binary(content),
+      do: String.starts_with?(String.trim_leading(content), "HOME TOOL RESULT")
+
+    defp home_tool_result_message?(_message), do: false
+  end
+
+  defmodule HomeControlClient do
+    def chat(_prompt, opts) do
+      messages = Keyword.fetch!(opts, :messages)
+      home_tool_results = Enum.count(messages, &home_tool_result_message?/1)
+
+      response =
+        case home_tool_results do
+          0 ->
+            Jason.encode!(%{
+              "type" => "tool_call",
+              "tool" => "control_blind",
+              "args" => %{
+                "device" => "Lily's bedroom left blind",
+                "target" => %{"state" => "CLOSE"}
+              }
+            })
+
+          1 ->
+            Jason.encode!(%{
+              "type" => "tool_call",
+              "tool" => "control_blind",
+              "args" => %{
+                "device" => "Lily's bedroom right blind",
+                "target" => %{"preset" => "above AC"}
+              }
+            })
+
+          _ ->
+            Jason.encode!(%{
+              "type" => "final",
+              "answer" => "Done. I closed Lily's left blind and set the right blind above the AC."
+            })
+        end
+
+      {:ok, %{model: "home-control", response: response, done: true, raw: %{}}}
+    end
+
+    defp home_tool_result_message?(%{role: "user", content: content}) do
+      String.starts_with?(String.trim_leading(content), "HOME TOOL RESULT")
+    end
+
+    defp home_tool_result_message?(_message), do: false
+  end
+
+  defmodule FakeControlTool do
+    def run(tool, args, context) do
+      send(Map.fetch!(context, :test_pid), {:control_tool_called, tool, args})
+
+      {:ok,
+       %{
+         tool: tool,
+         device: args["device"],
+         topic: "zigbee2mqtt/#{args["device"]}/set",
+         payload: args["target"],
+         requested_at: "2026-09-04T19:00:00Z"
+       }}
+    end
+  end
+
   defmodule MalformedFinalClient do
     def chat(_prompt, opts) do
       messages = Keyword.fetch!(opts, :messages)
@@ -72,6 +206,35 @@ defmodule Zaik.AgentChatTest do
         end
 
       {:ok, %{model: "malformed-final", response: response, done: true, raw: %{}}}
+    end
+
+    defp tool_result_message?(%{role: "user", content: content}) do
+      String.starts_with?(String.trim_leading(content), "SQL TOOL RESULT")
+    end
+
+    defp tool_result_message?(_message), do: false
+  end
+
+  defmodule MalformedJsonishFinalClient do
+    def chat(_prompt, opts) do
+      messages = Keyword.fetch!(opts, :messages)
+
+      response =
+        if Enum.any?(messages, &tool_result_message?/1) do
+          ~s({"type":"final","answer":"Today, you asked about "Lily's room" in chat."})
+        else
+          Jason.encode!(%{
+            "type" => "tool_call",
+            "tool" => "sql_query",
+            "args" => %{
+              "database" => "ops",
+              "query" => "SELECT content FROM zaik_messages WHERE role = 'user' LIMIT 5",
+              "limit" => 5
+            }
+          })
+        end
+
+      {:ok, %{model: "jsonish-final", response: response, done: true, raw: %{}}}
     end
 
     defp tool_result_message?(%{role: "user", content: content}) do
@@ -355,6 +518,173 @@ defmodule Zaik.AgentChatTest do
     defp tool_result_message?(_message), do: false
   end
 
+  defmodule DuplicateControlClient do
+    def chat(_prompt, opts) do
+      messages = Keyword.fetch!(opts, :messages)
+      results = Enum.count(messages, &home_tool_result?/1)
+
+      response =
+        if results < 2 do
+          Jason.encode!(%{
+            "type" => "tool_call",
+            "tool" => "control_blind",
+            "args" => %{"device" => "Office blind", "target" => %{"state" => "CLOSE"}}
+          })
+        else
+          Jason.encode!(%{"type" => "final", "answer" => "The command was accepted."})
+        end
+
+      {:ok, %{model: "duplicate", response: response, done: true, raw: %{}}}
+    end
+
+    defp home_tool_result?(%{content: content}) when is_binary(content),
+      do: String.starts_with?(String.trim_leading(content), "HOME TOOL RESULT")
+
+    defp home_tool_result?(_message), do: false
+  end
+
+  defmodule ActionFallbackClient do
+    def chat(_prompt, opts) do
+      model = Keyword.fetch!(opts, :model)
+      messages = Keyword.fetch!(opts, :messages)
+      send(self(), {:agent_model_called, model})
+
+      response =
+        if Enum.any?(messages, &home_tool_result?/1) do
+          Jason.encode!(%{
+            "type" => "final",
+            "answer" => "I reached my read-only analysis limit before I could finish."
+          })
+        else
+          Jason.encode!(%{
+            "type" => "tool_call",
+            "tool" => "control_blind",
+            "args" => %{"device" => "Office blind", "target" => %{"state" => "CLOSE"}}
+          })
+        end
+
+      {:ok, %{model: model, response: response, done: true, raw: %{}}}
+    end
+
+    defp home_tool_result?(%{content: content}) when is_binary(content),
+      do: String.starts_with?(String.trim_leading(content), "HOME TOOL RESULT")
+
+    defp home_tool_result?(_message), do: false
+  end
+
+  defmodule TypedHomeStateClient do
+    def chat(_prompt, opts) do
+      messages = Keyword.fetch!(opts, :messages)
+
+      response =
+        if Enum.any?(messages, &typed_tool_result?/1) do
+          Jason.encode!(%{"type" => "final", "answer" => "The nursery is 77°F."})
+        else
+          Jason.encode!(%{
+            "type" => "tool_call",
+            "tool" => "get_home_state",
+            "args" => %{"query" => "nursery", "capability" => "temperature"}
+          })
+        end
+
+      {:ok, %{model: "typed-home", response: response, done: true, raw: %{}}}
+    end
+
+    defp typed_tool_result?(%{content: content}) when is_binary(content),
+      do: String.starts_with?(String.trim_leading(content), "TOOL RESULT")
+
+    defp typed_tool_result?(_message), do: false
+  end
+
+  defmodule HistoricalToolCorrectionClient do
+    def chat(_prompt, opts) do
+      messages = Keyword.fetch!(opts, :messages)
+
+      response =
+        cond do
+          Enum.any?(messages, &sql_tool_result?/1) ->
+            Jason.encode!(%{"type" => "final", "answer" => "The temperature changed by 1°F."})
+
+          Enum.any?(messages, &tool_selection_correction?/1) ->
+            Jason.encode!(%{
+              "type" => "tool_call",
+              "tool" => "sql_query",
+              "args" => %{
+                "database" => "home",
+                "query" =>
+                  "SELECT recorded_at, temperature_f FROM home_readings WHERE lower(room) LIKE '%lily%' AND temperature_f IS NOT NULL AND recorded_at >= datetime('now', '-30 minutes')",
+                "limit" => 20
+              }
+            })
+
+          true ->
+            Jason.encode!(%{
+              "type" => "tool_call",
+              "tool" => "get_home_state",
+              "args" => %{"query" => "lily", "capability" => "temperature"}
+            })
+        end
+
+      {:ok, %{model: "tool-correction", response: response, done: true, raw: %{}}}
+    end
+
+    defp tool_selection_correction?(%{content: content}) when is_binary(content),
+      do: String.contains?(content, "TOOL SELECTION CORRECTION")
+
+    defp tool_selection_correction?(_message), do: false
+
+    defp sql_tool_result?(%{content: content}) when is_binary(content),
+      do: String.starts_with?(String.trim_leading(content), "SQL TOOL RESULT")
+
+    defp sql_tool_result?(_message), do: false
+  end
+
+  defmodule SQLDoesNotConfirmControlClient do
+    def chat(_prompt, opts) do
+      messages = Keyword.fetch!(opts, :messages)
+
+      response =
+        cond do
+          Enum.any?(messages, &home_tool_result?/1) ->
+            Jason.encode!(%{"type" => "final", "answer" => "The command was accepted."})
+
+          Enum.any?(messages, &control_correction?/1) ->
+            Jason.encode!(%{
+              "type" => "tool_call",
+              "tool" => "control_blind",
+              "args" => %{"device" => "Office blind", "target" => %{"state" => "CLOSE"}}
+            })
+
+          Enum.any?(messages, &sql_tool_result?/1) ->
+            Jason.encode!(%{"type" => "final", "answer" => "Done. The blind is closed."})
+
+          true ->
+            Jason.encode!(%{
+              "type" => "tool_call",
+              "tool" => "sql_query",
+              "args" => %{"database" => "home", "query" => "SELECT 1", "limit" => 1}
+            })
+        end
+
+      {:ok, %{model: "typed-success", response: response, done: true, raw: %{}}}
+    end
+
+    defp home_tool_result?(%{content: content}) when is_binary(content),
+      do: String.starts_with?(String.trim_leading(content), "HOME TOOL RESULT")
+
+    defp home_tool_result?(_message), do: false
+
+    defp sql_tool_result?(%{content: content}) when is_binary(content),
+      do: String.starts_with?(String.trim_leading(content), "SQL TOOL RESULT")
+
+    defp sql_tool_result?(_message), do: false
+
+    defp control_correction?(%{content: content}) when is_binary(content),
+      do: String.contains?(content, "HOME CONTROL CORRECTION")
+
+    defp control_correction?(_message), do: false
+  end
+
   test "loops through a read-only SQL tool call and returns final answer" do
     assert {:ok, answer} =
              Zaik.AgentChat.respond("Was Lily's room warm recently?", %{},
@@ -381,6 +711,62 @@ defmodule Zaik.AgentChatTest do
     assert row["fallback_used"] == 0
     assert row["primary_model"]
     assert row["tool_calls_json"] =~ "home_readings"
+  end
+
+  test "does not accept home-control done claims before a tool succeeds" do
+    assert {:ok, "Done after tool result."} =
+             Zaik.AgentChat.respond("Set up Lily's room for bedtime with AC", %{test_pid: self()},
+               client: HomeControlCorrectionClient,
+               sql_tool: FakeSQLTool,
+               control_tool: FakeControlTool,
+               prompt_domain: :home_control,
+               config: %{enabled: true, fallback_enabled: false, max_tool_calls: 3}
+             )
+
+    assert_received {:control_tool_called, "control_blind",
+                     %{
+                       "device" => "Lily's bedroom left blind",
+                       "target" => %{"state" => "CLOSE"}
+                     }}
+  end
+
+  test "repairs a skill name emitted as if it were a home-control tool" do
+    assert {:ok, "The command was accepted."} =
+             Zaik.AgentChat.respond(
+               "Set up Lily's room for bedtime with AC",
+               %{test_pid: self()},
+               client: InvalidSkillToolClient,
+               control_tool: FakeControlTool,
+               prompt_domain: :home_control,
+               config: %{enabled: true, fallback_enabled: false, max_tool_calls: 3}
+             )
+
+    assert_received {:control_tool_called, "control_blind", _args}
+  end
+
+  test "loops through validated home-control tool calls and returns final answer" do
+    assert {:ok, answer} =
+             Zaik.AgentChat.respond("Set up Lily's room for bedtime with AC", %{test_pid: self()},
+               client: HomeControlClient,
+               sql_tool: FakeSQLTool,
+               control_tool: FakeControlTool,
+               prompt_domain: :home_control,
+               config: %{enabled: true, fallback_enabled: false, max_tool_calls: 3}
+             )
+
+    assert answer == "Done. I closed Lily's left blind and set the right blind above the AC."
+
+    assert_received {:control_tool_called, "control_blind",
+                     %{
+                       "device" => "Lily's bedroom left blind",
+                       "target" => %{"state" => "CLOSE"}
+                     }}
+
+    assert_received {:control_tool_called, "control_blind",
+                     %{
+                       "device" => "Lily's bedroom right blind",
+                       "target" => %{"preset" => "above AC"}
+                     }}
   end
 
   test "accepts prose answer accidentally returned in final tool-call query field" do
@@ -424,6 +810,20 @@ defmodule Zaik.AgentChatTest do
     assert_received {:sql_tool_called, query, opts}
     assert query =~ "home_readings"
     assert opts[:db] == :home
+  end
+
+  test "salvages JSON-looking final answers with unescaped inner quotes" do
+    assert {:ok, answer} =
+             Zaik.AgentChat.respond("what did we ask recently?", %{},
+               client: MalformedJsonishFinalClient,
+               sql_tool: FakeSQLTool,
+               config: %{enabled: true, fallback_enabled: false, max_tool_calls: 3}
+             )
+
+    assert answer =~ "Lily's room"
+    assert_received {:sql_tool_called, query, opts}
+    assert query =~ "zaik_messages"
+    assert opts[:db] == :ops
   end
 
   test "accepts raw SELECT text from planner as a SQL tool call" do
@@ -527,5 +927,89 @@ defmodule Zaik.AgentChatTest do
 
     assert_received {:agent_model_called, "small"}
     assert_received {:agent_model_called, "big"}
+  end
+
+  test "dispatches registered typed home-state tools without an AgentChat branch" do
+    {:ok, store} = start_supervised({Zaik.Home.DeviceStore, name: nil})
+
+    Zaik.Home.DeviceStore.upsert_device(
+      store,
+      "Nursery sensor",
+      %{"temperature" => 25.0},
+      %{"area_id" => "nursery"}
+    )
+
+    assert {:ok, "The nursery is 77°F."} =
+             Zaik.AgentChat.respond(
+               "What is the nursery temperature?",
+               %{device_store: store},
+               client: TypedHomeStateClient,
+               config: %{enabled: true, fallback_enabled: false, max_tool_calls: 2}
+             )
+  end
+
+  test "does not execute a current-state tool for a historical request" do
+    assert {:ok, "The temperature changed by 1°F."} =
+             Zaik.AgentChat.respond(
+               "What was Lily's temperature change in the past 30 minutes?",
+               %{eval_pid: self()},
+               client: HistoricalToolCorrectionClient,
+               sql_tool: FakeSQLTool,
+               config: %{enabled: true, fallback_enabled: false, max_tool_calls: 2}
+             )
+
+    assert_received {:sql_tool_called, query, opts}
+    assert query =~ "home_readings"
+    assert opts[:db] == :home
+    refute_received {:zaik_agent_eval_registered_tool_call, _call}
+  end
+
+  test "does not replay a home action through model fallback" do
+    assert {:ok, answer} =
+             Zaik.AgentChat.respond("Close the office blind", %{test_pid: self()},
+               client: ActionFallbackClient,
+               control_tool: FakeControlTool,
+               prompt_domain: :home_control,
+               config: %{
+                 enabled: true,
+                 model: "small",
+                 fallback_enabled: true,
+                 fallback_model: "big",
+                 max_tool_calls: 3
+               }
+             )
+
+    assert answer =~ "read-only analysis limit"
+    assert_received {:agent_model_called, "small"}
+    refute_received {:agent_model_called, "big"}
+    assert_received {:control_tool_called, "control_blind", _args}
+    refute_received {:control_tool_called, "control_blind", _args}
+  end
+
+  test "suppresses an equivalent successful control within one attempt" do
+    assert {:ok, "The command was accepted."} =
+             Zaik.AgentChat.respond("Close the office blind", %{test_pid: self()},
+               client: DuplicateControlClient,
+               control_tool: FakeControlTool,
+               prompt_domain: :home_control,
+               config: %{enabled: true, fallback_enabled: false, max_tool_calls: 3}
+             )
+
+    assert_received {:control_tool_called, "control_blind", _args}
+    refute_received {:control_tool_called, "control_blind", _args}
+  end
+
+  test "a successful SQL read does not confirm a home action" do
+    assert {:ok, "The command was accepted."} =
+             Zaik.AgentChat.respond("Close the office blind", %{test_pid: self()},
+               client: SQLDoesNotConfirmControlClient,
+               sql_tool: FakeSQLTool,
+               control_tool: FakeControlTool,
+               prompt_domain: :home_control,
+               config: %{enabled: true, fallback_enabled: false, max_tool_calls: 3}
+             )
+
+    assert_received {:sql_tool_called, "SELECT 1", _opts}
+    assert_received {:control_tool_called, "control_blind", _args}
   end
 end

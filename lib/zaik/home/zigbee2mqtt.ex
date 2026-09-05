@@ -78,19 +78,21 @@ defmodule Zaik.Home.Zigbee2MQTT do
             |> Map.get(ieee, %{})
             |> Map.merge(%{
               "source" => "zigbee2mqtt_state_file",
+              "bootstrap" => true,
               "ieee_address" => ieee,
               "topic" => cfg.base_topic <> "/" <> friendly_name
             })
 
           if is_map(payload) do
+            # State-file contents restore the current-state cache but are not a
+            # newly observed device event. Recording them as history on every
+            # application start manufactures telemetry and corrupts trends.
             Zaik.Home.DeviceStore.upsert_device(
               cfg.device_store,
               friendly_name,
               payload,
               metadata
             )
-
-            record_history(cfg.history_store, friendly_name, payload, metadata)
           end
         end)
 

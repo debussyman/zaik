@@ -13,11 +13,14 @@ defmodule Zaik.Application do
       [
         Zaik.Clock,
         telemetry_store_child(),
+        {Task.Supervisor, name: Zaik.Tools.TaskSupervisor},
         Zaik.TaskStore,
         Zaik.SessionStore,
         Zaik.TaskQueue,
         Zaik.Home.DeviceStore,
         home_history_child(),
+        device_preset_store_child(),
+        home_action_ledger_child(),
         alerts_rule_store_child(),
         alerts_engine_child(),
         zigbee2mqtt_bootstrapper_child(),
@@ -50,6 +53,22 @@ defmodule Zaik.Application do
 
     if config.enabled do
       {Zaik.Home.HistoryStore, Map.to_list(config)}
+    end
+  end
+
+  defp device_preset_store_child do
+    config = Zaik.Home.DevicePresetStore.config()
+
+    if config.enabled do
+      {Zaik.Home.DevicePresetStore, Map.to_list(config)}
+    end
+  end
+
+  defp home_action_ledger_child do
+    config = Zaik.Home.ActionLedger.config()
+
+    if config.enabled do
+      {Zaik.Home.ActionLedger, Map.to_list(config)}
     end
   end
 

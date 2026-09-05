@@ -62,6 +62,16 @@ config :zaik, :self_improvement,
   timeout_ms: 120_000,
   notify_telegram_chat_id: nil
 
+config :zaik, :skills,
+  enabled: true,
+  paths: [
+    if(config_env() == :test,
+      do: Path.join(System.tmp_dir!(), "zaik-skills-test"),
+      else: "~/.zaik/home/skills"
+    )
+  ],
+  max_relevant: 3
+
 config :zaik, :scheduler,
   enabled: config_env() != :test,
   jobs: [
@@ -102,6 +112,30 @@ config :zaik, :zigbee2mqtt,
   device_store: Zaik.Home.DeviceStore,
   bootstrap_state?: true,
   data_dir: "~/.local/share/zigbee2mqtt/data"
+
+config :zaik, :blinds,
+  base_topic: "zigbee2mqtt",
+  device_store: Zaik.Home.DeviceStore,
+  preset_store: Zaik.Home.DevicePresetStore,
+  mqtt_client: Zaik.MQTT.Client
+
+config :zaik, :device_presets,
+  enabled: true,
+  db_path: if(config_env() == :test, do: ":memory:", else: "~/.zaik/home/home.db"),
+  import_legacy_blind_presets?: true,
+  legacy_blind_presets_path: "~/.zaik/home/blind_presets.json"
+
+# Runtime-discovered modules are looked up on every use so hot-loaded modules
+# and configuration changes do not require rebuilding the brain process.
+config :zaik, :tools, additional_modules: []
+config :zaik, :home_capabilities, additional_modules: []
+config :zaik, :home_executors, additional_modules: []
+
+config :zaik, :tool_execution, action_timeout_ms: 30_000
+
+config :zaik, :home_action_ledger,
+  enabled: true,
+  db_path: if(config_env() == :test, do: ":memory:", else: "~/.zaik/home/home.db")
 
 config :zaik, :home_history,
   enabled: true,

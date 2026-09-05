@@ -258,6 +258,36 @@ defmodule Zaik.Home.HistoryStore do
              r.payload_json
       FROM readings r
       JOIN devices d ON d.id = r.device_id;
+
+    CREATE TABLE IF NOT EXISTS home_device_preset_rows (
+      device_key TEXT NOT NULL,
+      preset_key TEXT NOT NULL,
+      capability TEXT NOT NULL,
+      device_name TEXT NOT NULL,
+      preset_name TEXT NOT NULL,
+      target_json TEXT NOT NULL,
+      source TEXT,
+      created_by TEXT,
+      metadata_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY(device_key, preset_key, capability)
+    );
+
+    CREATE INDEX IF NOT EXISTS home_device_preset_device_idx
+      ON home_device_preset_rows(device_key, capability);
+
+    CREATE VIEW IF NOT EXISTS home_device_presets AS
+      SELECT device_name,
+             preset_name,
+             capability,
+             target_json,
+             source,
+             created_by,
+             metadata_json,
+             created_at,
+             updated_at
+      FROM home_device_preset_rows;
     """)
   end
 

@@ -80,6 +80,28 @@ defmodule Zaik do
   def mqtt_status, do: Zaik.MQTT.Client.status()
 
   @doc """
+  Return generic named home-device presets.
+  """
+  def device_presets(device_name \\ nil, opts \\ []),
+    do: Zaik.Home.DevicePresetStore.list(device_name, opts)
+
+  @doc """
+  Return latest known blinds/window coverings.
+  """
+  def blinds(query \\ nil, opts \\ []), do: Zaik.Home.Blinds.list(query, opts)
+
+  @doc """
+  Control a known blind/window covering through a validated home adapter.
+  """
+  def control_blind(query, target, opts \\ []), do: Zaik.Home.Blinds.control(query, target, opts)
+
+  @doc """
+  Capture the current position of a blind as a named preset.
+  """
+  def capture_blind_preset(query, preset_name, context \\ %{}, opts \\ []),
+    do: Zaik.Home.Blinds.capture(query, preset_name, context, opts)
+
+  @doc """
   Analyze recent telemetry trend for a home device.
   """
   def home_trend(query, opts \\ []), do: Zaik.Home.Trends.analyze(query, opts)

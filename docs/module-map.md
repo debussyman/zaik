@@ -63,10 +63,15 @@ Normal free-form chat goes through one externally unified brain.
 
 | Current module/file | Role | Future target |
 | --- | --- | --- |
-| `Zaik.AgentChat` | Bounded read-only tool loop for normal chat. | `Zaik.Brain.AgentChat` |
+| `Zaik.AgentChat` | Bounded registered-tool loop for normal chat, with compatibility branches for SQL and blinds. | `Zaik.Brain.AgentChat` |
 | `Zaik.AgentChat.Prompts` | Compact planner/final-answer prompts. | `Zaik.Brain.Prompts` |
-| `Zaik.AgentChat.Evals` | Built-in regression/eval cases. | `Zaik.Brain.Evals` |
+| `Zaik.AgentChat.Evals` | Live-model regression/eval cases for SQL and fake home-control tool use. | `Zaik.Brain.Evals` |
+| `Zaik.AgentChat.RoutingEvals` | Deterministic skill-aware routing/prompt/SQL-guard evals. | `Zaik.Brain.RoutingEvals` |
 | `Zaik.AgentChat.SelfImprovementJob` | Periodic eval/notification job. | `Zaik.Brain.SelfImprovementJob` |
+| `Zaik.Tool` | Behaviour for runtime-discovered read/action tools. | Keep as the generic tool contract. |
+| `Zaik.Tools.Registry` | Uncached runtime lookup of configured tool modules and aliases. | Keep as the hot-load-friendly tool registry. |
+| `Zaik.Tools.Executor` | Runs actions under task supervision and request-scoped idempotency. | Keep as the generic execution boundary. |
+| `Zaik.Tools.SQLQuery` | Registry adapter for the existing SQL tool. | Replace compatibility SQL branching incrementally. |
 | `Zaik.Analytics.SQLTool` | Validated read-only SQL tool over documented views. | `Zaik.Tools.SQLTool` |
 | `Zaik.Intent.Parser` | Deprecated legacy intent classifier. | Remove, quarantine, or move to legacy example. |
 
@@ -80,6 +85,7 @@ Text routing and explicit deterministic commands.
 | `Zaik.Ingress` | Shared session mapping, memory writes, chat routing, and agent reply memory writes. | Keep as shared ingress flow. |
 | `Zaik.ChatRouter` | Routes explicit commands vs normal free-form chat. | `Zaik.Ingress.ChatRouter` or keep as facade after command split. |
 | `Zaik.CommandProcessor` | Monolithic command handler. | Split into `Zaik.Commands.*` groups. |
+| `Zaik.SkillStore` | Filesystem-backed model-readable skills used as prompt context, not deterministic routines. | `Zaik.Runtime.SkillStore` or domain-scoped skill stores. |
 | `Zaik.Messaging.SessionMapper` | Maps channel/chat keys to Zaik sessions. | Shared ingress/session utility. |
 
 Telegram and optional legacy Signal now translate updates into `Zaik.Ingress.Message` and call `Zaik.Ingress.handle_message/2`. The pollers still own protocol-specific polling, allowlists, addressing, and sending replies.
@@ -114,9 +120,21 @@ Home automation is one optional domain, not the whole harness.
 
 | Current module/file | Role | Future target |
 | --- | --- | --- |
-| `Zaik.Home.DeviceStore` | In-memory current home device state. | `Zaik.Domains.Home.DeviceStore` |
+| `Zaik.Home.DeviceStore` | In-memory raw current device state with observed/received timestamps. | `Zaik.Domains.Home.DeviceStore` |
+| `Zaik.Home.Entity` | Adapter-neutral identity and typed current-state struct. | Keep as the home-domain entity contract. |
+| `Zaik.Home.World` | Projects adapter payloads into capability-filtered current state. | Keep as the ordinary home reasoning boundary. |
+| `Zaik.Home.Capability` | Behaviour for typed state detection and target validation. | Keep as the semantic capability contract. |
+| `Zaik.Home.Capabilities.Registry` | Uncached runtime capability discovery. | Keep as the hot-load-friendly capability registry. |
+| `Zaik.Home.Executor` | Behaviour for adapter execution of validated capability targets. | Keep as the capability executor contract. |
+| `Zaik.Home.Executors.Registry` | Uncached runtime executor discovery. | Keep as the hot-load-friendly executor registry. |
+| `Zaik.Home.ActionLedger` | SQLite request-scoped action idempotency ledger. | Keep in the home execution/policy layer. |
 | `Zaik.Home.HistoryStore` | SQLite home readings/history. | `Zaik.Domains.Home.HistoryStore` |
 | `Zaik.Home.Trends` | Home sensor trend summaries. | `Zaik.Domains.Home.Trends` |
+| `Zaik.Home.DevicePresetStore` | SQLite store for generic named device targets/presets. | `Zaik.Domains.Home.DevicePresetStore` |
+| `Zaik.Home.Tools.GetState` / `ListDevices` | Typed registered read tools over `Zaik.Home.World`. | Keep as primary current-state tools. |
+| `Zaik.Home.Tools.ControlDevice` | Generic entity/capability/target control tool. | Replace device-class-specific model tools over time. |
+| `Zaik.Home.ControlTool` / `Zaik.Home.Tools.ControlBlind` | Compatibility blind-control surfaces for AgentChat. | Retire after skills/prompts use `control_device`. |
+| `Zaik.Home.Blinds` | Deterministic read/control layer for known Zigbee2MQTT blinds/window coverings using generic device presets. | `Zaik.Domains.Home.Blinds` |
 | `Zaik.Home.Zigbee2MQTT` | Zigbee2MQTT payload handling. | `Zaik.Adapters.Home.Zigbee2MQTT` or bridge into home domain. |
 | `Zaik.Home.Zigbee2MQTTBootstrapper` | Loads Zigbee2MQTT retained/current state. | `Zaik.Adapters.Home.Zigbee2MQTTBootstrapper` |
 | `Zaik.MQTT.Client` | MQTT subscription/publish wrapper that fans incoming messages out to configured `Zaik.MQTT.Handler` modules. | `Zaik.Adapters.Home.MQTT` after namespace migration. |

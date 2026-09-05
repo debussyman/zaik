@@ -41,6 +41,9 @@ defmodule Zaik.CommandProcessor do
       command?(text, "home devices") ->
         format_home_devices()
 
+      command?(text, "blinds") ->
+        format_blinds("")
+
       command?(text, "home sensors") ->
         format_home_sensors()
 
@@ -91,6 +94,9 @@ defmodule Zaik.CommandProcessor do
 
       String.starts_with?(downcase(text), "task ") ->
         text |> rest_after("task") |> format_task()
+
+      String.starts_with?(downcase(text), "blinds ") ->
+        text |> rest_after("blinds") |> handle_blinds(context)
 
       String.starts_with?(downcase(text), "scheduler run ") ->
         text |> rest_after("scheduler run") |> run_scheduled_job()
@@ -159,6 +165,11 @@ defmodule Zaik.CommandProcessor do
     sessions
     home
     home devices
+    blinds
+    blinds <room/name>
+    blinds <room/name> open|close|stop
+    blinds <room/name> set <0-100|preset name>
+    blinds <room/name> capture <preset name>
     home sensors
     home trends
     presence
@@ -238,6 +249,169 @@ defmodule Zaik.CommandProcessor do
     end
   end
 
+  defp handle_blinds(rest, context) do
+    rest = String.trim(rest)
+
+    cond do
+      rest == "" ->
+        format_blinds("")
+
+      split_blind_action(rest, "capture") != nil ->
+        {query, preset_name} = split_blind_action(rest, "capture")
+        capture_blind_preset(query, preset_name, context)
+
+      split_blind_action(rest, "set") != nil ->
+        {query, target_text} = split_blind_action(rest, "set")
+        control_blind(query, target_text)
+
+      trailing_blind_state(rest) != nil ->
+        {query, target_text} = trailing_blind_state(rest)
+        control_blind(query, target_text)
+
+      true ->
+        format_blinds(rest)
+    end
+  end
+
+  defp format_blinds(query) do
+    case Zaik.blinds(query) do
+      [] ->
+        if String.trim(query) == "" do
+          "No blinds seen yet."
+        else
+          "No blinds matched: #{query}"
+        end
+
+      blinds ->
+        header = if String.trim(query) == "", do: "Blinds", else: "Blinds matching #{query}"
+        ([header] ++ Enum.map(blinds, &format_blind_line/1)) |> Enum.join("\n")
+    end
+  rescue
+    _ -> "Blinds integration is not available."
+  catch
+    :exit, _ -> "Blinds integration is not available."
+  end
+
+  defp capture_blind_preset(query, preset_name, context) do
+    with :ok <- non_empty_blind_query?(query),
+         :ok <- non_empty_preset_name?(preset_name),
+         {:ok, preset} <- Zaik.capture_blind_preset(query, preset_name, context) do
+      "Captured #{preset["device_name"]} preset #{inspect(preset["preset_name"])} as #{format_preset_target(preset)}."
+    else
+      {:error, :empty_query} ->
+        "Usage: blinds <room/name> capture <preset name>"
+
+      {:error, :empty_preset_name} ->
+        "Usage: blinds <room/name> capture <preset name>"
+
+      {:error, :not_found} ->
+        "Blind not found: #{query}"
+
+      {:error, {:ambiguous, names}} ->
+        "Blind name is ambiguous: #{query}\nMatches: #{Enum.join(names, ", ")}"
+
+      {:error, :invalid_position} ->
+        "That blind has no valid current position to capture yet. Move it or refresh it in Zigbee2MQTT first."
+
+      {:error, reason} ->
+        "Failed to capture blind preset: #{format_value(reason)}"
+    end
+  end
+
+  defp control_blind(query, target_text) do
+    with :ok <- non_empty_blind_query?(query),
+         {:ok, target} <- Zaik.Home.Blinds.target_from_text(target_text),
+         {:ok, result} <- Zaik.control_blind(query, target) do
+      "Sent #{format_blind_target(result.payload)} to #{result.device.friendly_name}."
+    else
+      {:error, :empty_query} ->
+        "Usage: blinds <room/name> set <0-100|preset name>"
+
+      {:error, :empty_target} ->
+        "Usage: blinds <room/name> set <0-100|preset name>"
+
+      {:error, :invalid_position} ->
+        "Blind position must be a number from 0 to 100."
+
+      {:error, :not_found} ->
+        "Blind not found: #{query}"
+
+      {:error, {:ambiguous, names}} ->
+        "Blind name is ambiguous: #{query}\nMatches: #{Enum.join(names, ", ")}"
+
+      {:error, {:preset_not_found, preset_name}} ->
+        "Preset not found for #{query}: #{preset_name}"
+
+      {:error, reason} ->
+        "Failed to control blind: #{format_value(reason)}"
+    end
+  end
+
+  defp format_blind_line(device) do
+    status = Zaik.Home.Blinds.status(device)
+    presets = Zaik.Home.DevicePresetStore.list(device.friendly_name, capability: "cover")
+
+    preset_suffix =
+      case presets do
+        [] ->
+          ""
+
+        presets ->
+          " presets=" <> Enum.map_join(presets, ",", &format_device_preset_summary/1)
+      end
+
+    "- #{device.friendly_name}: position=#{format_unknown(status.position)} state=#{format_unknown(status.state)} linkquality=#{format_unknown(status.linkquality)} battery=#{format_battery(status.battery)} updated=#{format_time(status.updated_at)}#{preset_suffix}"
+  end
+
+  defp format_device_preset_summary(preset) do
+    target = preset["target"] || %{}
+
+    cond do
+      Map.has_key?(target, "position") -> "#{preset["preset_name"]}:#{target["position"]}"
+      Map.has_key?(target, "state") -> "#{preset["preset_name"]}:#{target["state"]}"
+      true -> "#{preset["preset_name"]}:#{preset["capability"]}"
+    end
+  end
+
+  defp format_preset_target(%{"target" => target}) when is_map(target),
+    do: format_blind_target(target)
+
+  defp format_preset_target(_preset), do: "a saved target"
+
+  defp format_blind_target(%{"position" => position}), do: "position=#{position}"
+  defp format_blind_target(%{"state" => state}), do: "state=#{state}"
+  defp format_blind_target(payload), do: format_value(payload)
+
+  defp format_unknown(nil), do: "unknown"
+  defp format_unknown(value), do: format_number(value)
+
+  defp format_battery(nil), do: "unknown"
+  defp format_battery(value), do: "#{format_number(value)}%"
+
+  defp non_empty_blind_query?(query) do
+    if String.trim(query) == "", do: {:error, :empty_query}, else: :ok
+  end
+
+  defp non_empty_preset_name?(preset_name) do
+    if String.trim(preset_name) == "", do: {:error, :empty_preset_name}, else: :ok
+  end
+
+  defp split_blind_action(text, action) do
+    pattern = ~r/\s+#{Regex.escape(action)}\s+/i
+
+    case Regex.split(pattern, text, parts: 2, trim: true) do
+      [query, value] -> {String.trim(query), String.trim(value)}
+      _ -> nil
+    end
+  end
+
+  defp trailing_blind_state(text) do
+    case Regex.run(~r/^(.+?)\s+(open|close|stop)$/i, String.trim(text)) do
+      [_, query, state] -> {String.trim(query), String.trim(state)}
+      _ -> nil
+    end
+  end
+
   defp format_home_sensors do
     case Zaik.home_devices() do
       [] ->
@@ -282,7 +456,7 @@ defmodule Zaik.CommandProcessor do
     if query == "" do
       "Usage: sensor <device name> trend"
     else
-      case Zaik.home_device(query) do
+      case find_sensor_device(query) do
         {:ok, device} ->
           format_trend_for_device(device) ||
             "I need more history for #{room_label(device.friendly_name)} before I can describe a trend."
@@ -302,7 +476,7 @@ defmodule Zaik.CommandProcessor do
     if query == "" do
       "Usage: sensor <device name>"
     else
-      case Zaik.home_device(query) do
+      case find_sensor_device(query) do
         {:ok, device} ->
           format_device_detail(device)
 
@@ -313,6 +487,49 @@ defmodule Zaik.CommandProcessor do
           "Sensor name is ambiguous: #{query}\nMatches: #{Enum.join(names, ", ")}"
       end
     end
+  end
+
+  defp find_sensor_device(query) do
+    normalized_query = normalize_lookup(query)
+
+    sensor_matches =
+      Zaik.home_devices()
+      |> Enum.filter(&sensor_device?/1)
+      |> Enum.filter(fn device -> normalize_lookup(device.friendly_name) =~ normalized_query end)
+      |> Enum.sort_by(&String.downcase(&1.friendly_name))
+
+    case sensor_matches do
+      [device] -> {:ok, device}
+      [] -> Zaik.home_device(query)
+      devices -> {:error, {:ambiguous, Enum.map(devices, & &1.friendly_name)}}
+    end
+  end
+
+  defp sensor_device?(%{payload: payload}) when is_map(payload) do
+    Enum.any?(
+      [
+        "temperature",
+        "humidity",
+        "illuminance",
+        "presence",
+        "pir_detection",
+        "target_distance",
+        "voltage"
+      ],
+      &Map.has_key?(payload, &1)
+    )
+  end
+
+  defp sensor_device?(_device), do: false
+
+  defp normalize_lookup(value) do
+    value
+    |> to_string()
+    |> String.downcase()
+    |> String.replace(~r/['’]/, "")
+    |> String.replace(~r/[^a-z0-9]+/, " ")
+    |> String.replace(~r/\s+/, " ")
+    |> String.trim()
   end
 
   defp format_tasks(nil) do

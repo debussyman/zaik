@@ -20,7 +20,7 @@ defmodule Zaik.Analytics.SQLTool do
                "zaik_proposals"
              ])
 
-  @home_views MapSet.new(["home_devices", "home_readings"])
+  @home_views MapSet.new(["home_devices", "home_readings", "home_device_presets"])
 
   @denied ~r/\b(insert|update|delete|drop|alter|pragma|attach|detach|vacuum|replace|create|reindex|truncate)\b/i
 
@@ -65,6 +65,9 @@ defmodule Zaik.Analytics.SQLTool do
     home_readings(id, device_id, device_name, room, recorded_at, temperature_c,
       temperature_f, humidity, illuminance, presence, pir_detection, battery,
       voltage, linkquality, target_distance, payload_json)
+
+    home_device_presets(device_name, preset_name, capability, target_json,
+      source, created_by, metadata_json, created_at, updated_at)
     """
     |> String.trim()
   end
@@ -103,6 +106,9 @@ defmodule Zaik.Analytics.SQLTool do
 
       not allowed_relations?(normalized, db) ->
         {:error, {:disallowed_relation, referenced_relations(normalized, db)}}
+
+      issue = semantic_home_query_issue(normalized, db) ->
+        {:error, issue}
 
       true ->
         {:ok, normalized}
@@ -160,6 +166,60 @@ defmodule Zaik.Analytics.SQLTool do
   end
 
   defp multiple_statements?(sql), do: String.contains?(sql, ";")
+
+  defp semantic_home_query_issue(sql, :home) do
+    downcased = String.downcase(sql)
+
+    cond do
+      unknown_home_readings_column = unknown_home_readings_column(downcased) ->
+        {:unknown_home_column, unknown_home_readings_column}
+
+      latest_temperature_query_without_non_null_filter?(downcased) ->
+        {:missing_non_null_filter, "temperature_f"}
+
+      latest_temperature_query_with_mis_scoped_non_null_filter?(downcased) ->
+        {:mis_scoped_non_null_filter, "temperature_f"}
+
+      true ->
+        nil
+    end
+  end
+
+  defp semantic_home_query_issue(_sql, _db), do: nil
+
+  defp unknown_home_readings_column(sql) do
+    if String.contains?(sql, "home_readings") and not String.contains?(sql, "home_devices") do
+      cond do
+        Regex.match?(~r/\broom_name\b/i, sql) -> "room_name"
+        Regex.match?(~r/\bfriendly_name\b/i, sql) -> "friendly_name"
+        Regex.match?(~r/\bcreated_at\b/i, sql) -> "created_at"
+        Regex.match?(~r/\btemperature_celsius\b/i, sql) -> "temperature_celsius"
+        Regex.match?(~r/\bentity_id\b/i, sql) -> "entity_id"
+        Regex.match?(~r/\bentity\b/i, sql) -> "entity"
+        Regex.match?(~r/\bdevice\b/i, sql) -> "device"
+        true -> nil
+      end
+    end
+  end
+
+  defp latest_temperature_query_without_non_null_filter?(sql) do
+    latest_temperature_query?(sql) and
+      not Regex.match?(~r/temperature_[fc]\s+is\s+not\s+null/i, sql)
+  end
+
+  defp latest_temperature_query_with_mis_scoped_non_null_filter?(sql) do
+    latest_temperature_query?(sql) and
+      Regex.match?(~r/\sor\s/, sql) and
+      Regex.match?(~r/temperature_[fc]\s+is\s+not\s+null/i, sql) and
+      not Regex.match?(~r/\)\s+and\s+temperature_[fc]\s+is\s+not\s+null/i, sql)
+  end
+
+  defp latest_temperature_query?(sql) do
+    String.contains?(sql, "home_readings") and
+      (String.contains?(sql, "temperature_f") or String.contains?(sql, "temperature_c")) and
+      Regex.match?(~r/order\s+by\s+[^\n]*recorded_at\s+desc/i, sql) and
+      Regex.match?(~r/limit\s+1\b/i, sql)
+  end
 
   defp allowed_relations?(sql, db) do
     allowed = allowed_set(db)

@@ -30,7 +30,10 @@ defmodule Zaik.Home.Zigbee2MQTTTest do
     assert Zaik.Home.DeviceStore.list_devices(store) == []
   end
 
-  test "bootstraps latest state from Zigbee2MQTT data files", %{store: store} do
+  test "bootstraps latest state without manufacturing a history event", %{store: store} do
+    {:ok, history_store} =
+      start_supervised({Zaik.Home.HistoryStore, name: nil, db_path: ":memory:"})
+
     data_dir = Path.join(System.tmp_dir!(), "zaik-z2m-#{System.unique_integer([:positive])}")
     File.mkdir_p!(data_dir)
     on_exit(fn -> File.rm_rf!(data_dir) end)
@@ -63,13 +66,15 @@ defmodule Zaik.Home.Zigbee2MQTTTest do
              Zaik.Home.Zigbee2MQTT.bootstrap_from_files(
                data_dir: data_dir,
                device_store: store,
-               history_store: nil
+               history_store: history_store
              )
 
     assert {:ok, device} = Zaik.Home.DeviceStore.get_device(store, "Lily presence sensor")
     assert device.payload["presence"] == false
     assert device.payload["illuminance"] == 88
     assert device.metadata["manufacturer"] == "Aqara"
+    assert device.metadata["bootstrap"] == true
+    assert Zaik.Home.HistoryStore.count_readings(history_store, nil) == 0
   end
 
   test "stores metadata from bridge devices", %{store: store} do

@@ -14,7 +14,7 @@ defmodule Zaik.AgentChat.Prompts do
     [
       house_identity(domain),
       current_time_context(),
-      domain_policy(domain),
+      domain_policy(domain, text),
       request_context(context),
       mode_instruction(domain)
     ]
@@ -24,11 +24,11 @@ defmodule Zaik.AgentChat.Prompts do
   def final do
     """
     FINAL ANSWER MODE.
-    You have already received SQL TOOL RESULT data.
+    You have already received supervised TOOL RESULT data.
     Return exactly one valid JSON object and nothing else:
     {"type":"final","answer":"..."}
 
-    Answer only from the SQL TOOL RESULT rows. Do not call tools. Do not invent rows, timestamps, tasks, messages, or sensor readings. If the result has zero rows, say that no matching rows were found and mention the filter/time window briefly. Use a natural house-agent voice.
+    Answer only from the TOOL RESULT data. Do not call tools. Do not invent rows, timestamps, tasks, messages, sensor readings, devices, or actions. If SQL results have zero rows, say that no matching rows were found and mention the filter/time window briefly. For home controls, distinguish an accepted command from a verified state change: never claim the physical device reached its target unless the tool result says verified=true. Use a natural house-agent voice.
     """
     |> String.trim()
   end
@@ -60,8 +60,14 @@ defmodule Zaik.AgentChat.Prompts do
           Regex.match?(~r/\b(you|zaik|me|we|i|us|our|this chat|this group)\b/, normalized) ->
         :ops_messages
 
+      home_reading_request?(normalized) ->
+        :home_readings
+
+      home_control_request?(text, normalized, opts) ->
+        :home_control
+
       Regex.match?(
-        ~r/\b(lily|room|bedroom|nursery|kitchen|bathroom|living room|office|basement|upstairs|downstairs|home|sensor|temperature|temp|humidity|bright|brightness|illuminance|presence|motion|warm|cool|warmer|cooler|change|changed|trend|trending)\b/,
+        ~r/\b(lily|room|bedroom|nursery|kitchen|bathroom|living room|office|basement|upstairs|downstairs|home|sensor|temperature|temp|humidity|bright|brightness|illuminance|presence|motion|warm|cool|warmer|cooler|change|changed|trend|trending|blind|blinds|shade|shades|preset|presets)\b/,
         normalized
       ) ->
         :home_readings
@@ -75,6 +81,48 @@ defmodule Zaik.AgentChat.Prompts do
   end
 
   def domain(_text, _opts), do: :general
+
+  defp home_reading_request?(normalized_text) do
+    question? =
+      Regex.match?(
+        ~r/\b(what|whats|how|is|are|was|were|has|have|tell|show|check)\b/,
+        normalized_text
+      )
+
+    reading_field? =
+      Regex.match?(
+        ~r/\b(temperature|temp|humidity|humid|illuminance|brightness|bright|presence|motion|battery|voltage|linkquality|reading|readings|warm|cool|warmer|cooler|trend|trending)\b/,
+        normalized_text
+      )
+
+    question? and reading_field?
+  end
+
+  defp home_control_request?(text, normalized_text, opts) do
+    action? =
+      Regex.match?(
+        ~r/\b(set|setup|set up|prepare|adjust|move|open|close|stop|raise|lower|turn|make)\b/,
+        normalized_text
+      )
+
+    home_target? =
+      Regex.match?(
+        ~r/\b(home|room|bedroom|blind|blinds|shade|shades|cover|covers|preset|presets|ac|air conditioner|bedtime|sleep)\b/,
+        normalized_text
+      ) or
+        known_home_device_match?(normalized_text, opts) or relevant_home_skill?(text)
+
+    action? and home_target?
+  end
+
+  defp relevant_home_skill?(text) do
+    Zaik.SkillStore.relevant(text)
+    |> Enum.any?(&(Map.get(&1, :domain) == "home"))
+  rescue
+    _ -> false
+  catch
+    :exit, _ -> false
+  end
 
   defp known_home_device_match?(normalized_text, opts) do
     opts
@@ -175,6 +223,36 @@ defmodule Zaik.AgentChat.Prompts do
     |> String.replace(~r/\s+/, " ")
   end
 
+  defp domain_policy(:home_control, text) do
+    """
+    DOMAIN: home control.
+
+    You may use these supervised tools:
+    - sql_query for read-only home/ops memory.
+    - control_blind for low-risk blind/window-covering actions only.
+
+    Valid control_blind shapes:
+    {"type":"tool_call","tool":"control_blind","args":{"device":"Lily's bedroom left blind","target":{"state":"CLOSE"}}}
+    {"type":"tool_call","tool":"control_blind","args":{"device":"Lily's bedroom right blind","target":{"preset":"above AC"}}}
+    {"type":"tool_call","tool":"control_blind","args":{"device":"Lily's bedroom right blind","target":{"position":71}}}
+
+    Rules:
+    - Choose actions from relevant skills, current devices, and presets below.
+    - Do not invent devices, presets, MQTT topics, or MQTT payloads.
+    - Use exact device names when calling tools.
+    - For multiple changes, call one tool at a time. After each HOME TOOL RESULT, decide whether another action is still needed.
+    - Blinds are currently low-risk and may be controlled directly.
+    - If a needed device or preset is missing, ask a concise clarification instead of guessing.
+    - Never say an action is done, ready, closed, opened, or set before you receive a HOME TOOL RESULT confirming the tool call succeeded.
+
+    #{home_control_context(text)}
+    """
+    |> String.trim()
+  end
+
+  defp domain_policy(:home_readings, text), do: home_readings_domain_policy(text)
+  defp domain_policy(domain, _text), do: domain_policy(domain)
+
   defp house_identity(:general) do
     """
     You are Zaik, a local personal house agent for this household.
@@ -187,6 +265,41 @@ defmodule Zaik.AgentChat.Prompts do
     - Keep Zaik's identity: you are the house agent, not a disconnected chatbot.
     - For requests that would change the home or system state, do not execute anything; say changes require confirmation.
     - Do not output markdown, comments, code fences, or trailing text outside the JSON object.
+    """
+    |> String.trim()
+  end
+
+  defp house_identity(:home_control) do
+    """
+    You are Zaik, a local personal house agent for this household.
+
+    For this request you may choose validated low-risk home-control tools. Elixir will validate every action before anything is sent to MQTT.
+
+    CRITICAL OUTPUT CONTRACT:
+    - Return exactly one valid JSON object and nothing else.
+    - To act, return ONLY one tool call at a time:
+      {"type":"tool_call","tool":"control_blind","args":{"device":"exact device name","target":{"state":"OPEN|CLOSE|STOP"}}}
+      or {"type":"tool_call","tool":"control_blind","args":{"device":"exact device name","target":{"preset":"preset name"}}}
+      or {"type":"tool_call","tool":"control_blind","args":{"device":"exact device name","target":{"position":0}}}
+    - After tool results, either call the next required tool or return {"type":"final","answer":"..."}.
+    - Never return a final answer claiming the room/device is changed before a HOME TOOL RESULT confirms success.
+    - Do not output markdown, comments, code fences, MQTT topics, or trailing text.
+    """
+    |> String.trim()
+  end
+
+  defp house_identity(:home_readings) do
+    """
+    You are Zaik, a local personal house agent for this household.
+
+    The domain policy below specifies the one required read tool for this request. Follow that requirement exactly.
+
+    CRITICAL OUTPUT CONTRACT:
+    - Return exactly one valid JSON object and nothing else.
+    - Before a TOOL RESULT, return exactly one tool call using the required tool and shape from the domain policy.
+    - After tool results, answer from the gathered state/rows or request one additional useful tool call allowed by the domain policy.
+    - Never invent devices, capabilities, table names, or readings.
+    - Do not output markdown, comments, code fences, or trailing text.
     """
     |> String.trim()
   end
@@ -229,6 +342,14 @@ defmodule Zaik.AgentChat.Prompts do
 
   defp mode_instruction(:general) do
     "GENERAL CONVERSATION MODE: Return one final JSON object answering the user directly. Do not call tools."
+  end
+
+  defp mode_instruction(:home_control) do
+    "HOME CONTROL MODE: If the user is asking for a low-risk blind change and the needed device/preset is known, return one control_blind tool_call. If not enough information is known, return a final clarification question."
+  end
+
+  defp mode_instruction(:home_readings) do
+    "HOME STATE MODE: For current/latest state return get_home_state. For historical, windowed, or trend questions return sql_query. Copy room/device terms from the exact user request. Do not answer before a tool result."
   end
 
   defp mode_instruction(_domain) do
@@ -317,24 +438,79 @@ defmodule Zaik.AgentChat.Prompts do
     |> String.trim()
   end
 
-  defp domain_policy(:home_readings) do
+  defp home_readings_domain_policy(text) do
+    case home_read_mode(text) do
+      "get_home_state" -> current_home_readings_policy(text)
+      "sql_query" -> historical_home_readings_policy(text)
+    end
+  end
+
+  defp current_home_readings_policy(text) do
+    lookup = home_lookup_hint(text)
+
     """
     DOMAIN: home sensor readings and trends.
+    MODE: current typed state.
+    Exact user request: #{text}
+    Requested entity lookup text: #{lookup}
+    Required and only available tool: get_home_state
+
+    Return exactly this tool-call shape before answering:
+    {"type":"tool_call","tool":"get_home_state","args":{"query":"#{lookup}","capability":"requested capability"}}
+
+    Replace requested capability with one of temperature, humidity, illuminance, presence, cover, battery, or linkquality. Do not call SQL for a current/latest value. Do not answer until get_home_state succeeds.
+    """
+    |> String.trim()
+  end
+
+  defp historical_home_readings_policy(text) do
+    lookup = home_lookup_hint(text)
+    read_mode = home_read_mode(text)
+
+    """
+    DOMAIN: home sensor readings and trends.
+    Exact user request: #{text}
+    Requested entity lookup text: #{lookup}
+    Required first tool: #{read_mode}
+
+    TOOL SELECTION IS REQUIRED:
+    - If Required first tool is sql_query, the request asks about history/change/a time window. You MUST use sql_query and MUST NOT substitute get_home_state.
+    - If Required first tool is get_home_state, the request asks only for current/latest state. You MUST use get_home_state.
+
+    HARD SCHEMA RULES:
+    - The database is home.
+    - The only readings view is home_readings. Never use sensor_readings, zaik_sensor_readings, home_read, or home_reads.
+    - SQL entity filters for this request must use the requested lookup text above, for example lower(device_name) LIKE '%#{escape_sql_literal(lookup)}%' or lower(room) LIKE '%#{escape_sql_literal(lookup)}%'.
+
+    Available read tools:
+    - get_home_state for current/latest typed state. It filters entities by capability so covers cannot mask temperature sensors.
+    - sql_query against database home for historical readings, explicit time windows, and trends.
+
+    get_home_state shape:
+    {"type":"tool_call","tool":"get_home_state","args":{"query":"exact room/device words from the user request","capability":"requested capability"}}
+
     Database: home
-    Use these views only:
+    SQL may use these views only:
     home_readings(id, device_id, device_name, room, recorded_at, temperature_c, temperature_f, humidity, illuminance, presence, pir_detection, battery, voltage, linkquality, target_distance, payload_json)
     home_devices(id, friendly_name, source, topic, metadata_json, inserted_at, updated_at)
+    home_device_presets(device_name, preset_name, capability, target_json, source, created_by, metadata_json, created_at, updated_at)
 
     Semantics:
     - Device and room names are dynamic. Match the user's room/device words against lower(device_name), lower(room), and home_devices.friendly_name when needed.
+    - Always replace example room/device names with the user's actual requested room/device. Never copy "nursery" or "main bedroom" from examples unless the user asked for that room.
     - For a named room/device like "main bedroom", filter lower(device_name) LIKE '%main bedroom%' OR lower(room) LIKE '%main bedroom%'.
     - If a named room/device has no matching home_readings rows, query home_devices with the same name words before saying there is no data.
     - For casual room-state questions like "what is it like in <room>" or "how is <room>", query the latest temperature_f, humidity, illuminance, presence, and linkquality for that room/device.
+    - For specific temperature questions, query home_readings with temperature_f IS NOT NULL so blinds/covers with no temperature do not mask the room sensor.
+    - For humidity, illuminance, presence, battery, voltage, or linkquality questions, prefer rows where the requested field IS NOT NULL.
     - For recent readings, ORDER BY recorded_at DESC.
     - Prefer temperature_f for household-facing temperature answers.
     - Boolean fields are 1=true, 0=false.
     - Use SQLite date/time syntax, e.g. datetime('now', '-7 days'). Do not use NOW() or INTERVAL.
-    - There is no home_read or home_reads view. Use home_readings.
+    - There is no sensor_readings, home_read, or home_reads view. Use home_readings.
+    - In home_readings, the device-name column is device_name. There is no device, friendly_name, or room_name column on home_readings. Use room or device_name.
+    - Only home_devices has friendly_name. Do not use friendly_name when querying home_readings.
+    - Device presets are named remembered target states, not live readings. For example capability='cover' target_json='{"position":71}' means a cover/blind preset target.
     - Do not join to home_devices unless you need device metadata. home_readings already has device_name and room.
 
     Time windows:
@@ -348,15 +524,114 @@ defmodule Zaik.AgentChat.Prompts do
     - For calendar phrases or parts of the day, infer the appropriate local calendar interval from current local time rather than copying a relative-duration example.
     - Do not collapse different requested time windows into one default trend window.
 
-    For temperature/humidity/illuminance change over a window, compare the newest and oldest readings inside exactly that window.
+    For temperature/humidity/illuminance change over a window, compare the newest and oldest non-null readings for the requested field inside exactly that window. For temperature change, include `temperature_f IS NOT NULL`.
 
-    Examples:
-    {"type":"tool_call","tool":"sql_query","args":{"database":"home","query":"SELECT recorded_at, temperature_f, humidity, illuminance, presence, linkquality FROM home_readings WHERE (lower(device_name) LIKE '%main bedroom%' OR lower(room) LIKE '%main bedroom%') ORDER BY recorded_at DESC LIMIT 20","limit":20}}
-    {"type":"tool_call","tool":"sql_query","args":{"database":"home","query":"WITH windowed AS (SELECT recorded_at, temperature_f FROM home_readings WHERE (lower(device_name) LIKE '%nursery%' OR lower(room) LIKE '%nursery%') AND recorded_at >= datetime('now', '-30 minutes')), first_row AS (SELECT recorded_at, temperature_f FROM windowed ORDER BY recorded_at ASC LIMIT 1), last_row AS (SELECT recorded_at, temperature_f FROM windowed ORDER BY recorded_at DESC LIMIT 1) SELECT first_row.recorded_at AS first_recorded_at, first_row.temperature_f AS first_temperature_f, last_row.recorded_at AS last_recorded_at, last_row.temperature_f AS last_temperature_f, last_row.temperature_f - first_row.temperature_f AS temperature_change_f FROM first_row CROSS JOIN last_row","limit":1}}
-    {"type":"tool_call","tool":"sql_query","args":{"database":"home","query":"SELECT friendly_name, updated_at, metadata_json FROM home_devices WHERE lower(friendly_name) LIKE '%main bedroom%' ORDER BY updated_at DESC LIMIT 10","limit":10}}
+    SQL planning constraints:
+    - Every room/device literal in a SQL filter must come from the exact user request above. Do not substitute a room name learned from an example or another request.
+    - Current/latest state does not need an arbitrary recent time window; use get_home_state instead.
+    - Historical temperature SQL must include temperature_f IS NOT NULL inside the requested entity/time filter.
     """
     |> String.trim()
   end
+
+  defp home_read_mode(text) do
+    normalized = normalize_home_name(text)
+
+    if Regex.match?(
+         ~r/\b(recent|recently|past|last|ago|since|today|tonight|morning|afternoon|evening|yesterday|minute|minutes|hour|hours|day|days|week|weeks|change|changed|changing|trend|trending|getting|warmer|cooler|history|historical|was|were)\b|\bhas been\b|\bhave been\b/,
+         normalized
+       ) do
+      "sql_query"
+    else
+      "get_home_state"
+    end
+  end
+
+  defp home_lookup_hint(text) do
+    stop_words =
+      MapSet.new(~w(
+        a an and are as at be been by did do does for from had has have how i in is it its
+        like me my of on or our room rooms sensor sensors the this to was were what whats when
+        where which who why with you your temperature temp humidity illuminance brightness
+        presence motion warm warmer cool cooler changed change changing trend trending current
+        currently latest recently recent past last today tonight morning afternoon evening
+        minute minutes hour hours day days week weeks s
+      ))
+
+    text
+    |> normalize_home_name()
+    |> String.split(" ", trim: true)
+    |> Enum.reject(fn token ->
+      MapSet.member?(stop_words, token) or Regex.match?(~r/^\d+$/, token)
+    end)
+    |> Enum.take(3)
+    |> Enum.join(" ")
+    |> case do
+      "" -> normalize_home_name(text)
+      lookup -> lookup
+    end
+  end
+
+  defp home_control_context(text) do
+    """
+    RELEVANT SKILLS:
+    #{Zaik.SkillStore.relevant(text) |> Zaik.SkillStore.format_for_prompt()}
+
+    CURRENT BLINDS:
+    #{format_current_blinds()}
+
+    DEVICE PRESETS:
+    #{format_device_presets()}
+    """
+    |> String.trim()
+  rescue
+    _ -> "Home-control context is currently unavailable."
+  catch
+    :exit, _ -> "Home-control context is currently unavailable."
+  end
+
+  defp format_current_blinds do
+    case safe_blinds() do
+      [] ->
+        "No known blinds."
+
+      blinds ->
+        Enum.map_join(blinds, "\n", fn device ->
+          status = Zaik.Home.Blinds.status(device)
+
+          "- #{device.friendly_name}: position=#{format_prompt_value(status.position)} state=#{format_prompt_value(status.state)} linkquality=#{format_prompt_value(status.linkquality)} battery=#{format_prompt_value(status.battery)}"
+        end)
+    end
+  end
+
+  defp format_device_presets do
+    case safe_device_presets() do
+      [] ->
+        "No known device presets."
+
+      presets ->
+        Enum.map_join(presets, "\n", fn preset ->
+          "- #{preset["device_name"]}: #{preset["preset_name"]} capability=#{preset["capability"]} target=#{Jason.encode!(preset["target"] || %{})}"
+        end)
+    end
+  end
+
+  defp safe_blinds do
+    if Process.whereis(Zaik.Home.DeviceStore), do: Zaik.Home.Blinds.list(), else: []
+  catch
+    :exit, _ -> []
+  end
+
+  defp safe_device_presets do
+    if Process.whereis(Zaik.Home.DevicePresetStore),
+      do: Zaik.Home.DevicePresetStore.list(),
+      else: []
+  catch
+    :exit, _ -> []
+  end
+
+  defp format_prompt_value(nil), do: "unknown"
+  defp format_prompt_value(value), do: to_string(value)
 
   def request_context(context) when is_map(context) do
     channel = context_value(context, :channel)

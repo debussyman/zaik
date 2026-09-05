@@ -19,12 +19,14 @@ defmodule Zaik.IngressTest do
   end
 
   test "handles a normalized private message through shared session, memory, and router flow" do
-    sender_id = "ingress-user-#{System.unique_integer([:positive])}"
+    sender_id = "ingress-user-#{Base.url_encode64(:crypto.strong_rand_bytes(8), padding: false)}"
 
     message = %Zaik.Ingress.Message{
       channel: :test_ingress,
       sender_id: sender_id,
       text: "hello ingress",
+      message_id: 41,
+      update_id: 99,
       metadata: %{source: "test"}
     }
 
@@ -39,6 +41,8 @@ defmodule Zaik.IngressTest do
     assert context.channel == :test_ingress
     assert context.sender_id == sender_id
     assert context.sender == sender_id
+    assert context.message_id == 41
+    assert context.update_id == 99
     assert context.session_id == result.session.id
 
     assert {:ok, entries} = Zaik.MemoryStore.branch(result.session.id)
@@ -53,7 +57,7 @@ defmodule Zaik.IngressTest do
   end
 
   test "group messages use chat sessions instead of per-sender sessions" do
-    chat_id = "-100#{System.unique_integer([:positive])}"
+    chat_id = "-100#{Base.encode16(:crypto.strong_rand_bytes(6), case: :lower)}"
 
     message = %Zaik.Ingress.Message{
       channel: :telegram,

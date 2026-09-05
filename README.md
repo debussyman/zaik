@@ -109,7 +109,7 @@ Zaik.mqtt_status()
 
 Messaging adapters normalize inbound chat into `Zaik.Ingress.Message` and call `Zaik.Ingress`: exact commands still work, and free-form messages route through `Zaik.ChatRouter` to one unified house-agent brain, `Zaik.AgentChat`.
 
-Explicit deterministic commands still use trusted Elixir command handlers. Normal free-form chat uses `Zaik.AgentChat`: a bounded read-only agent loop where the model asks Elixir to run safe SQL tools over documented SQLite views, then answers from the tool results.
+Explicit deterministic commands still use trusted Elixir command handlers. Normal free-form chat uses `Zaik.AgentChat`: a bounded tool loop where the model asks Elixir to run safe SQL tools over documented SQLite views, or low-risk validated home-control tools such as `control_blind`, then answers from the tool results.
 
 Telegram is the preferred multi-person chat path because Zaik appears as its own bot identity instead of speaking as your linked Signal account.
 
@@ -144,6 +144,11 @@ home trends
 presence
 sensor <device name>
 sensor <device name> trend
+blinds
+blinds <room/name>
+blinds <room/name> open|close|stop
+blinds <room/name> set <0-100|preset name>
+blinds <room/name> capture <preset name>
 watchdog
 watchdog scan
 alerts
@@ -167,6 +172,10 @@ presence
 sensor nursery
 sensor nursery trend
 home trends
+blinds lily
+blinds lily left capture above air conditioner
+blinds lily left set above air conditioner
+blinds lily right stop
 ```
 
 LLM command example:
@@ -344,7 +353,30 @@ Zaik also bootstraps latest Zigbee2MQTT state from:
 ~/.local/share/zigbee2mqtt/data/database.db
 ```
 
-This makes `home`, `presence`, and `sensor ...` useful immediately after a Zaik restart even if device state MQTT messages are not retained.
+This makes `home`, `presence`, `sensor ...`, and `blinds ...` useful immediately after a Zaik restart even if device state MQTT messages are not retained.
+
+Zaik includes deterministic Zigbee2MQTT blind controls. It only publishes validated payloads to known blinds/window coverings:
+
+```text
+zigbee2mqtt/<friendly_name>/set
+{"position":37}
+{"state":"OPEN"}
+{"state":"CLOSE"}
+{"state":"STOP"}
+```
+
+Named device presets are generic remembered target states stored in SQLite:
+
+```text
+~/.zaik/home/home.db
+home_device_presets(device_name, preset_name, capability, target_json, ...)
+```
+
+For example, a blind stop-point is stored as the same shape Zaik can execute:
+
+```json
+{"device_name":"Lily's bedroom right blind","preset_name":"above AC","capability":"cover","target_json":"{\"position\":71}"}
+```
 
 MQTT subscription handling is configurable. By default, incoming MQTT publishes are sent to the Zigbee2MQTT handler:
 
@@ -397,16 +429,26 @@ you      -> Zaik; use role='user' for things users asked Zaik
 Live agent evals exercise tool planning against a canned SQL tool:
 
 ```bash
+# Fast deterministic evals: no LLM, no MQTT publish.
+nix develop -c mix zaik.routing_eval
+
+# Live model evals with canned SQL. Default suite does not publish MQTT.
 nix develop -c mix zaik.agent_eval --timeout-ms 120000
+
+# Include live model home-control planning with fake control tools only.
+nix develop -c mix zaik.agent_eval --include-home-control --timeout-ms 120000
 nix develop -c mix zaik.agent_eval --model qwen3:8b --show-prompts --timeout-ms 120000
 ```
 
 Current eval cases cover:
 
 ```text
+skill-aware routing: temperature questions must not be hijacked by home-control skills
+home SQL guards: reject sensor_readings, room_name, device/friendly_name on home_readings, and null-masking temperature queries
 what have we asked you today?
 what tasks failed recently?
-has the nursery been warm recently?
+Lily room temperature/current/trend questions
+Lily bedtime-with-AC home-control planning using fake control tools
 ```
 
 Optional environment overrides:
@@ -447,7 +489,16 @@ Read-only views for the agent/analytics layer:
 ```text
 home_devices
 home_readings
+home_device_presets
 ```
+
+Home-control skills are model-readable markdown, not deterministic routines. They live under:
+
+```text
+~/.zaik/home/skills/*.md
+```
+
+A skill can teach household semantics such as "Lily bedtime with AC" while execution still goes through validated tools and generic device presets.
 
 Trend commands use this history, for example:
 

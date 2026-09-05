@@ -1,3 +1,14 @@
+defmodule Zaik.CommandProcessorBlindsTestPublisher do
+  def publish(topic, payload, _opts) do
+    Agent.update(__MODULE__, &[{topic, payload} | &1])
+    :ok
+  end
+
+  def published do
+    Agent.get(__MODULE__, &Enum.reverse/1)
+  end
+end
+
 defmodule Zaik.CommandProcessorTest do
   use ExUnit.Case, async: false
 
@@ -78,6 +89,81 @@ defmodule Zaik.CommandProcessorTest do
     sensor = Zaik.CommandProcessor.process("sensor lily")
     assert String.starts_with?(sensor, "Lily's room is bright and hot.")
     assert sensor =~ "The temperature is 79.3°F, humidity is 53.5%, and illuminance is 640 lux."
+  end
+
+  test "sensor command prefers sensor devices over matching blinds" do
+    Zaik.Home.DeviceStore.reset()
+
+    Zaik.Home.DeviceStore.upsert_device("Lily's bedroom left blind", %{
+      "position" => 100,
+      "state" => "OPEN",
+      "linkquality" => 100
+    })
+
+    Zaik.Home.DeviceStore.upsert_device("Lily's room multi-sensor", %{
+      "temperature" => 26.68,
+      "humidity" => 52.38,
+      "illuminance" => 1,
+      "presence" => false
+    })
+
+    sensor = Zaik.CommandProcessor.process("sensor lily")
+    assert sensor =~ "temperature is 80°F"
+    refute sensor =~ "ambiguous"
+  end
+
+  test "blinds commands list, capture presets, and publish validated controls" do
+    original = Application.get_env(:zaik, :blinds)
+
+    Application.put_env(
+      :zaik,
+      :blinds,
+      Keyword.put(original || [], :mqtt_client, Zaik.CommandProcessorBlindsTestPublisher)
+    )
+
+    on_exit(fn -> Application.put_env(:zaik, :blinds, original || []) end)
+
+    {:ok, _publisher} =
+      Agent.start_link(fn -> [] end, name: Zaik.CommandProcessorBlindsTestPublisher)
+
+    Zaik.Home.DeviceStore.reset()
+    Zaik.Home.DevicePresetStore.reset()
+
+    Zaik.Home.DeviceStore.upsert_device("Lily's bedroom left blind", %{
+      "position" => 37,
+      "state" => "OPEN",
+      "linkquality" => 104
+    })
+
+    Zaik.Home.DeviceStore.upsert_device("Lily's bedroom right blind", %{
+      "position" => 37,
+      "state" => "OPEN",
+      "linkquality" => 104
+    })
+
+    list = Zaik.CommandProcessor.process("blinds lily")
+    assert list =~ "Lily's bedroom left blind"
+    assert list =~ "position=37"
+    assert list =~ "battery=unknown"
+
+    capture =
+      Zaik.CommandProcessor.process("blinds lily left capture above air conditioner", %{
+        sender_id: "u1"
+      })
+
+    assert capture ==
+             ~s(Captured Lily's bedroom left blind preset "above air conditioner" as position=37.)
+
+    set = Zaik.CommandProcessor.process("blinds lily left set above air conditioner")
+    assert set == "Sent position=37 to Lily's bedroom left blind."
+
+    stop = Zaik.CommandProcessor.process("blinds lily right stop")
+    assert stop == "Sent state=STOP to Lily's bedroom right blind."
+
+    assert Zaik.CommandProcessorBlindsTestPublisher.published() == [
+             {"zigbee2mqtt/Lily's bedroom left blind/set", %{"position" => 37}},
+             {"zigbee2mqtt/Lily's bedroom right blind/set", %{"state" => "STOP"}}
+           ]
   end
 
   test "sensor trend summarizes history" do

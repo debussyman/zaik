@@ -30,10 +30,10 @@ Local-first state and history:
 Normal free-form chat uses one house-agent brain:
 
 ```text
-Chat adapter -> Zaik.Ingress.Message -> Zaik.Ingress -> Zaik.ChatRouter -> Zaik.AgentChat -> supervised read-only tools
+Chat adapter -> Zaik.Ingress.Message -> Zaik.Ingress -> Zaik.ChatRouter -> Zaik.AgentChat -> registered tools
 ```
 
-`Zaik.AgentChat` can ask Elixir to run validated read-only SQL against documented views, then answers from tool results. Write/control actions should become human-confirmed proposals before execution.
+`Zaik.AgentChat` can use bounded read tools and validated home actions. Tool and home-capability modules are discovered at runtime through registries that do not cache module code, preserving Elixir's hot-code-loading path. Home actions run in supervised tasks and use a request-scoped SQLite idempotency ledger. Low-risk controls may execute directly; higher-risk capabilities remain intended for proposal/confirmation policy.
 
 ### Adapters
 
@@ -48,6 +48,14 @@ Adapters should translate external protocol details into Zaik's internal APIs wi
 ### Domains
 
 Home automation is one domain built on the harness, not the whole harness. Future domains might include calendar, email, files, finance, or other local personal-agent capabilities.
+
+### Home state and capability boundary
+
+`Zaik.Home.World` projects raw adapter state into stable entities with typed capabilities. `Zaik.Home.Capabilities.Registry` owns semantic state and target validation, while `Zaik.Home.Executors.Registry` maps validated targets to adapter execution. Zigbee2MQTT state-file bootstrap restores current state without inserting artificial historical readings.
+
+Existing `control_blind` and SQL prompts remain as compatibility paths while AgentChat migrates toward `get_home_state` and `control_device`.
+
+See [`home-reliability-roadmap.md`](home-reliability-roadmap.md) for the active stabilization sequence.
 
 ## Current status
 

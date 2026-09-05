@@ -56,13 +56,16 @@ defmodule Zaik.Home.DeviceStore do
     existing = Map.get(state.devices, normalize(friendly_name), %{})
     existing_payload = Map.get(existing, :payload, %{})
     existing_metadata = Map.get(existing, :metadata, %{})
+    merged_metadata = Map.merge(existing_metadata, metadata)
 
     device = %{
       friendly_name: friendly_name,
       payload: Map.merge(existing_payload, payload),
-      metadata: Map.merge(existing_metadata, metadata),
+      metadata: merged_metadata,
       topic: Map.get(metadata, "topic") || Map.get(metadata, :topic) || Map.get(existing, :topic),
       first_seen_at: Map.get(existing, :first_seen_at, now),
+      observed_at: source_observed_at(merged_metadata, now),
+      received_at: now,
       updated_at: now
     }
 
@@ -84,6 +87,8 @@ defmodule Zaik.Home.DeviceStore do
       metadata: Map.merge(existing_metadata, metadata),
       topic: Map.get(metadata, "topic") || Map.get(metadata, :topic) || Map.get(existing, :topic),
       first_seen_at: Map.get(existing, :first_seen_at, now),
+      observed_at: Map.get(existing, :observed_at),
+      received_at: Map.get(existing, :received_at),
       updated_at: Map.get(existing, :updated_at, now)
     }
 
@@ -149,6 +154,49 @@ defmodule Zaik.Home.DeviceStore do
   end
 
   defp sort_devices(devices), do: Enum.sort_by(devices, &String.downcase(&1.friendly_name))
+
+  defp source_observed_at(metadata, now) do
+    value =
+      Map.get(metadata, "observed_at") || Map.get(metadata, :observed_at) ||
+        Map.get(metadata, "last_seen") || Map.get(metadata, :last_seen)
+
+    case parse_datetime(value) do
+      {:ok, observed_at} -> observed_at
+      :error -> if bootstrap_metadata?(metadata), do: nil, else: now
+    end
+  end
+
+  defp bootstrap_metadata?(metadata) do
+    Map.get(metadata, "bootstrap") == true or Map.get(metadata, :bootstrap) == true or
+      Map.get(metadata, "source") == "zigbee2mqtt_state_file" or
+      Map.get(metadata, :source) == "zigbee2mqtt_state_file"
+  end
+
+  defp parse_datetime(%DateTime{} = value), do: {:ok, value}
+
+  defp parse_datetime(value) when is_integer(value) do
+    unit = if abs(value) > 9_999_999_999, do: :millisecond, else: :second
+
+    case DateTime.from_unix(value, unit) do
+      {:ok, datetime} -> {:ok, datetime}
+      _ -> :error
+    end
+  end
+
+  defp parse_datetime(value) when is_binary(value) do
+    case DateTime.from_iso8601(value) do
+      {:ok, datetime, _offset} ->
+        {:ok, datetime}
+
+      _ ->
+        case Integer.parse(value) do
+          {integer, ""} -> parse_datetime(integer)
+          _ -> :error
+        end
+    end
+  end
+
+  defp parse_datetime(_value), do: :error
 
   defp normalize(value) do
     value

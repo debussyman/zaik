@@ -19,9 +19,22 @@ defmodule Mix.Tasks.Zaik.AgentEval do
 
     {opts, _argv, _invalid} =
       OptionParser.parse(args,
-        strict: [model: :string, timeout_ms: :integer, show_prompts: :boolean],
+        strict: [
+          model: :string,
+          timeout_ms: :integer,
+          show_prompts: :boolean,
+          include_optional: :boolean,
+          include_home_control: :boolean
+        ],
         aliases: [m: :model]
       )
+
+    opts =
+      if Keyword.get(opts, :include_home_control, false) do
+        Keyword.put(opts, :include_optional, true)
+      else
+        opts
+      end
 
     summary = Zaik.AgentChat.Evals.run(opts)
 
@@ -36,8 +49,18 @@ defmodule Mix.Tasks.Zaik.AgentEval do
         Mix.shell().info("  planner prompt:\n#{result.planner_prompt}")
       end
 
-      Enum.each(result.tool_calls, fn call ->
-        Mix.shell().info("  tool: db=#{inspect(Keyword.get(call.opts, :db))} query=#{call.query}")
+      Enum.each(Map.get(result, :sql_calls, result.tool_calls), fn call ->
+        Mix.shell().info(
+          "  sql_tool: db=#{inspect(Keyword.get(call.opts, :db))} query=#{call.query}"
+        )
+      end)
+
+      Enum.each(Map.get(result, :registered_calls, []), fn call ->
+        Mix.shell().info("  registered_tool: #{call.tool} args=#{inspect(call.args, limit: 20)}")
+      end)
+
+      Enum.each(Map.get(result, :control_calls, []), fn call ->
+        Mix.shell().info("  control_tool: #{call.tool} args=#{inspect(call.args, limit: 20)}")
       end)
 
       failed_checks = Enum.reject(result.checks, & &1.passed?)
