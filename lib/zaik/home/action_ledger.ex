@@ -47,7 +47,16 @@ defmodule Zaik.Home.ActionLedger do
 
   def mark_verified(key, action_id, verification, server \\ __MODULE__)
       when is_binary(key) and is_binary(action_id) and is_map(verification) do
-    GenServer.cast(server, {:mark_verified, key, action_id, verification})
+    mark_verification(key, action_id, verification, server)
+  end
+
+  def mark_verification(key, action_id, verification, server \\ __MODULE__)
+      when is_binary(key) and is_binary(action_id) and is_map(verification) do
+    GenServer.cast(server, {:mark_verification, key, action_id, verification})
+  end
+
+  def retries_for(key, server \\ __MODULE__) when is_binary(key) do
+    GenServer.call(server, {:retries_for, key})
   end
 
   def idempotency_key(tool, args, context) when is_map(args) and is_map(context) do
@@ -137,11 +146,28 @@ defmodule Zaik.Home.ActionLedger do
     end
   end
 
-  @impl true
-  def handle_cast({:mark_verified, _key, _action_id, _verification}, %{conn: nil} = state),
-    do: {:noreply, state}
+  def handle_call({:retries_for, _key}, _from, %{conn: nil} = state),
+    do: {:reply, [], state}
 
-  def handle_cast({:mark_verified, key, action_id, verification}, state) do
+  def handle_call({:retries_for, key}, _from, state) do
+    retries =
+      state.conn
+      |> fetch_retry_entries()
+      |> Enum.filter(fn entry ->
+        value(entry.args, :action_id) == key and retry_attempted?(entry)
+      end)
+
+    {:reply, retries, state}
+  end
+
+  @impl true
+  def handle_cast(
+        {:mark_verification, _key, _action_id, _verification},
+        %{conn: nil} = state
+      ),
+      do: {:noreply, state}
+
+  def handle_cast({:mark_verification, key, action_id, verification}, state) do
     case fetch(state.conn, key) do
       %{status: "succeeded", result: result} when is_map(result) ->
         updated = result |> apply_verification(action_id, verification) |> update_plan_status()
@@ -223,6 +249,35 @@ defmodule Zaik.Home.ActionLedger do
     end
   end
 
+  defp fetch_retry_entries(conn) do
+    query(
+      conn,
+      "SELECT idempotency_key, args_json, status, result_json, error_json, inserted_at, updated_at FROM home_action_ledger WHERE tool = 'retry_home_action' ORDER BY inserted_at ASC",
+      []
+    )
+    |> Enum.map(fn [key, args, status, result, error, inserted_at, updated_at] ->
+      %{
+        idempotency_key: key,
+        args: decode(args),
+        status: status,
+        result: decode(result),
+        error: decode(error),
+        inserted_at: inserted_at,
+        updated_at: updated_at
+      }
+    end)
+  end
+
+  defp retry_attempted?(%{status: "running"}), do: false
+
+  defp retry_attempted?(%{status: "succeeded", result: result}) when is_map(result),
+    do: value(result, :retried) != false
+
+  defp retry_attempted?(%{status: "failed", error: error}) when is_binary(error),
+    do: not String.contains?(error, "retry_not_eligible")
+
+  defp retry_attempted?(_entry), do: true
+
   defp duplicate_result(%{status: "succeeded", result: result}) when is_map(result),
     do: {:ok, Map.merge(result, %{"duplicate" => true, "status" => "duplicate_suppressed"})}
 
@@ -279,11 +334,10 @@ defmodule Zaik.Home.ActionLedger do
     value =
       if value(value, :action_id) == action_id do
         value
-        |> put_compatible(:status, "verified")
-        |> put_compatible(:verified, true)
-        |> put_compatible(:verification_status, "verified")
-        |> put_compatible(:observed_at, value(verification, :observed_at))
-        |> put_compatible(:observed, value(verification, :observed))
+        |> put_compatible(:verification_status, value(verification, :status))
+        |> put_compatible(:verification_expires_at, value(verification, :expires_at))
+        |> put_compatible(:verification_reason, value(verification, :reason))
+        |> maybe_put_verified(verification)
       else
         value
       end
@@ -297,6 +351,19 @@ defmodule Zaik.Home.ActionLedger do
     do: Enum.map(value, &apply_verification(&1, action_id, verification))
 
   defp apply_verification(value, _action_id, _verification), do: value
+
+  defp maybe_put_verified(result, verification) do
+    if value(verification, :verified) == true do
+      result
+      |> put_compatible(:status, "verified")
+      |> put_compatible(:verified, true)
+      |> put_compatible(:verification_status, "verified")
+      |> put_compatible(:observed_at, value(verification, :observed_at))
+      |> put_compatible(:observed, value(verification, :observed))
+    else
+      result
+    end
+  end
 
   defp update_plan_status(result) when is_map(result) do
     actions = value(result, :actions)

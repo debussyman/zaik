@@ -60,6 +60,7 @@ defmodule Zaik.Tools.RegistryTest do
     assert "get_home_state" in names
     assert "list_devices" in names
     assert "execute_home_plan" in names
+    assert "retry_home_action" in names
     assert "sql_query" in names
     assert "control_device" in names
     assert "control_blind" in names

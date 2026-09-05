@@ -27,12 +27,19 @@ Implemented:
   wait, and retain child verification IDs for later convergence;
 - later verification updates persistent action-ledger results, including the
   aggregate plan status when every child action converges;
+- `Zaik.Home.ActionRetryPolicy` permits retries only for low-risk idempotent
+  targets after a fresh post-action state report proves non-convergence;
+- retry execution enforces a settle window, cooldown, bounded attempt budget,
+  and retries only unresolved actions from a coordinated plan;
+- `retry_home_action` reconstructs targets from the ledger rather than accepting
+  replacement device targets from the model;
+- unverified responses expose their correlation ID for status and explicit retry;
 - Zigbee2MQTT state-file bootstrap no longer manufactures history rows.
 
 Remaining:
 
-- define retry policy for accepted-but-unverified, expired, and ambiguous outcomes;
-- expose pending/expired action status and safe retry eligibility to users.
+- expose pending/expired action status as a natural-language read tool;
+- add operator controls for retry-budget reset and manual ambiguity resolution.
 
 ## Phase 1: Canonical home state
 

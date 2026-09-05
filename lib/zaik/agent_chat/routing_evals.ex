@@ -59,6 +59,18 @@ defmodule Zaik.AgentChat.RoutingEvals do
         prompt_must_not_include: []
       },
       %{
+        name: "explicit_action_retry_routes_to_policy_tool",
+        kind: :domain,
+        prompt: "Retry home action abc123",
+        expected_domain: :home_control,
+        prompt_must_include: [
+          "DOMAIN: home control",
+          "Required action tool: retry_home_action",
+          "Only retry_home_action may approve"
+        ],
+        prompt_must_not_include: ["DOMAIN: operational tasks"]
+      },
+      %{
         name: "latest_temperature_requires_non_null_filter",
         kind: :sql_guard,
         sql:

@@ -28,7 +28,7 @@ defmodule Zaik.AgentChat.Prompts do
     Return exactly one valid JSON object and nothing else:
     {"type":"final","answer":"..."}
 
-    Answer only from the TOOL RESULT data. Do not call tools. Do not invent rows, timestamps, tasks, messages, sensor readings, devices, or actions. If SQL results have zero rows, say that no matching rows were found and mention the filter/time window briefly. For home controls, distinguish an accepted command from a verified state change: never claim the physical device reached its target unless the tool result says verified=true. Use a natural house-agent voice.
+    Answer only from the TOOL RESULT data. Do not call tools. Do not invent rows, timestamps, tasks, messages, sensor readings, devices, or actions. If SQL results have zero rows, say that no matching rows were found and mention the filter/time window briefly. For home controls, distinguish an accepted command from a verified state change: never claim the physical device reached its target unless the tool result says verified=true. When an action remains unverified, include its action_id or plan_run_id so the user can check or explicitly retry it. Use a natural house-agent voice.
     """
     |> String.trim()
   end
@@ -46,6 +46,9 @@ defmodule Zaik.AgentChat.Prompts do
         normalized
       ) ->
         :agent_chat_runs
+
+      Regex.match?(~r/\bretry(?: the)?(?: home)? action\b/, normalized) ->
+        :home_control
 
       Regex.match?(
         ~r/\b(task|tasks|job|jobs|work item|failed|failure|timed out|cancelled|retry|retries)\b/,
@@ -233,6 +236,7 @@ defmodule Zaik.AgentChat.Prompts do
     You may use these supervised tools:
     - execute_home_plan for requests requiring two or more coordinated changes. This is preferred for room setups and skills with multiple steps.
     - control_device for one low-risk entity/capability target.
+    - retry_home_action only when the user explicitly asks to retry and supplies an existing action ID. Deterministic policy checks live state, timeout, cooldown, and retry budget.
     - control_blind is a temporary compatibility tool for one blind action.
     - get_home_state and sql_query are read tools when state is genuinely needed before planning.
 
@@ -242,6 +246,9 @@ defmodule Zaik.AgentChat.Prompts do
     Valid single-action shape:
     {"type":"tool_call","tool":"control_device","args":{"device":"Lily's bedroom left blind","capability":"cover","target":{"state":"CLOSE"}}}
 
+    Valid explicit retry shape:
+    {"type":"tool_call","tool":"retry_home_action","args":{"action_id":"exact ID supplied by the user"}}
+
     Rules:
     - Choose actions from relevant skills, current devices, and presets below.
     - Do not invent devices, capabilities, presets, MQTT topics, or MQTT payloads.
@@ -250,7 +257,8 @@ defmodule Zaik.AgentChat.Prompts do
     - Blinds are currently low-risk and may be controlled directly.
     - A skill name is context, never a tool name.
     - If a needed device or preset is missing, ask a concise clarification instead of guessing.
-    - A tool result with status=accepted means commands were accepted, not that physical target state was verified. Claim physical completion only when verified=true.
+    - Never invent or infer an action ID and never retry by reconstructing controls yourself. Only retry_home_action may approve and reconstruct a retry.
+    - A tool result with status=accepted means commands were accepted, not that physical target state was verified. Claim physical completion only when verified=true, and include the returned action_id or plan_run_id while it remains unverified.
 
     #{home_control_context(text)}
     """
@@ -263,9 +271,16 @@ defmodule Zaik.AgentChat.Prompts do
   defp home_control_required_tool(text) do
     normalized = normalize_home_name(text)
 
-    if Regex.match?(~r/\b(set up|setup|prepare|ready|routine|scene|bedtime)\b/, normalized),
-      do: "execute_home_plan",
-      else: "control_device"
+    cond do
+      Regex.match?(~r/\bretry(?: the)?(?: home)? action\b/, normalized) ->
+        "retry_home_action"
+
+      Regex.match?(~r/\b(set up|setup|prepare|ready|routine|scene|bedtime)\b/, normalized) ->
+        "execute_home_plan"
+
+      true ->
+        "control_device"
+    end
   end
 
   defp house_identity(:general) do
@@ -292,8 +307,9 @@ defmodule Zaik.AgentChat.Prompts do
 
     CRITICAL OUTPUT CONTRACT:
     - Return exactly one valid JSON object and nothing else.
+    - For an explicit retry with an action ID, return one retry_home_action call.
     - For multiple actions, return one execute_home_plan call containing the complete actions array.
-    - For one action, return one control_device call.
+    - For one new action, return one control_device call.
     - After a tool result, return {"type":"final","answer":"..."} unless a read result shows clarification is needed.
     - Never claim physical completion unless a tool result reports verified=true. If it reports status=accepted, say the command or plan was accepted/sent.
     - Do not output markdown, comments, code fences, MQTT topics, or trailing text.
@@ -358,7 +374,7 @@ defmodule Zaik.AgentChat.Prompts do
   end
 
   defp mode_instruction(:home_control) do
-    "HOME CONTROL MODE: For two or more coordinated changes return one complete execute_home_plan call. For one change return control_device. If required information is missing, return a clarification question."
+    "HOME CONTROL MODE: For an explicit retry with an action ID return retry_home_action. For two or more coordinated new changes return one complete execute_home_plan call. For one new change return control_device. If required information is missing, return a clarification question."
   end
 
   defp mode_instruction(:home_readings) do

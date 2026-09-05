@@ -76,6 +76,15 @@ defmodule Zaik.AgentChat.PromptsTest do
     assert prompt =~ "DEVICE PRESETS"
   end
 
+  test "explicit retries require the deterministic retry policy tool" do
+    assert Zaik.AgentChat.Prompts.domain("Retry home action abc123") == :home_control
+
+    prompt = Zaik.AgentChat.Prompts.planner("Retry home action abc123", %{})
+    assert prompt =~ "Required action tool: retry_home_action"
+    assert prompt =~ ~s("action_id":"exact ID supplied by the user")
+    assert prompt =~ "Never invent or infer an action ID"
+  end
+
   test "known dynamic device names classify as home readings without static room keywords" do
     assert Zaik.AgentChat.Prompts.domain("what's it like in the conservatory?",
              home_device_names: ["Conservatory FP300"]

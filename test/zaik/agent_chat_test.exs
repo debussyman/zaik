@@ -191,6 +191,7 @@ defmodule Zaik.AgentChatTest do
       {:ok,
        %{
          tool: tool,
+         action_id: "test-action-id",
          device: args["device"],
          status: "accepted",
          verified: false,
@@ -831,6 +832,7 @@ defmodule Zaik.AgentChatTest do
 
     assert answer =~ "commands were accepted"
     assert answer =~ "haven't verified"
+    assert answer =~ "Action ID: test-action-id"
     refute answer =~ "Done"
     assert_received {:unverified_control_called, "control_blind", _args}
   end

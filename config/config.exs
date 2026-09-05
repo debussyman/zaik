@@ -141,6 +141,13 @@ config :zaik, :home_action_verification,
   retention_ms: 300_000,
   position_tolerance: 2
 
+config :zaik, :home_action_retries,
+  enabled: true,
+  max_attempts: 2,
+  cooldown_ms: 30_000,
+  settle_ms: 5_000,
+  max_state_age_ms: 120_000
+
 config :zaik, :home_action_ledger,
   enabled: true,
   db_path: if(config_env() == :test, do: ":memory:", else: "~/.zaik/home/home.db")

@@ -11,6 +11,7 @@ defmodule Zaik.Tools.Registry do
     Zaik.Tools.SQLQuery,
     Zaik.Home.Tools.ListDevices,
     Zaik.Home.Tools.GetState,
+    Zaik.Home.Tools.RetryAction,
     Zaik.Home.Tools.ExecutePlan,
     Zaik.Home.Tools.ControlDevice,
     Zaik.Home.Tools.ControlBlind

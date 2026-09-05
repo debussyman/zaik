@@ -138,6 +138,55 @@ defmodule Zaik.Home.ActionLedgerTest do
            end)
   end
 
+  test "persists verifier expiration for retry policy", %{ledger: ledger} do
+    {:ok, verifier} =
+      start_supervised({Zaik.Home.ActionVerifier, name: nil, timeout_ms: 20})
+
+    context = %{channel: :telegram, chat_id: "-100", message_id: 45}
+    args = %{"device" => "Office blind", "target" => %{"position" => 37}}
+    assert {:ok, key} = Zaik.Home.ActionLedger.claim("control_device", args, context, ledger)
+
+    assert {:ok, _} =
+             Zaik.Home.ActionVerifier.register(
+               key,
+               "Office blind",
+               "cover",
+               %{"position" => 37},
+               server: verifier,
+               ledger_key: key,
+               ledger: ledger
+             )
+
+    assert {:ok, pending} = Zaik.Home.ActionVerifier.published(key, server: verifier)
+
+    assert :ok =
+             Zaik.Home.ActionLedger.complete(
+               key,
+               {:ok,
+                %{
+                  action_id: key,
+                  device: "Office blind",
+                  capability: "cover",
+                  target: %{"position" => 37},
+                  status: "accepted",
+                  verified: false,
+                  verification_status: pending.status,
+                  verification_expires_at: pending.expires_at,
+                  requested_at: pending.published_at
+                }},
+               ledger
+             )
+
+    assert %{status: "expired"} = Zaik.Home.ActionVerifier.await(key, 100, server: verifier)
+
+    assert eventually(fn ->
+             with {:ok, entry} <- Zaik.Home.ActionLedger.lookup(key, ledger) do
+               entry.result["verification_status"] == "expired" and
+                 entry.result["verification_reason"] == "verification_timeout"
+             end
+           end)
+  end
+
   test "different ingress messages receive different claims", %{ledger: ledger} do
     args = %{"device" => "Office blind", "target" => %{"state" => "CLOSE"}}
 

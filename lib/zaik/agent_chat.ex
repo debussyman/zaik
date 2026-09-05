@@ -272,9 +272,7 @@ defmodule Zaik.AgentChat do
                tool_calls}
 
             unverified_physical_completion_claim?(messages, answer, tool_calls) ->
-              {{:ok,
-                "The requested home commands were accepted, but I haven't verified that the physical devices reached their target states yet."},
-               tool_calls}
+              {{:ok, unverified_action_answer(tool_calls)}, tool_calls}
 
             home_reading_final_without_tool?(messages, tool_calls, repair_count) ->
               loop(
@@ -798,6 +796,25 @@ defmodule Zaik.AgentChat do
     end)
   end
 
+  defp unverified_action_answer(tool_calls) do
+    action_id =
+      tool_calls
+      |> Enum.reverse()
+      |> Enum.find_value(fn call ->
+        result = Map.get(call, :result)
+
+        if is_map(result) do
+          Map.get(result, :action_id) || Map.get(result, "action_id") ||
+            Map.get(result, :plan_run_id) || Map.get(result, "plan_run_id")
+        end
+      end)
+
+    suffix = if is_binary(action_id), do: " Action ID: #{action_id}.", else: ""
+
+    "The requested home commands were accepted, but I haven't verified that the physical devices reached their target states yet." <>
+      suffix
+  end
+
   defp unverified_physical_completion_claim?(messages, answer, tool_calls) do
     home_control_mode?(messages) and accepted_unverified_action?(tool_calls) and
       not verified_action?(tool_calls) and physical_completion_claim?(answer)
@@ -876,7 +893,7 @@ defmodule Zaik.AgentChat do
         content: """
         HOME CONTROL CORRECTION.
         You claimed the home action was done, but no HOME TOOL RESULT exists, so nothing was executed.
-        If the request requires multiple coordinated changes, return one execute_home_plan call containing all actions. If it requires one change, return control_device. Use only known skill/device/preset context.
+        If this is an explicit retry with a supplied action ID, return retry_home_action. If the request requires multiple coordinated new changes, return one execute_home_plan call containing all actions. If it requires one new change, return control_device. Use only known skill/device/preset context.
         If the request cannot be resolved safely, return a concise clarification question.
         Do not say anything is done until a HOME TOOL RESULT confirms it.
         """

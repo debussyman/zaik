@@ -94,6 +94,28 @@ defmodule Zaik do
   end
 
   @doc """
+  Evaluate deterministic retry eligibility without executing an action.
+  """
+  def home_action_retry_eligibility(action_id, context \\ %{}) do
+    with {:ok, entry} <- Zaik.Home.ActionLedger.lookup(action_id) do
+      Zaik.Home.ActionRetryPolicy.evaluate(entry, context)
+    end
+  end
+
+  @doc """
+  Retry an eligible low-risk home action through the supervised tool boundary.
+  """
+  def retry_home_action(action_id, context \\ %{}) do
+    context =
+      context
+      |> Map.put_new(:channel, :local)
+      |> Map.put_new(:chat_id, "home-action-retry")
+      |> Map.put_new(:message_id, Zaik.Home.ActionVerifier.new_id("retry_request"))
+
+    Zaik.Tools.Executor.run("retry_home_action", %{"action_id" => action_id}, context)
+  end
+
+  @doc """
   Return generic named home-device presets.
   """
   def device_presets(device_name \\ nil, opts \\ []),

@@ -129,6 +129,7 @@ Home automation is one optional domain, not the whole harness.
 | `Zaik.Home.Executors.Registry` | Uncached runtime executor discovery. | Keep as the hot-load-friendly executor registry. |
 | `Zaik.Home.ActionLedger` | SQLite request-scoped action idempotency ledger, including later verified-result reconciliation. | Keep in the home execution/policy layer. |
 | `Zaik.Home.ActionVerifier` | Correlates action IDs with later adapter reports and validates target convergence. | Keep in the home execution/policy layer. |
+| `Zaik.Home.ActionRetryPolicy` | Determines retry eligibility from verification state, fresh device state, cooldown, and attempt budget. | Keep as deterministic policy outside the model. |
 | `Zaik.Home.ActionPlan` | Preflights coordinated actions, shares a bounded verification wait, and reports partial completion. | Keep as the multi-action execution boundary. |
 | `Zaik.Home.HistoryStore` | SQLite home readings/history. | `Zaik.Domains.Home.HistoryStore` |
 | `Zaik.Home.Trends` | Home sensor trend summaries. | `Zaik.Domains.Home.Trends` |
@@ -136,6 +137,7 @@ Home automation is one optional domain, not the whole harness.
 | `Zaik.Home.Tools.GetState` / `ListDevices` | Typed registered read tools over `Zaik.Home.World`. | Keep as primary current-state tools. |
 | `Zaik.Home.Tools.ControlDevice` | Generic entity/capability/target control tool. | Replace device-class-specific model tools over time. |
 | `Zaik.Home.Tools.ExecutePlan` | Registered preflighted multi-action control tool. | Keep as the coordinated-action tool. |
+| `Zaik.Home.Tools.RetryAction` | Policy-gated retry by persistent action ID; reconstructs only unresolved original targets. | Keep as the explicit retry boundary. |
 | `Zaik.Home.ControlTool` / `Zaik.Home.Tools.ControlBlind` | Compatibility blind-control surfaces for AgentChat. | Retire after skills/prompts use `control_device`. |
 | `Zaik.Home.Blinds` | Deterministic read/control layer for known Zigbee2MQTT blinds/window coverings using generic device presets. | `Zaik.Domains.Home.Blinds` |
 | `Zaik.Home.Zigbee2MQTT` | Zigbee2MQTT payload handling. | `Zaik.Adapters.Home.Zigbee2MQTT` or bridge into home domain. |

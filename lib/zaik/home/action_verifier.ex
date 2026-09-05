@@ -79,6 +79,15 @@ defmodule Zaik.Home.ActionVerifier do
     await_statuses(Enum.uniq(action_ids), server, deadline)
   end
 
+  @doc """
+  Validate whether an adapter payload has converged on a typed capability target.
+  """
+  def converged?(capability, target, payload, opts \\ [])
+      when is_map(target) and is_map(payload) do
+    cfg = Map.merge(config(), Map.new(opts))
+    converged_target?(to_string(capability), target, payload, cfg)
+  end
+
   @impl true
   def init(opts) do
     {:ok,
@@ -163,7 +172,8 @@ defmodule Zaik.Home.ActionVerifier do
     actions =
       Enum.reduce(state.actions, state.actions, fn {action_id, action}, actions ->
         if action.device_key == device_key and action.status == :pending and
-             new_enough?(observation, action) and converged?(action, payload, state.config) do
+             new_enough?(observation, action) and
+             converged_target?(action.capability, action.target, payload, state.config) do
           verified = %{
             action
             | status: :verified,
@@ -188,6 +198,7 @@ defmodule Zaik.Home.ActionVerifier do
       %{status: status, token: ^token} = action when status in [:registered, :pending] ->
         action = %{action | status: :expired, reason: "verification_timeout"}
         schedule_cleanup(action, state.config.retention_ms)
+        notify_ledger(action)
         {:noreply, put_action(state, action)}
 
       _ ->
@@ -208,7 +219,8 @@ defmodule Zaik.Home.ActionVerifier do
   defp maybe_verify_from_latest(action, state) do
     case Map.get(state.observations, action.device_key) do
       %{payload: payload} = observation ->
-        if new_enough?(observation, action) and converged?(action, payload, state.config) do
+        if new_enough?(observation, action) and
+             converged_target?(action.capability, action.target, payload, state.config) do
           verified = %{
             action
             | status: :verified,
@@ -228,7 +240,7 @@ defmodule Zaik.Home.ActionVerifier do
     end
   end
 
-  defp converged?(%{capability: "cover", target: target}, payload, cfg) do
+  defp converged_target?("cover", target, payload, cfg) do
     cond do
       position = value(target, :position) ->
         target_position?(position, value(payload, :position), cfg.position_tolerance)
@@ -241,7 +253,7 @@ defmodule Zaik.Home.ActionVerifier do
     end
   end
 
-  defp converged?(_action, _payload, _cfg), do: false
+  defp converged_target?(_capability, _target, _payload, _cfg), do: false
 
   defp target_state?(state, payload, tolerance) do
     state = state |> to_string() |> String.upcase()
@@ -359,7 +371,7 @@ defmodule Zaik.Home.ActionVerifier do
   defp notify_ledger(%{ledger_key: ledger_key, ledger: ledger} = action)
        when is_binary(ledger_key) do
     if process_available?(ledger) do
-      Zaik.Home.ActionLedger.mark_verified(
+      Zaik.Home.ActionLedger.mark_verification(
         ledger_key,
         action.action_id,
         public_status(action),
