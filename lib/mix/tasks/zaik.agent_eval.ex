@@ -5,8 +5,8 @@ defmodule Mix.Tasks.Zaik.AgentEval do
       mix zaik.agent_eval
       mix zaik.agent_eval --model qwen3-coder:30b --timeout-ms 90000
 
-  The evals use a canned SQL tool so results focus on whether the model emits
-  valid JSON tool calls and grounded final answers.
+  Read evals currently use canned SQL results. Home-control evals execute real
+  plans against an isolated mirror world and never publish production MQTT.
   """
 
   use Mix.Task

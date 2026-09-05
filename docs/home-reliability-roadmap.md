@@ -87,6 +87,36 @@ Remaining:
 - require capability contract and baseline composability tests for each module;
 - make application child composition runtime-configurable by domain/adapter.
 
+## Phase 2.5: Mirror-world evaluation and learning foundation
+
+Build a deterministic local digital twin that uses the same entities,
+capabilities, tools, plans, verifier, ledger, and retry policy as production,
+while replacing physical adapters with virtual executors.
+
+Implemented foundation:
+
+- versionable, fingerprinted scenarios contain areas, entities, presets,
+  initial state, desired state, metadata, and injected faults;
+- isolated in-memory device, preset, ledger, verifier, task, and mirror stores;
+- a virtual cover executor uses the production tool, capability, preflight,
+  verification, and retry boundaries without any MQTT transport;
+- semantic desired-state and maximum-side-effect assertions;
+- immediate, delayed, non-converging, transport-failure, and executor-failure
+  simulation primitives;
+- the live Lily bedtime control eval now executes against the complete mirror
+  and asserts the resulting virtual state rather than canned executor output.
+
+Remaining:
+
+- add a virtual clock and temporary production-schema history/telemetry fixtures;
+- model stale reports, duplicate/out-of-order events, and concurrent
+  conflicting actions as named durable scenarios;
+- replay sanitized production failures and capability changes as scenarios;
+- attach capability/tool fingerprints and structured failure labels so passing
+  trajectories can later become post-training data;
+- gate candidate prompts, adapters, and models on repeated mirror pass rates
+  before shadow or physical-canary use.
+
 ## Phase 3: Future self-extension
 
 Pinned for later design. Constraints already established by Phases 1 and 2:

@@ -31,7 +31,12 @@ defmodule Zaik.Tools.Executor do
 
   def run_action(tool, args, context, fun, opts \\ [])
       when is_function(fun, 0) or is_function(fun, 1) do
-    ledger = Keyword.get(opts, :ledger, Zaik.Home.ActionLedger)
+    ledger = option_or_context(opts, :ledger, context, :action_ledger, Zaik.Home.ActionLedger)
+
+    opts =
+      Keyword.put_new_lazy(opts, :task_supervisor, fn ->
+        context_value(context, :task_supervisor) || Zaik.Tools.TaskSupervisor
+      end)
 
     case claim(ledger, tool, args, context) do
       {:duplicate, result} ->
@@ -124,6 +129,19 @@ defmodule Zaik.Tools.Executor do
 
   defp supervisor_available?(supervisor) when is_pid(supervisor), do: Process.alive?(supervisor)
   defp supervisor_available?(_supervisor), do: false
+
+  defp option_or_context(opts, option, context, context_key, default) do
+    if Keyword.has_key?(opts, option) do
+      Keyword.fetch!(opts, option)
+    else
+      case Map.fetch(context, context_key) do
+        {:ok, value} -> value
+        :error -> Map.get(context, to_string(context_key), default)
+      end
+    end
+  end
+
+  defp context_value(context, key), do: Map.get(context, key) || Map.get(context, to_string(key))
 
   defp process_available?(ledger) when is_atom(ledger), do: not is_nil(Process.whereis(ledger))
   defp process_available?(ledger) when is_pid(ledger), do: Process.alive?(ledger)

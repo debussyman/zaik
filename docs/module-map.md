@@ -138,6 +138,9 @@ Home automation is one optional domain, not the whole harness.
 | `Zaik.Home.Tools.ControlDevice` | Generic entity/capability/target control tool. | Replace device-class-specific model tools over time. |
 | `Zaik.Home.Tools.ExecutePlan` | Registered preflighted multi-action control tool. | Keep as the coordinated-action tool. |
 | `Zaik.Home.Tools.RetryAction` | Policy-gated retry by persistent action ID; reconstructs only unresolved original targets. | Keep as the explicit retry boundary. |
+| `Zaik.Home.Mirror` / `Mirror.Scenario` / `Mirror.Scenarios` | Isolated runtime plus fingerprinted and reusable virtual-home fixture definitions. | Keep as the evaluation-world boundary. |
+| `Zaik.Home.Mirror.Store` / `Mirror.Executor` | Deterministic virtual action trace, faults, state transitions, and adapter execution. | Keep isolated from physical adapters. |
+| `Zaik.Home.Mirror.Runner` / `Mirror.Assertions` / `Mirror.Evals` | Executes scenarios and evaluates semantic desired state and safety invariants; exposed by `mix zaik.mirror_eval`. | Grow into trace replay and candidate-model gates. |
 | `Zaik.Home.ControlTool` / `Zaik.Home.Tools.ControlBlind` | Compatibility blind-control surfaces for AgentChat. | Retire after skills/prompts use `control_device`. |
 | `Zaik.Home.Blinds` | Deterministic read/control layer for known Zigbee2MQTT blinds/window coverings using generic device presets. | `Zaik.Domains.Home.Blinds` |
 | `Zaik.Home.Zigbee2MQTT` | Zigbee2MQTT payload handling. | `Zaik.Adapters.Home.Zigbee2MQTT` or bridge into home domain. |

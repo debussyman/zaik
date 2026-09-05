@@ -1,10 +1,11 @@
 defmodule Zaik.AgentChat.Evals do
   @moduledoc """
-  Lightweight live-model evals for the read-only AgentChat tool loop.
+  Lightweight live-model evals for the AgentChat tool loop.
 
-  These evals use the configured Ollama model but a canned SQL tool, so they
-  measure model planning/JSON/tool-use behavior without depending on local DB
-  contents.
+  These evals use the configured local model, canned read data, and an isolated
+  mirror world for home actions. They exercise real tools, plans, presets,
+  capability validation, verification, and desired-state assertions without
+  depending on production databases or publishing MQTT.
   """
 
   defmodule CannedControlTool do
@@ -27,37 +28,6 @@ defmodule Zaik.AgentChat.Evals do
          status: "accepted",
          verified: false,
          requested_at: DateTime.utc_now() |> DateTime.to_iso8601()
-       }}
-    end
-  end
-
-  defmodule CannedCoverExecutor do
-    @moduledoc false
-    @behaviour Zaik.Home.Executor
-
-    def capability, do: "cover"
-
-    def prepare(_entity, %{"preset" => "above AC"}, _context),
-      do: {:ok, %{"position" => 71}}
-
-    def prepare(_entity, target, _context), do: {:ok, target}
-
-    def execute(entity, target, context) do
-      call = %{
-        tool: "execute_home_plan",
-        args: %{"device" => entity.name, "target" => target}
-      }
-
-      send(context.eval_pid, {:zaik_agent_eval_control_call, call})
-
-      {:ok,
-       %{
-         entity_id: entity.id,
-         device: entity.name,
-         capability: "cover",
-         target: target,
-         status: "accepted",
-         verified: false
        }}
     end
   end
@@ -344,7 +314,8 @@ defmodule Zaik.AgentChat.Evals do
           }
         ],
         forbidden_query_terms: ["sensor_readings"],
-        expected_answer_terms: ["accepted"]
+        expected_answer_terms: ["lily"],
+        expected_mirror_state?: true
       }
     ]
     |> Enum.reject(&(Map.get(&1, :optional?, false) and not include_optional?))
@@ -382,35 +353,13 @@ defmodule Zaik.AgentChat.Evals do
   defp run_case(case_def, model, timeout_ms) do
     Process.put(:zaik_agent_eval_tool_calls, [])
     Process.put(:zaik_agent_eval_control_calls, [])
-    {:ok, device_store} = GenServer.start_link(Zaik.Home.DeviceStore, [])
-    Process.put(:zaik_agent_eval_device_store, device_store)
-
-    Zaik.Home.DeviceStore.upsert_device(
-      device_store,
-      "Lily's room multi-sensor",
-      %{"temperature" => 25.7777778, "humidity" => 56, "illuminance" => 220, "presence" => true},
-      %{"area_id" => "lily_bedroom", "source" => "eval"}
-    )
-
-    Zaik.Home.DeviceStore.upsert_device(
-      device_store,
-      "Lily's bedroom left blind",
-      %{"position" => 100, "state" => "OPEN"},
-      %{"ieee_address" => "eval-left", "area_id" => "lily_bedroom", "source" => "eval"}
-    )
-
-    Zaik.Home.DeviceStore.upsert_device(
-      device_store,
-      "Lily's bedroom right blind",
-      %{"position" => 100, "state" => "OPEN"},
-      %{"ieee_address" => "eval-right", "area_id" => "lily_bedroom", "source" => "eval"}
-    )
+    {:ok, mirror} = Zaik.Home.Mirror.start(eval_mirror_scenario())
+    Process.put(:zaik_agent_eval_mirror, mirror)
 
     context =
-      Map.get(case_def, :context, %{})
+      mirror
+      |> Zaik.Home.Mirror.context(Map.get(case_def, :context, %{}))
       |> Map.put(:eval_pid, self())
-      |> Map.put(:device_store, device_store)
-      |> Map.put(:executor_opts, modules: [CannedCoverExecutor])
 
     response =
       Zaik.AgentChat.respond(case_def.prompt, context,
@@ -426,9 +375,16 @@ defmodule Zaik.AgentChat.Evals do
       )
 
     sql_calls = Process.get(:zaik_agent_eval_tool_calls, [])
-    control_calls = drain_control_calls([])
+    mirror_report = Zaik.Home.Mirror.Assertions.evaluate(mirror)
+
+    control_calls =
+      drain_control_calls([]) ++ mirror_control_calls(mirror_report.actions, case_def)
+
     registered_calls = drain_registered_calls([])
-    checks = checks(case_def, response, sql_calls, control_calls, registered_calls)
+
+    checks =
+      checks(case_def, response, sql_calls, control_calls, registered_calls) ++
+        mirror_checks(case_def, mirror_report)
 
     %{
       name: case_def.name,
@@ -439,6 +395,7 @@ defmodule Zaik.AgentChat.Evals do
       sql_calls: sql_calls,
       control_calls: control_calls,
       registered_calls: registered_calls,
+      mirror_report: mirror_report,
       checks: checks,
       passed?: Enum.all?(checks, & &1.passed?)
     }
@@ -446,8 +403,8 @@ defmodule Zaik.AgentChat.Evals do
     Process.delete(:zaik_agent_eval_tool_calls)
     Process.delete(:zaik_agent_eval_control_calls)
 
-    case Process.delete(:zaik_agent_eval_device_store) do
-      pid when is_pid(pid) -> if Process.alive?(pid), do: GenServer.stop(pid)
+    case Process.delete(:zaik_agent_eval_mirror) do
+      %Zaik.Home.Mirror{} = mirror -> Zaik.Home.Mirror.stop(mirror)
       _ -> :ok
     end
   end
@@ -588,6 +545,32 @@ defmodule Zaik.AgentChat.Evals do
   end
 
   defp answer_terms?(_response, _terms), do: false
+
+  defp mirror_control_calls(actions, case_def) do
+    tool = Map.get(case_def, :expected_registered_tool, "mirror_action")
+
+    Enum.map(actions, fn action ->
+      %{
+        tool: tool,
+        args: %{"device" => action.device, "target" => action.target}
+      }
+    end)
+  end
+
+  defp mirror_checks(case_def, report) do
+    if Map.get(case_def, :expected_mirror_state?, false) do
+      [
+        check(:mirror_reached_desired_state, report.passed?),
+        check(:mirror_used_only_expected_side_effects, report.side_effect_count == 2)
+      ]
+    else
+      []
+    end
+  end
+
+  defp eval_mirror_scenario do
+    Zaik.Home.Mirror.Scenarios.lily_bedtime_with_ac(id: "agent_eval_lily_bedtime")
+  end
 
   defp eval_context do
     %{

@@ -429,16 +429,20 @@ we/us    -> current chat_id / group conversation
 you      -> Zaik; use role='user' for things users asked Zaik
 ```
 
-Live agent evals exercise tool planning against a canned SQL tool:
+Live agent evals exercise read planning against canned SQL data and home actions against an isolated deterministic mirror world:
 
 ```bash
-# Fast deterministic evals: no LLM, no MQTT publish.
+# Fast deterministic routing/SQL guards: no LLM, no MQTT publish.
 nix develop -c mix zaik.routing_eval
+
+# End-to-end virtual-home plans, faults, verification, and desired states.
+nix develop -c mix zaik.mirror_eval
 
 # Live model evals with canned SQL. Default suite does not publish MQTT.
 nix develop -c mix zaik.agent_eval --timeout-ms 120000
 
-# Include live model home-control planning with fake control tools only.
+# Include live-model home-control planning and full virtual desired-state execution.
+# The mirror executor cannot publish MQTT.
 nix develop -c mix zaik.agent_eval --include-home-control --timeout-ms 120000
 nix develop -c mix zaik.agent_eval --model qwen3:8b --show-prompts --timeout-ms 120000
 ```
@@ -451,7 +455,7 @@ home SQL guards: reject sensor_readings, room_name, device/friendly_name on home
 what have we asked you today?
 what tasks failed recently?
 Lily room temperature/current/trend questions
-Lily bedtime-with-AC home-control planning using fake control tools
+Lily bedtime-with-AC planning through real tools, preflight, presets, verification, and mirror desired-state assertions
 ```
 
 Optional environment overrides:
