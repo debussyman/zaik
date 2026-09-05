@@ -22,6 +22,38 @@ defmodule Zaik.Home.ActionPlanTest do
     end
   end
 
+  defmodule VerifyingCoverExecutor do
+    @behaviour Zaik.Home.Executor
+
+    def capability, do: "cover"
+
+    def execute(entity, target, context) do
+      action_id = context.action_id
+      verifier = context.action_verifier
+
+      {:ok, _} =
+        Zaik.Home.ActionVerifier.register(
+          action_id,
+          entity.name,
+          "cover",
+          target,
+          server: verifier
+        )
+
+      {:ok, _} = Zaik.Home.ActionVerifier.published(action_id, server: verifier)
+      Zaik.Home.ActionVerifier.observe(entity.name, target, DateTime.utc_now(), server: verifier)
+
+      {:ok,
+       %{
+         action_id: action_id,
+         entity_id: entity.id,
+         target: target,
+         status: "accepted",
+         verified: false
+       }}
+    end
+  end
+
   setup do
     {:ok, store} = start_supervised({Zaik.Home.DeviceStore, name: nil})
 
@@ -64,6 +96,31 @@ defmodule Zaik.Home.ActionPlanTest do
     assert_receive {:prepared, "right", %{"position" => 71}}
     assert_receive {:executed, "left", %{"state" => "CLOSE"}}
     assert_receive {:executed, "right", %{"position" => 71}}
+  end
+
+  test "uses unique child action IDs and aggregates correlated verification", %{store: store} do
+    {:ok, verifier} =
+      start_supervised({Zaik.Home.ActionVerifier, name: nil, timeout_ms: 500, wait_ms: 100})
+
+    context = %{
+      action_id: "ingress-action",
+      action_verifier: verifier,
+      device_store: store,
+      verification_wait_ms: 100,
+      executor_opts: [modules: [VerifyingCoverExecutor]]
+    }
+
+    actions = [
+      %{"device" => "Left blind", "capability" => "cover", "target" => %{"position" => 0}},
+      %{"device" => "Right blind", "capability" => "cover", "target" => %{"position" => 71}}
+    ]
+
+    assert {:ok, result} = Zaik.Home.ActionPlan.run("verified bedtime", actions, context)
+    assert result.status == "verified"
+    assert result.verified == true
+    assert length(result.verification_ids) == 2
+    assert Enum.uniq(result.verification_ids) == result.verification_ids
+    assert Enum.all?(result.actions, & &1.result.verified)
   end
 
   test "one invalid action prevents all execution", %{context: context} do

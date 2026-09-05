@@ -20,6 +20,34 @@ defmodule Zaik.Home.Zigbee2MQTTTest do
     assert device.payload["temperature"] == 26.32
   end
 
+  test "correlates device reports with pending action verification", %{store: store} do
+    {:ok, verifier} =
+      start_supervised({Zaik.Home.ActionVerifier, name: nil, timeout_ms: 500})
+
+    assert {:ok, _} =
+             Zaik.Home.ActionVerifier.register(
+               "blind-action",
+               "Office blind",
+               "cover",
+               %{"position" => 37},
+               server: verifier
+             )
+
+    assert {:ok, _} = Zaik.Home.ActionVerifier.published("blind-action", server: verifier)
+
+    assert {:ok, _device} =
+             Zaik.Home.Zigbee2MQTT.handle_publish(
+               "zigbee2mqtt/Office blind",
+               Jason.encode!(%{"position" => 37, "state" => "STOP"}),
+               device_store: store,
+               history_store: nil,
+               action_verifier: verifier
+             )
+
+    assert %{verified: true, status: "verified"} =
+             Zaik.Home.ActionVerifier.await("blind-action", 100, server: verifier)
+  end
+
   test "ignores non-device bridge topics before decoding", %{store: store} do
     assert :ignored =
              Zaik.Home.Zigbee2MQTT.handle_publish("zigbee2mqtt/bridge/definitions", "not-json",

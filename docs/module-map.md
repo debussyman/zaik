@@ -127,8 +127,9 @@ Home automation is one optional domain, not the whole harness.
 | `Zaik.Home.Capabilities.Registry` | Uncached runtime capability discovery. | Keep as the hot-load-friendly capability registry. |
 | `Zaik.Home.Executor` | Behaviour for adapter execution of validated capability targets. | Keep as the capability executor contract. |
 | `Zaik.Home.Executors.Registry` | Uncached runtime executor discovery. | Keep as the hot-load-friendly executor registry. |
-| `Zaik.Home.ActionLedger` | SQLite request-scoped action idempotency ledger. | Keep in the home execution/policy layer. |
-| `Zaik.Home.ActionPlan` | Preflights coordinated actions and reports partial completion. | Keep as the multi-action execution boundary. |
+| `Zaik.Home.ActionLedger` | SQLite request-scoped action idempotency ledger, including later verified-result reconciliation. | Keep in the home execution/policy layer. |
+| `Zaik.Home.ActionVerifier` | Correlates action IDs with later adapter reports and validates target convergence. | Keep in the home execution/policy layer. |
+| `Zaik.Home.ActionPlan` | Preflights coordinated actions, shares a bounded verification wait, and reports partial completion. | Keep as the multi-action execution boundary. |
 | `Zaik.Home.HistoryStore` | SQLite home readings/history. | `Zaik.Domains.Home.HistoryStore` |
 | `Zaik.Home.Trends` | Home sensor trend summaries. | `Zaik.Domains.Home.Trends` |
 | `Zaik.Home.DevicePresetStore` | SQLite store for generic named device targets/presets. | `Zaik.Domains.Home.DevicePresetStore` |

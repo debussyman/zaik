@@ -18,8 +18,8 @@ defmodule Zaik.Tools.Executor do
           descriptor.name,
           args,
           context,
-          fn ->
-            Zaik.Tools.Registry.run(descriptor.name, args, context, registry_opts)
+          fn action_context ->
+            Zaik.Tools.Registry.run(descriptor.name, args, action_context, registry_opts)
           end,
           opts
         )
@@ -29,7 +29,8 @@ defmodule Zaik.Tools.Executor do
     end
   end
 
-  def run_action(tool, args, context, fun, opts \\ []) when is_function(fun, 0) do
+  def run_action(tool, args, context, fun, opts \\ [])
+      when is_function(fun, 0) or is_function(fun, 1) do
     ledger = Keyword.get(opts, :ledger, Zaik.Home.ActionLedger)
 
     case claim(ledger, tool, args, context) do
@@ -37,7 +38,15 @@ defmodule Zaik.Tools.Executor do
         result
 
       {:ok, key} ->
-        result = execute_supervised(fun, opts)
+        action_id = key || Zaik.Home.ActionVerifier.new_id()
+
+        action_context =
+          context
+          |> Map.put(:action_id, action_id)
+          |> Map.put(:ledger_action_id, key)
+          |> Map.put(:action_ledger, ledger)
+
+        result = execute_supervised(fn -> invoke(fun, action_context) end, opts)
         complete(ledger, key, result)
         result
 
@@ -45,6 +54,9 @@ defmodule Zaik.Tools.Executor do
         {:error, {:action_claim_failed, reason}}
     end
   end
+
+  defp invoke(fun, _context) when is_function(fun, 0), do: fun.()
+  defp invoke(fun, context) when is_function(fun, 1), do: fun.(context)
 
   defp execute_supervised(fun, opts) do
     timeout_ms =

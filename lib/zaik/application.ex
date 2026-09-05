@@ -21,6 +21,7 @@ defmodule Zaik.Application do
         home_history_child(),
         device_preset_store_child(),
         home_action_ledger_child(),
+        home_action_verifier_child(),
         alerts_rule_store_child(),
         alerts_engine_child(),
         zigbee2mqtt_bootstrapper_child(),
@@ -69,6 +70,14 @@ defmodule Zaik.Application do
 
     if config.enabled do
       {Zaik.Home.ActionLedger, Map.to_list(config)}
+    end
+  end
+
+  defp home_action_verifier_child do
+    config = Zaik.Home.ActionVerifier.config()
+
+    if config.enabled do
+      {Zaik.Home.ActionVerifier, Map.to_list(config)}
     end
   end
 

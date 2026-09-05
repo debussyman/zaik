@@ -51,6 +51,93 @@ defmodule Zaik.Home.ActionLedgerTest do
     assert result["status"] == "duplicate_suppressed"
   end
 
+  test "persists later correlated verification for plan action results", %{ledger: ledger} do
+    context = %{channel: :telegram, chat_id: "-100", message_id: 43}
+    args = %{"actions" => [%{"device" => "Office blind"}]}
+
+    assert {:ok, key} = Zaik.Home.ActionLedger.claim("execute_home_plan", args, context, ledger)
+
+    assert :ok =
+             Zaik.Home.ActionLedger.complete(
+               key,
+               {:ok,
+                %{
+                  status: "accepted",
+                  verified: false,
+                  actions: [
+                    %{
+                      result: %{
+                        action_id: "child-1",
+                        status: "accepted",
+                        verified: false
+                      }
+                    }
+                  ]
+                }},
+               ledger
+             )
+
+    Zaik.Home.ActionLedger.mark_verified(
+      key,
+      "child-1",
+      %{verified: true, observed_at: "2026-09-05T08:00:00Z", observed: %{"position" => 0}},
+      ledger
+    )
+
+    assert {:ok, entry} = Zaik.Home.ActionLedger.lookup(key, ledger)
+    assert entry.result["status"] == "verified"
+    assert entry.result["verified"] == true
+    assert get_in(entry.result, ["actions", Access.at(0), "result", "verified"]) == true
+
+    assert get_in(entry.result, ["actions", Access.at(0), "result", "observed"]) == %{
+             "position" => 0
+           }
+  end
+
+  test "a later verifier report reconciles the persistent ledger", %{ledger: ledger} do
+    {:ok, verifier} =
+      start_supervised({Zaik.Home.ActionVerifier, name: nil, timeout_ms: 500})
+
+    context = %{channel: :telegram, chat_id: "-100", message_id: 44}
+    args = %{"device" => "Office blind", "target" => %{"position" => 37}}
+    assert {:ok, key} = Zaik.Home.ActionLedger.claim("control_device", args, context, ledger)
+
+    assert {:ok, _} =
+             Zaik.Home.ActionVerifier.register(
+               key,
+               "Office blind",
+               "cover",
+               %{"position" => 37},
+               server: verifier,
+               ledger_key: key,
+               ledger: ledger
+             )
+
+    assert {:ok, _} = Zaik.Home.ActionVerifier.published(key, server: verifier)
+
+    assert :ok =
+             Zaik.Home.ActionLedger.complete(
+               key,
+               {:ok, %{action_id: key, status: "accepted", verified: false}},
+               ledger
+             )
+
+    Zaik.Home.ActionVerifier.observe(
+      "Office blind",
+      %{"position" => 37},
+      DateTime.utc_now(),
+      server: verifier
+    )
+
+    assert %{verified: true} = Zaik.Home.ActionVerifier.await(key, 100, server: verifier)
+
+    assert eventually(fn ->
+             with {:ok, entry} <- Zaik.Home.ActionLedger.lookup(key, ledger) do
+               entry.result["verified"] == true and entry.result["status"] == "verified"
+             end
+           end)
+  end
+
   test "different ingress messages receive different claims", %{ledger: ledger} do
     args = %{"device" => "Office blind", "target" => %{"state" => "CLOSE"}}
 
@@ -82,4 +169,17 @@ defmodule Zaik.Home.ActionLedgerTest do
                ledger
              )
   end
+
+  defp eventually(fun, attempts \\ 20)
+
+  defp eventually(fun, attempts) when attempts > 0 do
+    if fun.() do
+      true
+    else
+      Process.sleep(5)
+      eventually(fun, attempts - 1)
+    end
+  end
+
+  defp eventually(_fun, 0), do: false
 end

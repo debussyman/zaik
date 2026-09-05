@@ -102,6 +102,7 @@ Zaik.home_device("nursery")
 Zaik.presence_devices()
 Zaik.home_trend("nursery")
 Zaik.home_readings("nursery", limit: 20)
+Zaik.home_action_status(action_id)
 Zaik.mqtt_status()
 ```
 
@@ -109,7 +110,7 @@ Zaik.mqtt_status()
 
 Messaging adapters normalize inbound chat into `Zaik.Ingress.Message` and call `Zaik.Ingress`: exact commands still work, and free-form messages route through `Zaik.ChatRouter` to one unified house-agent brain, `Zaik.AgentChat`.
 
-Explicit deterministic commands still use trusted Elixir command handlers. Normal free-form chat uses `Zaik.AgentChat`: a bounded registered-tool loop. Current home state uses typed capability tools, history uses bounded read-only SQL, single low-risk actions use `control_device`, and coordinated changes use a preflighted `execute_home_plan`. Elixir resolves devices, presets, capabilities, and targets before execution.
+Explicit deterministic commands still use trusted Elixir command handlers. Normal free-form chat uses `Zaik.AgentChat`: a bounded registered-tool loop. Current home state uses typed capability tools, history uses bounded read-only SQL, single low-risk actions use `control_device`, and coordinated changes use a preflighted `execute_home_plan`. Elixir resolves devices, presets, capabilities, and targets before execution. Accepted actions receive correlation IDs; later Zigbee2MQTT state reports can promote them to verified only after their typed targets converge.
 
 Telegram is the preferred multi-person chat path because Zaik appears as its own bot identity instead of speaking as your linked Signal account.
 

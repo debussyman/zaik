@@ -14,6 +14,7 @@ defmodule Zaik.Home.Zigbee2MQTT do
       base_topic: Keyword.get(configured, :base_topic, "zigbee2mqtt"),
       device_store: Keyword.get(configured, :device_store, Zaik.Home.DeviceStore),
       history_store: Keyword.get(configured, :history_store, Zaik.Home.HistoryStore),
+      action_verifier: Keyword.get(configured, :action_verifier, Zaik.Home.ActionVerifier),
       bootstrap_state?: Keyword.get(configured, :bootstrap_state?, true),
       data_dir:
         System.get_env("ZAIK_ZIGBEE2MQTT_DATA_DIR") ||
@@ -118,11 +119,19 @@ defmodule Zaik.Home.Zigbee2MQTT do
 
       true ->
         relative = String.replace_prefix(topic, prefix, "")
-        route_relative(relative, decoded, store, Map.get(cfg, :history_store), topic)
+
+        route_relative(
+          relative,
+          decoded,
+          store,
+          Map.get(cfg, :history_store),
+          Map.get(cfg, :action_verifier),
+          topic
+        )
     end
   end
 
-  defp route_relative("bridge/devices", devices, store, _history_store, _topic)
+  defp route_relative("bridge/devices", devices, store, _history_store, _verifier, _topic)
        when is_list(devices) do
     devices
     |> Enum.reject(&coordinator?/1)
@@ -149,10 +158,18 @@ defmodule Zaik.Home.Zigbee2MQTT do
     :ok
   end
 
-  defp route_relative("bridge/" <> _bridge_topic, _decoded, _store, _history_store, _topic),
-    do: :ignored
+  defp route_relative(
+         "bridge/" <> _bridge_topic,
+         _decoded,
+         _store,
+         _history_store,
+         _verifier,
+         _topic
+       ),
+       do: :ignored
 
-  defp route_relative(relative, decoded, store, history_store, topic) when is_map(decoded) do
+  defp route_relative(relative, decoded, store, history_store, verifier, topic)
+       when is_map(decoded) do
     cond do
       relative == "" ->
         :ignored
@@ -174,13 +191,15 @@ defmodule Zaik.Home.Zigbee2MQTT do
         with {:ok, device} <-
                Zaik.Home.DeviceStore.upsert_device(store, friendly_name, decoded, metadata) do
           record_history(history_store, device.friendly_name, device.payload, device.metadata)
+          report_action_verification(verifier, device, decoded)
           evaluate_alerts(device.friendly_name, device.payload, device.metadata)
           {:ok, device}
         end
     end
   end
 
-  defp route_relative(_relative, _decoded, _store, _history_store, _topic), do: :ignored
+  defp route_relative(_relative, _decoded, _store, _history_store, _verifier, _topic),
+    do: :ignored
 
   defp record_history(nil, _friendly_name, _payload, _metadata), do: :ok
 
@@ -196,6 +215,33 @@ defmodule Zaik.Home.Zigbee2MQTT do
       Logger.debug("Failed to record home history: #{inspect(reason)}")
       :ok
   end
+
+  defp report_action_verification(nil, _device, _payload), do: :ok
+
+  defp report_action_verification(verifier, device, payload) do
+    if process_available?(verifier) do
+      Zaik.Home.ActionVerifier.observe(
+        device.friendly_name,
+        payload,
+        device.received_at,
+        server: verifier
+      )
+    end
+
+    :ok
+  rescue
+    error ->
+      Logger.debug("Failed to correlate home action state: #{Exception.message(error)}")
+      :ok
+  catch
+    :exit, reason ->
+      Logger.debug("Failed to correlate home action state: #{inspect(reason)}")
+      :ok
+  end
+
+  defp process_available?(server) when is_pid(server), do: Process.alive?(server)
+  defp process_available?(server) when is_atom(server), do: not is_nil(Process.whereis(server))
+  defp process_available?(_server), do: false
 
   defp evaluate_alerts(friendly_name, payload, metadata) do
     if Process.whereis(Zaik.Alerts.Engine) do

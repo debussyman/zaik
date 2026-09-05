@@ -80,6 +80,20 @@ defmodule Zaik do
   def mqtt_status, do: Zaik.MQTT.Client.status()
 
   @doc """
+  Return runtime verification status for an action correlation ID, falling
+  back to its persistent action-ledger entry after verifier retention expires.
+  """
+  def home_action_status(action_id) do
+    case Zaik.Home.ActionVerifier.status(action_id) do
+      {:ok, status} -> {:ok, %{source: :verifier, status: status}}
+      {:error, :not_found} -> persistent_home_action_status(action_id)
+      error -> error
+    end
+  catch
+    :exit, _reason -> persistent_home_action_status(action_id)
+  end
+
+  @doc """
   Return generic named home-device presets.
   """
   def device_presets(device_name \\ nil, opts \\ []),
@@ -268,6 +282,15 @@ defmodule Zaik do
   """
   def send_message(message) do
     Zaik.Agent.HelloWorld.send_message(message)
+  end
+
+  defp persistent_home_action_status(action_id) do
+    case Zaik.Home.ActionLedger.lookup(action_id) do
+      {:ok, entry} -> {:ok, %{source: :ledger, status: entry}}
+      error -> error
+    end
+  catch
+    :exit, reason -> {:error, reason}
   end
 
   defp do_await_task(task_id, deadline) do

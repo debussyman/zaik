@@ -62,6 +62,9 @@ defmodule Zaik.Home.ActionPlan do
     executor_opts =
       Keyword.get(opts, :executor_opts) || value(context, :executor_opts) || []
 
+    run_id = value(context, :action_id) || Zaik.Home.ActionVerifier.new_id("plan")
+    context = Map.put(context, :plan_run_id, run_id)
+
     execute_actions(plan, plan.actions, [], context, executor_opts)
   end
 
@@ -143,16 +146,18 @@ defmodule Zaik.Home.ActionPlan do
 
   defp prepare_action(_action, _index, _context, _opts), do: {:error, :action_must_be_an_object}
 
-  defp execute_actions(plan, [], completed, _context, _executor_opts) do
-    results = Enum.reverse(completed)
+  defp execute_actions(plan, [], completed, context, _executor_opts) do
+    results = completed |> Enum.reverse() |> finalize_verifications(context)
     verified? = Enum.all?(results, &result_verified?/1)
 
     {:ok,
      %{
        plan_id: plan.id,
+       plan_run_id: value(context, :plan_run_id),
        goal: plan.goal,
        status: if(verified?, do: "verified", else: "accepted"),
        verified: verified?,
+       verification_ids: verification_ids(results),
        completed_count: length(results),
        action_count: length(plan.actions),
        actions: results,
@@ -161,11 +166,16 @@ defmodule Zaik.Home.ActionPlan do
   end
 
   defp execute_actions(plan, [action | remaining], completed, context, executor_opts) do
+    action_context =
+      context
+      |> Map.put(:action_id, child_action_id(context, plan, action))
+      |> Map.put(:defer_verification_wait, true)
+
     case Zaik.Home.Executors.Registry.execute(
            action.capability,
            action.entity,
            action.target,
-           context,
+           action_context,
            executor_opts
          ) do
       {:ok, result} ->
@@ -225,6 +235,59 @@ defmodule Zaik.Home.ActionPlan do
         [%{index: Enum.map(duplicates, & &1.index), reason: :duplicate_action}]
     end)
   end
+
+  defp finalize_verifications(results, context) do
+    ids = verification_ids(results)
+    server = value(context, :action_verifier) || Zaik.Home.ActionVerifier
+    wait_ms = value(context, :verification_wait_ms) || Zaik.Home.ActionVerifier.config().wait_ms
+
+    if ids == [] or not process_available?(server) do
+      results
+    else
+      statuses = Zaik.Home.ActionVerifier.await_many(ids, wait_ms, server: server)
+
+      Enum.map(results, fn completed ->
+        action_id = result_action_id(completed)
+
+        case Map.get(statuses, action_id) do
+          %{verified: true} = verification ->
+            result =
+              completed.result
+              |> Map.put(:status, "verified")
+              |> Map.put(:verified, true)
+              |> Map.put(:verification_status, "verified")
+              |> Map.put(:observed_at, verification.observed_at)
+              |> Map.put(:observed, verification.observed)
+
+            %{completed | result: result}
+
+          _ ->
+            completed
+        end
+      end)
+    end
+  catch
+    :exit, _reason -> results
+  end
+
+  defp verification_ids(results) do
+    results
+    |> Enum.map(&result_action_id/1)
+    |> Enum.reject(&is_nil/1)
+  end
+
+  defp result_action_id(%{result: result}) when is_map(result),
+    do: Map.get(result, :action_id) || Map.get(result, "action_id")
+
+  defp result_action_id(_result), do: nil
+
+  defp child_action_id(context, plan, action) do
+    "#{value(context, :plan_run_id)}:#{plan.id}:#{action.index}"
+  end
+
+  defp process_available?(server) when is_pid(server), do: Process.alive?(server)
+  defp process_available?(server) when is_atom(server), do: not is_nil(Process.whereis(server))
+  defp process_available?(_server), do: false
 
   defp result_verified?(%{result: result}) when is_map(result) do
     Map.get(result, :verified) == true or Map.get(result, "verified") == true

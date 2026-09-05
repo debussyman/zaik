@@ -134,6 +134,13 @@ config :zaik, :home_executors, additional_modules: []
 config :zaik, :tool_execution, action_timeout_ms: 30_000
 config :zaik, :home_action_plans, max_actions: 10
 
+config :zaik, :home_action_verification,
+  enabled: true,
+  timeout_ms: 30_000,
+  wait_ms: 1_500,
+  retention_ms: 300_000,
+  position_tolerance: 2
+
 config :zaik, :home_action_ledger,
   enabled: true,
   db_path: if(config_env() == :test, do: ":memory:", else: "~/.zaik/home/home.db")

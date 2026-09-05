@@ -21,12 +21,18 @@ Implemented:
   executor, target, and preset before the first side effect;
 - multi-action execution reports accepted, verified, failed, or structured
   partial completion without hiding already completed actions;
+- `Zaik.Home.ActionVerifier` correlates generated action IDs with later
+  Zigbee2MQTT reports and only marks cover targets verified after convergence;
+- coordinated plans publish all actions before a shared bounded verification
+  wait, and retain child verification IDs for later convergence;
+- later verification updates persistent action-ledger results, including the
+  aggregate plan status when every child action converges;
 - Zigbee2MQTT state-file bootstrap no longer manufactures history rows.
 
 Remaining:
 
-- correlate MQTT reports with action IDs and verify target convergence;
-- define retry policy for accepted-but-unverified and ambiguous outcomes.
+- define retry policy for accepted-but-unverified, expired, and ambiguous outcomes;
+- expose pending/expired action status and safe retry eligibility to users.
 
 ## Phase 1: Canonical home state
 

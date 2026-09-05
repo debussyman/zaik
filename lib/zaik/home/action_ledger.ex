@@ -45,6 +45,11 @@ defmodule Zaik.Home.ActionLedger do
   def lookup(key, server \\ __MODULE__) when is_binary(key),
     do: GenServer.call(server, {:lookup, key})
 
+  def mark_verified(key, action_id, verification, server \\ __MODULE__)
+      when is_binary(key) and is_binary(action_id) and is_map(verification) do
+    GenServer.cast(server, {:mark_verified, key, action_id, verification})
+  end
+
   def idempotency_key(tool, args, context) when is_map(args) and is_map(context) do
     case request_key(context) do
       nil ->
@@ -108,6 +113,7 @@ defmodule Zaik.Home.ActionLedger do
     do: {:reply, :ok, state}
 
   def handle_call({:complete, key, result}, _from, state) do
+    result = reconcile_verification(result)
     {status, result_json, error_json} = encoded_result(result)
     now = DateTime.utc_now() |> DateTime.to_iso8601()
 
@@ -129,6 +135,30 @@ defmodule Zaik.Home.ActionLedger do
       nil -> {:reply, {:error, :not_found}, state}
       entry -> {:reply, {:ok, entry}, state}
     end
+  end
+
+  @impl true
+  def handle_cast({:mark_verified, _key, _action_id, _verification}, %{conn: nil} = state),
+    do: {:noreply, state}
+
+  def handle_cast({:mark_verified, key, action_id, verification}, state) do
+    case fetch(state.conn, key) do
+      %{status: "succeeded", result: result} when is_map(result) ->
+        updated = result |> apply_verification(action_id, verification) |> update_plan_status()
+        now = DateTime.utc_now() |> DateTime.to_iso8601()
+
+        _ =
+          exec(
+            state.conn,
+            "UPDATE home_action_ledger SET result_json = ?, updated_at = ? WHERE idempotency_key = ?",
+            [encode(updated), now, key]
+          )
+
+      _ ->
+        :ok
+    end
+
+    {:noreply, state}
   end
 
   @impl true
@@ -203,6 +233,94 @@ defmodule Zaik.Home.ActionLedger do
     do: {:error, {:previous_action_failed, error}}
 
   defp duplicate_result(entry), do: {:error, {:unknown_previous_action_status, entry.status}}
+
+  defp reconcile_verification({:ok, result}) when is_map(result) do
+    updated =
+      result
+      |> action_ids()
+      |> Enum.reduce(result, fn action_id, acc ->
+        case verifier_status(action_id) do
+          %{verified: true} = verification -> apply_verification(acc, action_id, verification)
+          _ -> acc
+        end
+      end)
+      |> update_plan_status()
+
+    {:ok, updated}
+  end
+
+  defp reconcile_verification(result), do: result
+
+  defp verifier_status(action_id) do
+    if Process.whereis(Zaik.Home.ActionVerifier) do
+      case Zaik.Home.ActionVerifier.status(action_id) do
+        {:ok, status} -> status
+        _ -> nil
+      end
+    end
+  catch
+    :exit, _reason -> nil
+  end
+
+  defp action_ids(value) when is_map(value) do
+    own =
+      case value(value, :action_id) do
+        id when is_binary(id) -> [id]
+        _ -> []
+      end
+
+    own ++ Enum.flat_map(Map.values(value), &action_ids/1)
+  end
+
+  defp action_ids(value) when is_list(value), do: Enum.flat_map(value, &action_ids/1)
+  defp action_ids(_value), do: []
+
+  defp apply_verification(value, action_id, verification) when is_map(value) do
+    value =
+      if value(value, :action_id) == action_id do
+        value
+        |> put_compatible(:status, "verified")
+        |> put_compatible(:verified, true)
+        |> put_compatible(:verification_status, "verified")
+        |> put_compatible(:observed_at, value(verification, :observed_at))
+        |> put_compatible(:observed, value(verification, :observed))
+      else
+        value
+      end
+
+    Map.new(value, fn {key, nested} ->
+      {key, apply_verification(nested, action_id, verification)}
+    end)
+  end
+
+  defp apply_verification(value, action_id, verification) when is_list(value),
+    do: Enum.map(value, &apply_verification(&1, action_id, verification))
+
+  defp apply_verification(value, _action_id, _verification), do: value
+
+  defp update_plan_status(result) when is_map(result) do
+    actions = value(result, :actions)
+
+    if is_list(actions) and actions != [] and
+         Enum.all?(actions, fn action ->
+           value(value(action, :result) || %{}, :verified) == true
+         end) do
+      result |> put_compatible(:status, "verified") |> put_compatible(:verified, true)
+    else
+      result
+    end
+  end
+
+  defp update_plan_status(result), do: result
+
+  defp put_compatible(map, key, value) do
+    string_key = to_string(key)
+
+    cond do
+      Map.has_key?(map, string_key) -> Map.put(map, string_key, value)
+      true -> Map.put(map, key, value)
+    end
+  end
 
   defp encoded_result({:ok, result}), do: {"succeeded", encode(result), nil}
   defp encoded_result({:error, error}), do: {"failed", nil, encode(inspect(error))}
