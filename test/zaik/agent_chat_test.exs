@@ -177,7 +177,24 @@ defmodule Zaik.AgentChatTest do
          device: args["device"],
          topic: "zigbee2mqtt/#{args["device"]}/set",
          payload: args["target"],
+         status: "verified",
+         verified: true,
          requested_at: "2026-09-04T19:00:00Z"
+       }}
+    end
+  end
+
+  defmodule UnverifiedControlTool do
+    def run(tool, args, context) do
+      send(Map.fetch!(context, :test_pid), {:unverified_control_called, tool, args})
+
+      {:ok,
+       %{
+         tool: tool,
+         device: args["device"],
+         status: "accepted",
+         verified: false,
+         payload: args["target"]
        }}
     end
   end
@@ -799,6 +816,23 @@ defmodule Zaik.AgentChatTest do
              )
 
     assert_received {:control_tool_called, "control_blind", _args}
+  end
+
+  test "does not describe an accepted command as verified physical completion" do
+    assert {:ok, answer} =
+             Zaik.AgentChat.respond(
+               "Set up Lily's room for bedtime with AC",
+               %{test_pid: self()},
+               client: HomeControlCorrectionClient,
+               control_tool: UnverifiedControlTool,
+               prompt_domain: :home_control,
+               config: %{enabled: true, fallback_enabled: false, max_tool_calls: 3}
+             )
+
+    assert answer =~ "commands were accepted"
+    assert answer =~ "haven't verified"
+    refute answer =~ "Done"
+    assert_received {:unverified_control_called, "control_blind", _args}
   end
 
   test "loops through validated home-control tool calls and returns final answer" do

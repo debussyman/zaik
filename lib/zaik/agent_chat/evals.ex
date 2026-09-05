@@ -344,7 +344,7 @@ defmodule Zaik.AgentChat.Evals do
           }
         ],
         forbidden_query_terms: ["sensor_readings"],
-        expected_answer_terms: ["lily"]
+        expected_answer_terms: ["accepted"]
       }
     ]
     |> Enum.reject(&(Map.get(&1, :optional?, false) and not include_optional?))

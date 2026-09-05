@@ -271,6 +271,11 @@ defmodule Zaik.AgentChat do
                 "I couldn't confirm that the requested home action completed. No successful action result was recorded."},
                tool_calls}
 
+            unverified_physical_completion_claim?(messages, answer, tool_calls) ->
+              {{:ok,
+                "The requested home commands were accepted, but I haven't verified that the physical devices reached their target states yet."},
+               tool_calls}
+
             home_reading_final_without_tool?(messages, tool_calls, repair_count) ->
               loop(
                 client,
@@ -791,6 +796,39 @@ defmodule Zaik.AgentChat do
       _ ->
         false
     end)
+  end
+
+  defp unverified_physical_completion_claim?(messages, answer, tool_calls) do
+    home_control_mode?(messages) and accepted_unverified_action?(tool_calls) and
+      not verified_action?(tool_calls) and physical_completion_claim?(answer)
+  end
+
+  defp accepted_unverified_action?(tool_calls) do
+    Enum.any?(tool_calls, fn call ->
+      result = Map.get(call, :result)
+
+      Map.get(call, :kind) == :action and Map.get(call, :ok) and is_map(result) and
+        (Map.get(result, :status) == "accepted" or Map.get(result, "status") == "accepted") and
+        not (Map.get(result, :verified) == true or Map.get(result, "verified") == true)
+    end)
+  end
+
+  defp verified_action?(tool_calls) do
+    Enum.any?(tool_calls, fn call ->
+      result = Map.get(call, :result)
+
+      Map.get(call, :kind) == :action and Map.get(call, :ok) and is_map(result) and
+        (Map.get(result, :verified) == true or Map.get(result, "verified") == true)
+    end)
+  end
+
+  defp physical_completion_claim?(answer) when is_binary(answer) do
+    normalized = String.downcase(answer)
+
+    Enum.any?(
+      ["done", "ready", "closed", "opened", "set up", "completed", "now set", "now closed"],
+      &String.contains?(normalized, &1)
+    )
   end
 
   defp action_claim_answer?(answer) when is_binary(answer) do
