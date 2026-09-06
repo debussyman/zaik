@@ -109,6 +109,52 @@ defmodule Zaik.Home.ActionVerifierTest do
              Zaik.Home.ActionVerifier.await("new-action", 10, server: verifier)
   end
 
+  test "expires deterministically from an injected virtual clock" do
+    {:ok, clock} =
+      start_supervised({Zaik.Home.Mirror.Clock, name: nil, now: ~U[2026-03-10 08:00:00Z]})
+
+    verifier_spec = %{
+      id: {:virtual_verifier, make_ref()},
+      start:
+        {Zaik.Home.ActionVerifier, :start_link,
+         [
+           [
+             name: nil,
+             timeout_ms: 100,
+             retention_ms: 1_000,
+             clock: {Zaik.Home.Mirror.Clock, clock}
+           ]
+         ]}
+    }
+
+    {:ok, verifier} = start_supervised(verifier_spec)
+
+    assert {:ok, registered} =
+             Zaik.Home.ActionVerifier.register(
+               "virtual-expiry",
+               "Office blind",
+               "cover",
+               %{"position" => 10},
+               server: verifier
+             )
+
+    assert registered.registered_at == "2026-03-10T08:00:00Z"
+    assert registered.expires_at == "2026-03-10T08:00:00.100Z"
+    assert {:ok, _} = Zaik.Home.ActionVerifier.published("virtual-expiry", server: verifier)
+
+    Zaik.Home.Mirror.Clock.advance(clock, 99)
+    Zaik.Home.ActionVerifier.barrier(verifier)
+
+    assert {:ok, %{status: "pending"}} =
+             Zaik.Home.ActionVerifier.status("virtual-expiry", server: verifier)
+
+    Zaik.Home.Mirror.Clock.advance(clock, 1)
+    Zaik.Home.ActionVerifier.barrier(verifier)
+
+    assert {:ok, %{status: "expired"}} =
+             Zaik.Home.ActionVerifier.status("virtual-expiry", server: verifier)
+  end
+
   test "expires an action that never converges", %{verifier: verifier} do
     assert {:ok, _} =
              Zaik.Home.ActionVerifier.register(

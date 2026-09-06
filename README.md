@@ -435,7 +435,7 @@ Live agent evals exercise read planning against canned SQL data and home actions
 # Fast deterministic routing/SQL guards: no LLM, no MQTT publish.
 nix develop -c mix zaik.routing_eval
 
-# End-to-end virtual-home plans, faults, verification, and desired states.
+# End-to-end virtual-home plans, faults, verification, desired states, and virtual time.
 nix develop -c mix zaik.mirror_eval
 
 # Live model evals with canned SQL. Default suite does not publish MQTT.

@@ -46,12 +46,12 @@ defmodule Zaik.Home.DeviceStore do
   end
 
   @impl true
-  def init(_opts), do: {:ok, %{devices: %{}}}
+  def init(opts), do: {:ok, %{devices: %{}, clock: Keyword.get(opts, :clock)}}
 
   @impl true
   def handle_call({:upsert_device, friendly_name, payload, metadata}, _from, state) do
     friendly_name = String.trim(friendly_name)
-    now = DateTime.utc_now()
+    now = Zaik.Time.now(state.clock)
 
     existing = Map.get(state.devices, normalize(friendly_name), %{})
     existing_payload = Map.get(existing, :payload, %{})
@@ -75,7 +75,7 @@ defmodule Zaik.Home.DeviceStore do
 
   def handle_call({:upsert_metadata, friendly_name, metadata}, _from, state) do
     friendly_name = String.trim(friendly_name)
-    now = DateTime.utc_now()
+    now = Zaik.Time.now(state.clock)
 
     existing = Map.get(state.devices, normalize(friendly_name), %{})
     existing_payload = Map.get(existing, :payload, %{})
@@ -147,7 +147,7 @@ defmodule Zaik.Home.DeviceStore do
     {:reply, devices, state}
   end
 
-  def handle_call(:reset, _from, _state), do: {:reply, :ok, %{devices: %{}}}
+  def handle_call(:reset, _from, state), do: {:reply, :ok, %{state | devices: %{}}}
 
   defp put_device(state, device) do
     %{state | devices: Map.put(state.devices, normalize(device.friendly_name), device)}

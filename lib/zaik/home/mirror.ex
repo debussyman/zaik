@@ -12,6 +12,7 @@ defmodule Zaik.Home.Mirror do
   defstruct [
     :scenario,
     :supervisor,
+    :clock,
     :device_store,
     :preset_store,
     :action_verifier,
@@ -40,14 +41,27 @@ defmodule Zaik.Home.Mirror do
   end
 
   defp start_runtime(supervisor, scenario) do
-    with {:ok, device_store} <- start_child(supervisor, {Zaik.Home.DeviceStore, name: nil}),
+    with {:ok, clock} <-
+           start_child(
+             supervisor,
+             {Zaik.Home.Mirror.Clock, name: nil, now: scenario.now}
+           ),
+         clock_provider = {Zaik.Home.Mirror.Clock, clock},
+         {:ok, device_store} <-
+           start_child(
+             supervisor,
+             {Zaik.Home.DeviceStore, name: nil, clock: clock_provider}
+           ),
          {:ok, preset_store} <-
            start_child(
              supervisor,
              {Zaik.Home.DevicePresetStore, name: nil, db_path: ":memory:"}
            ),
          {:ok, action_ledger} <-
-           start_child(supervisor, {Zaik.Home.ActionLedger, name: nil, db_path: ":memory:"}),
+           start_child(
+             supervisor,
+             {Zaik.Home.ActionLedger, name: nil, db_path: ":memory:", clock: clock_provider}
+           ),
          {:ok, action_verifier} <-
            start_child(
              supervisor,
@@ -55,7 +69,8 @@ defmodule Zaik.Home.Mirror do
               name: nil,
               timeout_ms: verification_timeout(scenario),
               wait_ms: verification_wait(scenario),
-              retention_ms: 60_000}
+              retention_ms: 60_000,
+              clock: clock_provider}
            ),
          {:ok, task_supervisor} <- start_child(supervisor, {Task.Supervisor, name: nil}),
          :ok <- load_entities(device_store, scenario),
@@ -67,12 +82,14 @@ defmodule Zaik.Home.Mirror do
               name: nil,
               device_store: device_store,
               action_verifier: action_verifier,
+              clock: clock_provider,
               faults: scenario.faults}
            ) do
       {:ok,
        %__MODULE__{
          scenario: scenario,
          supervisor: supervisor,
+         clock: clock,
          device_store: device_store,
          preset_store: preset_store,
          action_verifier: action_verifier,
@@ -86,6 +103,7 @@ defmodule Zaik.Home.Mirror do
   def context(%__MODULE__{} = mirror, extra \\ %{}) do
     Map.merge(
       %{
+        clock: {Zaik.Home.Mirror.Clock, mirror.clock},
         device_store: mirror.device_store,
         preset_store: mirror.preset_store,
         action_verifier: mirror.action_verifier,
@@ -94,6 +112,7 @@ defmodule Zaik.Home.Mirror do
         mirror_store: mirror.store,
         executor_opts: [modules: [Zaik.Home.Mirror.Executor]],
         verification_wait_ms: verification_wait(mirror.scenario),
+        verification_timeout_ms: verification_timeout(mirror.scenario),
         mirror_scenario_id: mirror.scenario.id,
         mirror_scenario_fingerprint: Scenario.fingerprint(mirror.scenario)
       },
@@ -102,10 +121,20 @@ defmodule Zaik.Home.Mirror do
   end
 
   def snapshot(%__MODULE__{} = mirror) do
-    Zaik.Home.World.snapshot(nil, device_store: mirror.device_store)
+    Zaik.Home.World.snapshot(nil,
+      device_store: mirror.device_store,
+      clock: {Zaik.Home.Mirror.Clock, mirror.clock}
+    )
   end
 
   def actions(%__MODULE__{} = mirror), do: Zaik.Home.Mirror.Store.actions(mirror.store)
+
+  def advance(%__MODULE__{} = mirror, milliseconds) do
+    target_ms = Zaik.Home.Mirror.Clock.monotonic_ms(mirror.clock) + milliseconds
+    advance_until(mirror, target_ms, 0)
+  end
+
+  def now(%__MODULE__{} = mirror), do: Zaik.Home.Mirror.Clock.now(mirror.clock)
 
   def side_effect_count(%__MODULE__{} = mirror),
     do: Zaik.Home.Mirror.Store.side_effect_count(mirror.store)
@@ -165,6 +194,27 @@ defmodule Zaik.Home.Mirror do
     end)
 
     :ok
+  end
+
+  defp advance_until(mirror, target_ms, fired) do
+    current_ms = Zaik.Home.Mirror.Clock.monotonic_ms(mirror.clock)
+
+    next_due_ms =
+      case Zaik.Home.Mirror.Clock.pending(mirror.clock) do
+        [%{due_ms: due_ms} | _] when due_ms <= target_ms -> due_ms
+        _ -> target_ms
+      end
+
+    step = Zaik.Home.Mirror.Clock.advance(mirror.clock, next_due_ms - current_ms)
+    :ok = Zaik.Home.Mirror.Store.barrier(mirror.store)
+    :ok = Zaik.Home.ActionVerifier.barrier(mirror.action_verifier)
+    total_fired = fired + step.fired
+
+    if next_due_ms < target_ms do
+      advance_until(mirror, target_ms, total_fired)
+    else
+      %{step | fired: total_fired}
+    end
   end
 
   defp verification_timeout(scenario),

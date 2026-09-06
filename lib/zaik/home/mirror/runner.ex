@@ -9,7 +9,7 @@ defmodule Zaik.Home.Mirror.Runner do
         context = Zaik.Home.Mirror.context(mirror, Keyword.get(opts, :context, %{}))
         result = fun.(mirror, context)
         settle_ms = Keyword.get(opts, :settle_ms, 0)
-        if settle_ms > 0, do: Process.sleep(settle_ms)
+        if settle_ms > 0, do: Zaik.Home.Mirror.advance(mirror, settle_ms)
 
         {:ok,
          %{

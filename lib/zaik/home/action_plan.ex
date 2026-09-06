@@ -85,7 +85,7 @@ defmodule Zaik.Home.ActionPlan do
     errors = errors ++ duplicate_errors
 
     if errors == [] do
-      prepared_at = DateTime.utc_now()
+      prepared_at = Zaik.Time.now(value(context, :clock))
 
       {:ok,
        %__MODULE__{
@@ -161,7 +161,7 @@ defmodule Zaik.Home.ActionPlan do
        completed_count: length(results),
        action_count: length(plan.actions),
        actions: results,
-       completed_at: DateTime.utc_now() |> DateTime.to_iso8601()
+       completed_at: value(context, :clock) |> Zaik.Time.now() |> DateTime.to_iso8601()
      }}
   end
 
@@ -187,14 +187,21 @@ defmodule Zaik.Home.ActionPlan do
         execute_actions(plan, remaining, [completed_action | completed], context, executor_opts)
 
       {:error, reason} ->
-        fail_plan(plan, action, remaining, completed, reason)
+        fail_plan(plan, action, remaining, completed, reason, context)
 
       other ->
-        fail_plan(plan, action, remaining, completed, {:invalid_executor_result, other})
+        fail_plan(
+          plan,
+          action,
+          remaining,
+          completed,
+          {:invalid_executor_result, other},
+          context
+        )
     end
   end
 
-  defp fail_plan(plan, action, remaining, completed, reason) do
+  defp fail_plan(plan, action, remaining, completed, reason, context) do
     completed = Enum.reverse(completed)
 
     report = %{
@@ -207,7 +214,7 @@ defmodule Zaik.Home.ActionPlan do
       completed: completed,
       failed: %{action: public_action(action), reason: inspect(reason)},
       remaining: Enum.map(remaining, &public_action/1),
-      failed_at: DateTime.utc_now() |> DateTime.to_iso8601()
+      failed_at: value(context, :clock) |> Zaik.Time.now() |> DateTime.to_iso8601()
     }
 
     {:error, {:action_plan_failed, report}}

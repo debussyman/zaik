@@ -44,7 +44,7 @@ defmodule Zaik.Home.World do
     %{
       entities: Enum.map(entities, &public_entity/1),
       count: length(entities),
-      generated_at: DateTime.utc_now()
+      generated_at: Keyword.get(opts, :clock) |> Zaik.Time.now()
     }
   end
 

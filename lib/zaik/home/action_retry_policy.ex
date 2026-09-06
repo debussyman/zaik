@@ -34,6 +34,7 @@ defmodule Zaik.Home.ActionRetryPolicy do
     ledger = setting(context, :action_ledger, Zaik.Home.ActionLedger)
     retries = retry_entries(entry.idempotency_key, ledger)
     outcomes = action_outcomes(entry)
+    now = Zaik.Time.now(setting(context, :clock, nil))
 
     cond do
       not cfg.enabled ->
@@ -51,18 +52,18 @@ defmodule Zaik.Home.ActionRetryPolicy do
       length(retries) >= cfg.max_attempts ->
         decision(false, "retry_budget_exhausted", entry, retries, outcomes)
 
-      cooldown_active?(retries, cfg.cooldown_ms) ->
+      cooldown_active?(retries, cfg.cooldown_ms, now) ->
         decision(false, "retry_cooldown_active", entry, retries, outcomes)
 
       true ->
-        evaluate_outcomes(entry, outcomes, retries, context, cfg)
+        evaluate_outcomes(entry, outcomes, retries, context, cfg, now)
     end
   end
 
   def evaluate(_entry, _context, _opts), do: {:error, :invalid_action_entry}
 
-  defp evaluate_outcomes(entry, outcomes, retries, context, cfg) do
-    evaluated = Enum.map(outcomes, &evaluate_outcome(&1, context, cfg))
+  defp evaluate_outcomes(entry, outcomes, retries, context, cfg, now) do
+    evaluated = Enum.map(outcomes, &evaluate_outcome(&1, context, cfg, now))
     retryable = Enum.filter(evaluated, &(&1.disposition == :retryable))
     converged = Enum.filter(evaluated, &(&1.disposition == :already_converged))
     waiting = Enum.filter(evaluated, &(&1.disposition == :waiting))
@@ -94,7 +95,7 @@ defmodule Zaik.Home.ActionRetryPolicy do
     end
   end
 
-  defp evaluate_outcome(outcome, context, cfg) do
+  defp evaluate_outcome(outcome, context, cfg, now) do
     cond do
       outcome.verified ->
         Map.merge(outcome, %{disposition: :already_converged, reason: "already_verified"})
@@ -102,18 +103,18 @@ defmodule Zaik.Home.ActionRetryPolicy do
       outcome.capability not in @retryable_capabilities ->
         Map.merge(outcome, %{disposition: :blocked, reason: "capability_not_retryable"})
 
-      verification_pending?(outcome) ->
+      verification_pending?(outcome, now) ->
         Map.merge(outcome, %{disposition: :waiting, reason: "verification_still_pending"})
 
-      not settled?(outcome, cfg.settle_ms) ->
+      not settled?(outcome, cfg.settle_ms, now) ->
         Map.merge(outcome, %{disposition: :waiting, reason: "settle_window_active"})
 
       true ->
-        evaluate_current_state(outcome, context, cfg)
+        evaluate_current_state(outcome, context, cfg, now)
     end
   end
 
-  defp evaluate_current_state(outcome, context, cfg) do
+  defp evaluate_current_state(outcome, context, cfg, now) do
     store = setting(context, :device_store, Zaik.Home.DeviceStore)
 
     case Zaik.Home.DeviceStore.find_device(store, outcome.device) do
@@ -131,7 +132,12 @@ defmodule Zaik.Home.ActionRetryPolicy do
               observed: target_observation(outcome.target, device.payload)
             })
 
-          fresh_after_request?(device.received_at, outcome.requested_at, cfg.max_state_age_ms) ->
+          fresh_after_request?(
+            device.received_at,
+            outcome.requested_at,
+            cfg.max_state_age_ms,
+            now
+          ) ->
             Map.merge(outcome, %{
               disposition: :retryable,
               reason: "fresh_state_not_converged",
@@ -200,30 +206,33 @@ defmodule Zaik.Home.ActionRetryPolicy do
     end
   end
 
-  defp verification_pending?(outcome) do
+  defp verification_pending?(outcome, now) do
     status = outcome.verification_status
 
     status in ["registered", "pending"] and
       case outcome.verification_expires_at do
-        %DateTime{} = expires_at -> DateTime.compare(DateTime.utc_now(), expires_at) == :lt
+        %DateTime{} = expires_at -> DateTime.compare(now, expires_at) == :lt
         nil -> true
       end
   end
 
-  defp settled?(%{requested_at: nil}, _settle_ms), do: false
+  defp settled?(%{requested_at: nil}, _settle_ms, _now), do: false
 
-  defp settled?(%{requested_at: requested_at}, settle_ms) do
-    DateTime.diff(DateTime.utc_now(), requested_at, :millisecond) >= settle_ms
+  defp settled?(%{requested_at: requested_at}, settle_ms, now) do
+    DateTime.diff(now, requested_at, :millisecond) >= settle_ms
   end
 
-  defp fresh_after_request?(%DateTime{} = received_at, %DateTime{} = requested_at, max_age_ms) do
-    now = DateTime.utc_now()
-
-    DateTime.compare(received_at, requested_at) in [:eq, :gt] and
+  defp fresh_after_request?(
+         %DateTime{} = received_at,
+         %DateTime{} = requested_at,
+         max_age_ms,
+         now
+       ) do
+    DateTime.compare(received_at, requested_at) == :gt and
       DateTime.diff(now, received_at, :millisecond) <= max_age_ms
   end
 
-  defp fresh_after_request?(_received_at, _requested_at, _max_age_ms), do: false
+  defp fresh_after_request?(_received_at, _requested_at, _max_age_ms, _now), do: false
 
   defp retry_args(%{tool: "execute_home_plan", result: result}, outcomes) do
     %{
@@ -273,13 +282,12 @@ defmodule Zaik.Home.ActionRetryPolicy do
     :exit, _reason -> []
   end
 
-  defp cooldown_active?([], _cooldown_ms), do: false
+  defp cooldown_active?([], _cooldown_ms, _now), do: false
 
-  defp cooldown_active?(retries, cooldown_ms) do
+  defp cooldown_active?(retries, cooldown_ms, now) do
     latest = retries |> List.last() |> Map.get(:updated_at) |> parse_datetime()
 
-    match?(%DateTime{}, latest) and
-      DateTime.diff(DateTime.utc_now(), latest, :millisecond) < cooldown_ms
+    match?(%DateTime{}, latest) and DateTime.diff(now, latest, :millisecond) < cooldown_ms
   end
 
   defp decision(eligible, reason, entry, retries, outcomes, extra \\ []) do

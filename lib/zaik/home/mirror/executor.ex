@@ -49,7 +49,7 @@ defmodule Zaik.Home.Mirror.Executor do
          {:ok, _registered} <-
            Zaik.Home.ActionVerifier.register(action_id, entity.name, "cover", target,
              server: verifier,
-             timeout_ms: cfg.timeout_ms,
+             timeout_ms: value(context, :verification_timeout_ms) || cfg.timeout_ms,
              ledger_key: value(context, :ledger_action_id),
              ledger: value(context, :action_ledger)
            ),
@@ -62,7 +62,8 @@ defmodule Zaik.Home.Mirror.Executor do
              action_id
            ),
          {:ok, published} <- Zaik.Home.ActionVerifier.published(action_id, server: verifier),
-         :ok <- Zaik.Home.Mirror.Store.commit(mirror_store, action_id) do
+         :ok <- Zaik.Home.Mirror.Store.commit(mirror_store, action_id),
+         :ok <- Zaik.Home.ActionVerifier.barrier(verifier) do
       outcome =
         if value(context, :defer_verification_wait) == true do
           published
@@ -85,7 +86,11 @@ defmodule Zaik.Home.Mirror.Executor do
          verification_expires_at: Map.get(outcome, :expires_at),
          observed_at: Map.get(outcome, :observed_at),
          observed: Map.get(outcome, :observed),
-         requested_at: DateTime.utc_now() |> DateTime.to_iso8601()
+         requested_at:
+           context
+           |> value(:clock)
+           |> Zaik.Time.now()
+           |> DateTime.to_iso8601()
        }}
     else
       false ->

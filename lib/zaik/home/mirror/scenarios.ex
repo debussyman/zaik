@@ -63,7 +63,7 @@ defmodule Zaik.Home.Mirror.Scenarios do
       faults: Keyword.get(opts, :faults, %{}),
       metadata:
         Map.merge(
-          %{max_side_effects: 2, verification_wait_ms: 100},
+          %{max_side_effects: 2, verification_wait_ms: 0},
           Map.new(Keyword.get(opts, :metadata, %{}))
         )
     })

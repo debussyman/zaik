@@ -98,6 +98,9 @@ Implemented foundation:
 - versionable, fingerprinted scenarios contain areas, entities, presets,
   initial state, desired state, metadata, and injected faults;
 - isolated in-memory device, preset, ledger, verifier, task, and mirror stores;
+- `Zaik.Home.Mirror.Clock` provides manually advanced wall time and timer queues;
+  delayed convergence, verification expiry, ledger timestamps, and retry timing
+  can be evaluated without wall-clock sleeps;
 - a virtual cover executor uses the production tool, capability, preflight,
   verification, and retry boundaries without any MQTT transport;
 - semantic desired-state and maximum-side-effect assertions;
@@ -108,7 +111,7 @@ Implemented foundation:
 
 Remaining:
 
-- add a virtual clock and temporary production-schema history/telemetry fixtures;
+- add temporary production-schema history/telemetry fixtures;
 - model stale reports, duplicate/out-of-order events, and concurrent
   conflicting actions as named durable scenarios;
 - replay sanitized production failures and capability changes as scenarios;

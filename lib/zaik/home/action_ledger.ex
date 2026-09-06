@@ -23,7 +23,8 @@ defmodule Zaik.Home.ActionLedger do
 
     %{
       enabled: Keyword.get(configured, :enabled, true),
-      db_path: Keyword.get(configured, :db_path, history.db_path)
+      db_path: Keyword.get(configured, :db_path, history.db_path),
+      clock: Keyword.get(configured, :clock)
     }
   end
 
@@ -100,7 +101,7 @@ defmodule Zaik.Home.ActionLedger do
     reply =
       case fetch(state.conn, key) do
         nil ->
-          now = DateTime.utc_now() |> DateTime.to_iso8601()
+          now = Zaik.Time.now(state.config.clock) |> DateTime.to_iso8601()
 
           case exec(
                  state.conn,
@@ -124,7 +125,7 @@ defmodule Zaik.Home.ActionLedger do
   def handle_call({:complete, key, result}, _from, state) do
     result = reconcile_verification(result)
     {status, result_json, error_json} = encoded_result(result)
-    now = DateTime.utc_now() |> DateTime.to_iso8601()
+    now = Zaik.Time.now(state.config.clock) |> DateTime.to_iso8601()
 
     reply =
       exec(
@@ -171,7 +172,7 @@ defmodule Zaik.Home.ActionLedger do
     case fetch(state.conn, key) do
       %{status: "succeeded", result: result} when is_map(result) ->
         updated = result |> apply_verification(action_id, verification) |> update_plan_status()
-        now = DateTime.utc_now() |> DateTime.to_iso8601()
+        now = Zaik.Time.now(state.config.clock) |> DateTime.to_iso8601()
 
         _ =
           exec(

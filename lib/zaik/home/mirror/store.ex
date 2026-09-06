@@ -17,6 +17,7 @@ defmodule Zaik.Home.Mirror.Store do
   def commit(server, action_id), do: GenServer.call(server, {:commit, action_id})
   def actions(server), do: GenServer.call(server, :actions)
   def side_effect_count(server), do: GenServer.call(server, :side_effect_count)
+  def barrier(server), do: GenServer.call(server, :barrier)
 
   @impl true
   def init(opts) do
@@ -24,6 +25,7 @@ defmodule Zaik.Home.Mirror.Store do
      %{
        device_store: Keyword.fetch!(opts, :device_store),
        verifier: Keyword.fetch!(opts, :action_verifier),
+       clock: Keyword.fetch!(opts, :clock),
        faults: normalize_faults(Keyword.get(opts, :faults, %{})),
        actions: %{},
        trace: [],
@@ -42,7 +44,7 @@ defmodule Zaik.Home.Mirror.Store do
       capability: capability,
       target: target,
       fault: fault,
-      accepted_at: DateTime.utc_now(),
+      accepted_at: Zaik.Time.now(state.clock),
       status: "attempted"
     }
 
@@ -80,7 +82,7 @@ defmodule Zaik.Home.Mirror.Store do
 
           :delayed_convergence ->
             delay_ms = fault_value(action.fault, :delay_ms, 50)
-            Process.send_after(self(), {:converge, action_id}, delay_ms)
+            Zaik.Time.send_after(state.clock, self(), {:converge, action_id}, delay_ms)
             {:reply, :ok, update_action_status(state, action_id, "convergence_scheduled")}
 
           _ ->
@@ -89,6 +91,7 @@ defmodule Zaik.Home.Mirror.Store do
     end
   end
 
+  def handle_call(:barrier, _from, state), do: {:reply, :ok, state}
   def handle_call(:actions, _from, state), do: {:reply, state.trace, state}
   def handle_call(:side_effect_count, _from, state), do: {:reply, state.side_effect_count, state}
 
@@ -100,18 +103,18 @@ defmodule Zaik.Home.Mirror.Store do
       {:ok, action} ->
         report = transition_payload(action.target, action.fault)
 
-        {:ok, device} =
+        {:ok, _device} =
           Zaik.Home.DeviceStore.upsert_device(
             state.device_store,
             action.device,
             report,
-            %{"source" => "mirror", "observed_at" => DateTime.utc_now()}
+            %{"source" => "mirror", "observed_at" => Zaik.Time.now(state.clock)}
           )
 
         Zaik.Home.ActionVerifier.observe(
           action.device,
           report,
-          device.received_at,
+          Zaik.Time.now(state.clock),
           server: state.verifier
         )
 

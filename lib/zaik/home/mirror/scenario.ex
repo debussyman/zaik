@@ -7,8 +7,8 @@ defmodule Zaik.Home.Mirror.Scenario do
   defstruct [
     :id,
     :description,
-    :now,
     version: 1,
+    now: ~U[2026-01-01 00:00:00Z],
     areas: [],
     entities: [],
     presets: [],
@@ -27,6 +27,7 @@ defmodule Zaik.Home.Mirror.Scenario do
          :ok <- list_of_maps(scenario.areas, :invalid_areas),
          :ok <- list_of_maps(scenario.presets, :invalid_presets),
          :ok <- list_of_maps(scenario.desired_state, :invalid_desired_state),
+         :ok <- validate_now(scenario.now),
          :ok <- validate_areas(scenario.areas),
          :ok <- validate_entities(scenario.entities),
          :ok <- validate_presets(scenario.presets),
@@ -56,6 +57,9 @@ defmodule Zaik.Home.Mirror.Scenario do
     |> then(&:crypto.hash(:sha256, &1))
     |> Base.encode16(case: :lower)
   end
+
+  defp validate_now(%DateTime{}), do: :ok
+  defp validate_now(_now), do: {:error, :invalid_scenario_time}
 
   defp validate_areas(areas) do
     invalid =

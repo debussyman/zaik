@@ -152,12 +152,67 @@ defmodule Zaik.Home.MirrorTest do
     assert run.report.passed? == false
   end
 
+  test "virtual time drives verification expiry and retry eligibility without sleeping" do
+    scenario =
+      Zaik.Home.Mirror.Scenarios.lily_bedtime_with_ac(
+        faults: %{
+          "Lily's bedroom left blind" => %{
+            type: :delayed_convergence,
+            delay_ms: 100,
+            reported_position: 50
+          }
+        },
+        metadata: %{verification_timeout_ms: 50, verification_wait_ms: 0}
+      )
+
+    assert {:ok, run} =
+             Runner.run(scenario, fn mirror, context ->
+               context =
+                 Map.merge(context, %{
+                   channel: :mirror,
+                   chat_id: scenario.id,
+                   message_id: "virtual-retry"
+                 })
+
+               {:ok, action} =
+                 Zaik.Tools.Executor.run(
+                   "control_device",
+                   %{
+                     "device" => "Lily's bedroom left blind",
+                     "capability" => "cover",
+                     "target" => %{"state" => "CLOSE"}
+                   },
+                   context
+                 )
+
+               assert action.verification_status == "pending"
+               assert %{fired: 2} = Zaik.Home.Mirror.advance(mirror, 100)
+
+               assert {:ok, entry} =
+                        Zaik.Home.ActionLedger.lookup(action.action_id, mirror.action_ledger)
+
+               {:ok, decision} =
+                 Zaik.Home.ActionRetryPolicy.evaluate(
+                   entry,
+                   context,
+                   settle_ms: 0,
+                   cooldown_ms: 0
+                 )
+
+               %{action: action, decision: decision, now: Zaik.Home.Mirror.now(mirror)}
+             end)
+
+    assert run.result.now == ~U[2026-01-01 00:00:00.100Z]
+    assert run.result.decision.eligible == true
+    assert run.result.decision.reason == "fresh_state_not_converged"
+  end
+
   test "supports delayed convergence and evaluates final semantic state" do
     scenario =
       bedtime_scenario(%{
         "Lily's bedroom left blind" => %{type: :delayed_convergence, delay_ms: 30}
       })
-      |> put_in([Access.key!(:metadata), :verification_wait_ms], 5)
+      |> put_in([Access.key!(:metadata), :verification_wait_ms], 0)
 
     assert {:ok, run} =
              Runner.run(
@@ -187,6 +242,11 @@ defmodule Zaik.Home.MirrorTest do
 
     left_check = Enum.find(run.report.checks, &String.contains?(&1.name, "left blind"))
     assert left_check.passed? == true
+
+    left_entity =
+      Enum.find(run.report.snapshot.entities, &(&1.name == "Lily's bedroom left blind"))
+
+    assert left_entity.observed_at == "2026-01-01T00:00:00.030Z"
   end
 
   test "rejects malformed scenarios and unavailable declared capabilities" do

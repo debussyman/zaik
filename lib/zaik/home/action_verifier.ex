@@ -31,6 +31,7 @@ defmodule Zaik.Home.ActionVerifier do
       timeout_ms: Keyword.get(configured, :timeout_ms, @default_timeout_ms),
       wait_ms: Keyword.get(configured, :wait_ms, 1_500),
       retention_ms: Keyword.get(configured, :retention_ms, @default_retention_ms),
+      clock: Keyword.get(configured, :clock),
       position_tolerance:
         Keyword.get(configured, :position_tolerance, @default_position_tolerance)
     }
@@ -67,6 +68,8 @@ defmodule Zaik.Home.ActionVerifier do
     GenServer.call(Keyword.get(opts, :server, __MODULE__), {:status, action_id})
   end
 
+  def barrier(server \\ __MODULE__), do: GenServer.call(server, :barrier)
+
   def await(action_id, timeout_ms, opts \\ []) when is_binary(action_id) do
     case await_many([action_id], timeout_ms, opts) do
       %{^action_id => result} -> result
@@ -100,7 +103,7 @@ defmodule Zaik.Home.ActionVerifier do
 
   @impl true
   def handle_call({:register, action_id, device, capability, target, opts}, _from, state) do
-    now = DateTime.utc_now()
+    now = Zaik.Time.now(state.config.clock)
     timeout_ms = Keyword.get(opts, :timeout_ms, state.config.timeout_ms)
 
     token = make_ref()
@@ -123,7 +126,13 @@ defmodule Zaik.Home.ActionVerifier do
       ledger: Keyword.get(opts, :ledger, Zaik.Home.ActionLedger)
     }
 
-    Process.send_after(self(), {:expire, action_id, token}, timeout_ms)
+    Zaik.Time.send_after(
+      state.config.clock,
+      self(),
+      {:expire, action_id, token},
+      timeout_ms
+    )
+
     actions = Map.put(state.actions, action_id, action)
     {:reply, {:ok, public_status(action)}, %{state | actions: actions}}
   end
@@ -134,7 +143,7 @@ defmodule Zaik.Home.ActionVerifier do
         {:reply, {:error, :not_found}, state}
 
       {:ok, action} ->
-        action = %{action | status: :pending, published_at: DateTime.utc_now()}
+        action = %{action | status: :pending, published_at: Zaik.Time.now(state.config.clock)}
         {action, state} = maybe_verify_from_latest(action, state)
         {:reply, {:ok, public_status(action)}, put_action(state, action)}
     end
@@ -147,10 +156,12 @@ defmodule Zaik.Home.ActionVerifier do
 
       {:ok, action} ->
         action = %{action | status: :cancelled, reason: inspect(reason)}
-        schedule_cleanup(action, state.config.retention_ms)
+        schedule_cleanup(action, state.config)
         {:reply, :ok, put_action(state, action)}
     end
   end
+
+  def handle_call(:barrier, _from, state), do: {:reply, :ok, state}
 
   def handle_call({:status, action_id}, _from, state) do
     reply =
@@ -181,7 +192,7 @@ defmodule Zaik.Home.ActionVerifier do
               observed: relevant_observation(action.target, payload)
           }
 
-          schedule_cleanup(verified, state.config.retention_ms)
+          schedule_cleanup(verified, state.config)
           notify_ledger(verified)
           Map.put(actions, action_id, verified)
         else
@@ -197,7 +208,7 @@ defmodule Zaik.Home.ActionVerifier do
     case Map.get(state.actions, action_id) do
       %{status: status, token: ^token} = action when status in [:registered, :pending] ->
         action = %{action | status: :expired, reason: "verification_timeout"}
-        schedule_cleanup(action, state.config.retention_ms)
+        schedule_cleanup(action, state.config)
         notify_ledger(action)
         {:noreply, put_action(state, action)}
 
@@ -228,7 +239,7 @@ defmodule Zaik.Home.ActionVerifier do
               observed: relevant_observation(action.target, payload)
           }
 
-          schedule_cleanup(verified, state.config.retention_ms)
+          schedule_cleanup(verified, state.config)
           notify_ledger(verified)
           {verified, state}
         else
@@ -387,8 +398,14 @@ defmodule Zaik.Home.ActionVerifier do
   defp put_action(state, action),
     do: %{state | actions: Map.put(state.actions, action.action_id, action)}
 
-  defp schedule_cleanup(action, retention_ms),
-    do: Process.send_after(self(), {:cleanup, action.action_id, action.token}, retention_ms)
+  defp schedule_cleanup(action, config) do
+    Zaik.Time.send_after(
+      config.clock,
+      self(),
+      {:cleanup, action.action_id, action.token},
+      config.retention_ms
+    )
+  end
 
   defp process_available?(server) when is_pid(server), do: Process.alive?(server)
   defp process_available?(server) when is_atom(server), do: not is_nil(Process.whereis(server))
