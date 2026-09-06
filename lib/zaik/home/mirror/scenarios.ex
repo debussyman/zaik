@@ -5,6 +5,69 @@ defmodule Zaik.Home.Mirror.Scenarios do
 
   alias Zaik.Home.Mirror.Scenario
 
+  def stale_report do
+    now = ~U[2026-02-01 12:00:00Z]
+
+    single_blind_scenario(%{
+      id: "stale_report_does_not_regress_state",
+      now: now,
+      desired_state: [
+        %{device: "Office blind", capability: "cover", target: %{"state" => "OPEN"}}
+      ],
+      faults: %{"Office blind" => :never_converges},
+      events: [state_report(10, now, -1_000, %{"state" => "CLOSE", "position" => 0})],
+      metadata: %{max_side_effects: 1, verification_wait_ms: 0}
+    })
+  end
+
+  def duplicate_report do
+    now = ~U[2026-02-01 12:00:00Z]
+    report = state_report(10, now, 10, %{"state" => "CLOSE", "position" => 0})
+
+    single_blind_scenario(%{
+      id: "duplicate_report_is_idempotent",
+      now: now,
+      desired_state: [
+        %{device: "Office blind", capability: "cover", target: %{"state" => "CLOSE"}}
+      ],
+      faults: %{"Office blind" => :never_converges},
+      events: [report, %{report | at_ms: 20}],
+      metadata: %{max_side_effects: 1, verification_wait_ms: 0}
+    })
+  end
+
+  def out_of_order_reports do
+    now = ~U[2026-02-01 12:00:00Z]
+
+    single_blind_scenario(%{
+      id: "out_of_order_reports_preserve_newest_state",
+      now: now,
+      desired_state: [
+        %{device: "Office blind", capability: "cover", target: %{"state" => "CLOSE"}}
+      ],
+      events: [
+        state_report(20, now, 10, %{"state" => "CLOSE", "position" => 0}),
+        state_report(30, now, 5, %{"state" => "OPEN", "position" => 100})
+      ],
+      metadata: %{max_side_effects: 0}
+    })
+  end
+
+  def conflicting_actions do
+    now = ~U[2026-02-01 12:00:00Z]
+
+    single_blind_scenario(%{
+      id: "conflicting_pending_action_is_rejected",
+      now: now,
+      desired_state: [
+        %{device: "Office blind", capability: "cover", target: %{"state" => "CLOSE"}}
+      ],
+      faults: %{"Office blind" => :never_converges},
+      events: [state_report(10, now, 10, %{"state" => "CLOSE", "position" => 0})],
+      metadata: %{max_side_effects: 1, verification_wait_ms: 0}
+    })
+  end
+
   def lily_with_history_and_telemetry(opts \\ []) do
     now = Keyword.get(opts, :now, ~U[2026-01-01 12:00:00Z])
 
@@ -63,6 +126,7 @@ defmodule Zaik.Home.Mirror.Scenarios do
       ],
       home_history: Keyword.get(opts, :home_history, []),
       ops_telemetry: Keyword.get(opts, :ops_telemetry, %{}),
+      events: Keyword.get(opts, :events, []),
       desired_state: [
         %{
           device: "Lily's bedroom left blind",
@@ -82,6 +146,38 @@ defmodule Zaik.Home.Mirror.Scenarios do
           Map.new(Keyword.get(opts, :metadata, %{}))
         )
     })
+  end
+
+  defp single_blind_scenario(attrs) do
+    Scenario.new!(%{
+      id: attrs.id,
+      description: attrs.id,
+      now: attrs.now,
+      areas: [%{id: "office", name: "Office"}],
+      entities: [
+        %{
+          id: "office-blind",
+          name: "Office blind",
+          area_id: "office",
+          capabilities: ["cover"],
+          payload: %{"position" => 100, "state" => "OPEN"}
+        }
+      ],
+      desired_state: attrs.desired_state,
+      faults: Map.get(attrs, :faults, %{}),
+      events: Map.get(attrs, :events, []),
+      metadata: Map.get(attrs, :metadata, %{})
+    })
+  end
+
+  defp state_report(at_ms, now, observed_offset_ms, payload) do
+    %{
+      type: :state_report,
+      at_ms: at_ms,
+      device: "Office blind",
+      payload: payload,
+      observed_at: DateTime.add(now, observed_offset_ms, :millisecond)
+    }
   end
 
   defp lily_home_history(now) do

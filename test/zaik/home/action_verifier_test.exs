@@ -109,6 +109,75 @@ defmodule Zaik.Home.ActionVerifierTest do
              Zaik.Home.ActionVerifier.await("new-action", 10, server: verifier)
   end
 
+  test "an older out-of-order observation cannot verify a pending target", %{verifier: verifier} do
+    now = DateTime.utc_now()
+
+    assert {:ok, _registered} =
+             Zaik.Home.ActionVerifier.register(
+               "ordered-action",
+               "Office blind",
+               "cover",
+               %{"state" => "OPEN"},
+               server: verifier
+             )
+
+    assert {:ok, _pending} =
+             Zaik.Home.ActionVerifier.published("ordered-action", server: verifier)
+
+    Zaik.Home.ActionVerifier.observe(
+      "Office blind",
+      %{"state" => "CLOSE", "position" => 0},
+      DateTime.add(now, 10, :second),
+      server: verifier
+    )
+
+    Zaik.Home.ActionVerifier.observe(
+      "Office blind",
+      %{"state" => "OPEN", "position" => 100},
+      DateTime.add(now, 5, :second),
+      server: verifier
+    )
+
+    Zaik.Home.ActionVerifier.barrier(verifier)
+
+    assert {:ok, %{status: "pending", verified: false}} =
+             Zaik.Home.ActionVerifier.status("ordered-action", server: verifier)
+  end
+
+  test "rejects a conflicting target while an action is pending", %{verifier: verifier} do
+    assert {:ok, _registered} =
+             Zaik.Home.ActionVerifier.register(
+               "first-action",
+               "Office blind",
+               "cover",
+               %{"state" => "CLOSE"},
+               server: verifier
+             )
+
+    assert {:ok, _pending} =
+             Zaik.Home.ActionVerifier.published("first-action", server: verifier)
+
+    assert {:error, {:conflicting_action_pending, "first-action"}} =
+             Zaik.Home.ActionVerifier.register(
+               "second-action",
+               "Office blind",
+               "cover",
+               %{"state" => "OPEN"},
+               server: verifier
+             )
+
+    assert :ok = Zaik.Home.ActionVerifier.cancel("first-action", :operator, server: verifier)
+
+    assert {:ok, _registered} =
+             Zaik.Home.ActionVerifier.register(
+               "second-action",
+               "Office blind",
+               "cover",
+               %{"state" => "OPEN"},
+               server: verifier
+             )
+  end
+
   test "expires deterministically from an injected virtual clock" do
     {:ok, clock} =
       start_supervised({Zaik.Home.Mirror.Clock, name: nil, now: ~U[2026-03-10 08:00:00Z]})

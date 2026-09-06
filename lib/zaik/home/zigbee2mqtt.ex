@@ -185,15 +185,26 @@ defmodule Zaik.Home.Zigbee2MQTT do
 
         metadata = %{
           "source" => "zigbee2mqtt",
-          "topic" => topic
+          "topic" => topic,
+          "observed_at" => Map.get(decoded, "last_seen") || Map.get(decoded, "lastSeen")
         }
 
-        with {:ok, device} <-
-               Zaik.Home.DeviceStore.upsert_device(store, friendly_name, decoded, metadata) do
-          record_history(history_store, device.friendly_name, device.payload, device.metadata)
-          report_action_verification(verifier, device, decoded)
-          evaluate_alerts(device.friendly_name, device.payload, device.metadata)
-          {:ok, device}
+        case Zaik.Home.DeviceStore.upsert_device(store, friendly_name, decoded, metadata) do
+          {:ok, device} ->
+            record_history(
+              history_store,
+              device.friendly_name,
+              device.payload,
+              device.metadata,
+              device.observed_at
+            )
+
+            report_action_verification(verifier, device, decoded)
+            evaluate_alerts(device.friendly_name, device.payload, device.metadata)
+            {:ok, device}
+
+          {:ignored, reason} ->
+            {:ignored, reason}
         end
     end
   end
@@ -201,10 +212,17 @@ defmodule Zaik.Home.Zigbee2MQTT do
   defp route_relative(_relative, _decoded, _store, _history_store, _verifier, _topic),
     do: :ignored
 
-  defp record_history(nil, _friendly_name, _payload, _metadata), do: :ok
+  defp record_history(nil, _friendly_name, _payload, _metadata, _observed_at), do: :ok
 
-  defp record_history(history_store, friendly_name, payload, metadata) do
-    Zaik.Home.HistoryStore.record_device(history_store, friendly_name, payload, metadata)
+  defp record_history(history_store, friendly_name, payload, metadata, observed_at) do
+    Zaik.Home.HistoryStore.record_device(
+      history_store,
+      friendly_name,
+      payload,
+      metadata,
+      observed_at: observed_at
+    )
+
     :ok
   rescue
     error ->
@@ -223,7 +241,7 @@ defmodule Zaik.Home.Zigbee2MQTT do
       Zaik.Home.ActionVerifier.observe(
         device.friendly_name,
         payload,
-        device.received_at,
+        device.observed_at || device.received_at,
         server: verifier
       )
     end

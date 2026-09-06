@@ -14,6 +14,7 @@ defmodule Zaik.Home.Mirror.Scenario do
     presets: [],
     home_history: [],
     ops_telemetry: %{},
+    events: [],
     desired_state: [],
     faults: %{},
     metadata: %{}
@@ -31,6 +32,8 @@ defmodule Zaik.Home.Mirror.Scenario do
          :ok <- list_of_maps(scenario.home_history, :invalid_home_history),
          :ok <- validate_home_history(scenario.home_history),
          :ok <- validate_ops_telemetry(scenario.ops_telemetry),
+         :ok <- list_of_maps(scenario.events, :invalid_events),
+         :ok <- validate_events(scenario.events),
          :ok <- list_of_maps(scenario.desired_state, :invalid_desired_state),
          :ok <- validate_now(scenario.now),
          :ok <- validate_areas(scenario.areas),
@@ -172,6 +175,22 @@ defmodule Zaik.Home.Mirror.Scenario do
       end
     end)
   end
+
+  defp validate_events(events) do
+    invalid =
+      Enum.find(events, fn event ->
+        normalize_event_type(value(event, :type)) != :state_report or
+          not is_integer(value(event, :at_ms)) or value(event, :at_ms) < 0 or
+          not present?(event, :device) or not is_map(value(event, :payload)) or
+          not valid_datetime?(value(event, :observed_at))
+      end)
+
+    if invalid, do: {:error, {:invalid_event, invalid}}, else: :ok
+  end
+
+  defp normalize_event_type(:state_report), do: :state_report
+  defp normalize_event_type("state_report"), do: :state_report
+  defp normalize_event_type(_type), do: :unknown
 
   defp validate_desired_state(desired_state) do
     invalid =

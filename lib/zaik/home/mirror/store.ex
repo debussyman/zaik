@@ -1,6 +1,7 @@
 defmodule Zaik.Home.Mirror.Store do
   @moduledoc """
-  Deterministic virtual adapter state and action trace for one mirror run.
+  Deterministic virtual adapter state plus action and ordered-report traces for
+  one mirror run.
   """
 
   use GenServer
@@ -16,21 +17,37 @@ defmodule Zaik.Home.Mirror.Store do
 
   def commit(server, action_id), do: GenServer.call(server, {:commit, action_id})
   def actions(server), do: GenServer.call(server, :actions)
+  def reports(server), do: GenServer.call(server, :reports)
   def side_effect_count(server), do: GenServer.call(server, :side_effect_count)
   def barrier(server), do: GenServer.call(server, :barrier)
 
   @impl true
   def init(opts) do
-    {:ok,
-     %{
-       device_store: Keyword.fetch!(opts, :device_store),
-       verifier: Keyword.fetch!(opts, :action_verifier),
-       clock: Keyword.fetch!(opts, :clock),
-       faults: normalize_faults(Keyword.get(opts, :faults, %{})),
-       actions: %{},
-       trace: [],
-       side_effect_count: 0
-     }}
+    state = %{
+      device_store: Keyword.fetch!(opts, :device_store),
+      history_store: Keyword.get(opts, :history_store),
+      verifier: Keyword.fetch!(opts, :action_verifier),
+      clock: Keyword.fetch!(opts, :clock),
+      faults: normalize_faults(Keyword.get(opts, :faults, %{})),
+      actions: %{},
+      trace: [],
+      report_trace: [],
+      side_effect_count: 0
+    }
+
+    opts
+    |> Keyword.get(:events, [])
+    |> Enum.with_index()
+    |> Enum.each(fn {event, index} ->
+      Zaik.Time.send_after(
+        state.clock,
+        self(),
+        {:scenario_event, index, event},
+        fault_value(event, :at_ms, 0)
+      )
+    end)
+
+    {:ok, state}
   end
 
   @impl true
@@ -93,36 +110,103 @@ defmodule Zaik.Home.Mirror.Store do
 
   def handle_call(:barrier, _from, state), do: {:reply, :ok, state}
   def handle_call(:actions, _from, state), do: {:reply, state.trace, state}
+  def handle_call(:reports, _from, state), do: {:reply, state.report_trace, state}
   def handle_call(:side_effect_count, _from, state), do: {:reply, state.side_effect_count, state}
 
   @impl true
   def handle_info({:converge, action_id}, state), do: {:noreply, converge(state, action_id)}
 
+  def handle_info({:scenario_event, index, event}, state) do
+    case normalize_atom(fault_value(event, :type, :none)) do
+      :state_report ->
+        device = fault_value(event, :device, nil)
+        payload = fault_value(event, :payload, %{})
+        observed_at = fault_value(event, :observed_at, Zaik.Time.now(state.clock))
+
+        {state, _disposition} =
+          deliver_report(state, device, payload, observed_at, %{
+            source: "scenario",
+            event_index: index
+          })
+
+        {:noreply, state}
+
+      _unknown ->
+        {:noreply, state}
+    end
+  end
+
   defp converge(state, action_id) do
     case Map.fetch(state.actions, action_id) do
       {:ok, action} ->
         report = transition_payload(action.target, action.fault)
+        observed_at = Zaik.Time.now(state.clock)
 
-        {:ok, _device} =
-          Zaik.Home.DeviceStore.upsert_device(
-            state.device_store,
-            action.device,
-            report,
-            %{"source" => "mirror", "observed_at" => Zaik.Time.now(state.clock)}
-          )
+        {state, disposition} =
+          deliver_report(state, action.device, report, observed_at, %{
+            source: "action",
+            action_id: action_id
+          })
 
-        Zaik.Home.ActionVerifier.observe(
-          action.device,
-          report,
-          Zaik.Time.now(state.clock),
-          server: state.verifier
-        )
-
-        update_action_status(state, action_id, "reported")
+        status = if disposition == :accepted, do: "reported", else: "report_ignored"
+        update_action_status(state, action_id, status)
 
       :error ->
         state
     end
+  end
+
+  defp deliver_report(state, device, payload, observed_at, attrs) do
+    result =
+      Zaik.Home.DeviceStore.upsert_device(
+        state.device_store,
+        device,
+        payload,
+        %{"source" => "mirror", "observed_at" => observed_at}
+      )
+
+    disposition =
+      case result do
+        {:ok, current_device} ->
+          record_history(state.history_store, current_device, observed_at)
+
+          Zaik.Home.ActionVerifier.observe(
+            device,
+            payload,
+            observed_at,
+            server: state.verifier
+          )
+
+          :accepted
+
+        {:ignored, reason} ->
+          reason
+      end
+
+    trace = %{
+      device: device,
+      payload: payload,
+      observed_at: DateTime.to_iso8601(observed_at),
+      delivered_at: Zaik.Time.now(state.clock) |> DateTime.to_iso8601(),
+      disposition: to_string(disposition),
+      source: attrs.source,
+      action_id: Map.get(attrs, :action_id),
+      event_index: Map.get(attrs, :event_index)
+    }
+
+    {%{state | report_trace: state.report_trace ++ [trace]}, disposition}
+  end
+
+  defp record_history(nil, _device, _observed_at), do: :ok
+
+  defp record_history(history_store, device, observed_at) do
+    Zaik.Home.HistoryStore.record_device(
+      history_store,
+      device.friendly_name,
+      device.payload,
+      device.metadata,
+      observed_at: observed_at
+    )
   end
 
   defp transition_payload(%{"position" => position}, fault) do
@@ -179,6 +263,7 @@ defmodule Zaik.Home.Mirror.Store do
       "executor_failure" -> :executor_failure
       "never_converges" -> :never_converges
       "delayed_convergence" -> :delayed_convergence
+      "state_report" -> :state_report
       _ -> :none
     end
   end

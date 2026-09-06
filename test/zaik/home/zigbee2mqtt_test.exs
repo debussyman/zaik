@@ -20,6 +20,42 @@ defmodule Zaik.Home.Zigbee2MQTTTest do
     assert device.payload["temperature"] == 26.32
   end
 
+  test "does not apply or record an older source-timestamped report", %{store: store} do
+    {:ok, history} =
+      start_supervised({Zaik.Home.HistoryStore, name: nil, db_path: ":memory:"})
+
+    assert {:ok, _device} =
+             Zaik.Home.Zigbee2MQTT.handle_publish(
+               "zigbee2mqtt/Office blind",
+               Jason.encode!(%{
+                 "position" => 0,
+                 "last_seen" => "2026-02-01T12:00:10Z"
+               }),
+               device_store: store,
+               history_store: history
+             )
+
+    assert {:ignored, :stale} =
+             Zaik.Home.Zigbee2MQTT.handle_publish(
+               "zigbee2mqtt/Office blind",
+               Jason.encode!(%{
+                 "position" => 100,
+                 "last_seen" => "2026-02-01T12:00:09Z"
+               }),
+               device_store: store,
+               history_store: history
+             )
+
+    assert {:ok, device} = Zaik.Home.DeviceStore.get_device(store, "Office blind")
+    assert device.payload["position"] == 0
+    assert Zaik.Home.HistoryStore.count_readings(history, "Office blind") == 1
+
+    assert {:ok, [reading]} =
+             Zaik.Home.HistoryStore.recent_readings(history, "Office blind", [])
+
+    assert reading.observed_at == ~U[2026-02-01 12:00:10Z]
+  end
+
   test "correlates device reports with pending action verification", %{store: store} do
     {:ok, verifier} =
       start_supervised({Zaik.Home.ActionVerifier, name: nil, timeout_ms: 500})

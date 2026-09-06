@@ -20,6 +20,36 @@ defmodule Zaik.Home.DeviceStoreTest do
     assert device.topic == "zigbee2mqtt/Office FP300"
   end
 
+  test "ignores stale and duplicate source reports", %{store: store} do
+    assert {:ok, _device} =
+             Zaik.Home.DeviceStore.upsert_device(
+               store,
+               "Office blind",
+               %{"position" => 0},
+               %{"observed_at" => ~U[2026-02-01 12:00:10Z]}
+             )
+
+    assert {:ignored, :stale} =
+             Zaik.Home.DeviceStore.upsert_device(
+               store,
+               "Office blind",
+               %{"position" => 100},
+               %{"observed_at" => ~U[2026-02-01 12:00:09Z]}
+             )
+
+    assert {:ignored, :duplicate} =
+             Zaik.Home.DeviceStore.upsert_device(
+               store,
+               "Office blind",
+               %{"position" => 0},
+               %{"observed_at" => ~U[2026-02-01 12:00:10Z]}
+             )
+
+    assert {:ok, device} = Zaik.Home.DeviceStore.get_device(store, "Office blind")
+    assert device.payload["position"] == 0
+    assert device.observed_at == ~U[2026-02-01 12:00:10Z]
+  end
+
   test "finds devices by case-insensitive substring", %{store: store} do
     Zaik.Home.DeviceStore.upsert_device(store, "Lily presence sensor", %{"presence" => false})
 

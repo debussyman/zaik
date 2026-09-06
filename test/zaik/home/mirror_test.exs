@@ -329,6 +329,14 @@ defmodule Zaik.Home.MirrorTest do
                desired_state: []
              })
 
+    assert {:error, {:invalid_event, _event}} =
+             Scenario.new(%{
+               id: "bad-event",
+               entities: [],
+               events: [%{type: :state_report, at_ms: -1, device: "sensor", payload: %{}}],
+               desired_state: []
+             })
+
     scenario =
       Scenario.new!(%{
         id: "bad-capability",

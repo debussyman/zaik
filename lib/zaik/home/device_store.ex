@@ -4,7 +4,9 @@ defmodule Zaik.Home.DeviceStore do
 
   The store intentionally keeps only the current known state in OTP memory for
   the first home-automation slice. MQTT/Zigbee2MQTT remain the source of truth,
-  and retained MQTT messages repopulate this store after restarts.
+  and retained MQTT messages repopulate this store after restarts. Reports with
+  source timestamps older than current state, plus exact timestamped duplicates,
+  are ignored so delivery order cannot regress the canonical snapshot.
   """
 
   use GenServer
@@ -55,22 +57,34 @@ defmodule Zaik.Home.DeviceStore do
 
     existing = Map.get(state.devices, normalize(friendly_name), %{})
     existing_payload = Map.get(existing, :payload, %{})
-    existing_metadata = Map.get(existing, :metadata, %{})
-    merged_metadata = Map.merge(existing_metadata, metadata)
+    observed_at = source_observed_at(metadata, now)
 
-    device = %{
-      friendly_name: friendly_name,
-      payload: Map.merge(existing_payload, payload),
-      metadata: merged_metadata,
-      topic: Map.get(metadata, "topic") || Map.get(metadata, :topic) || Map.get(existing, :topic),
-      first_seen_at: Map.get(existing, :first_seen_at, now),
-      observed_at: source_observed_at(merged_metadata, now),
-      received_at: now,
-      updated_at: now
-    }
+    case report_disposition(existing, payload, observed_at) do
+      :stale ->
+        {:reply, {:ignored, :stale}, state}
 
-    state = put_device(state, device)
-    {:reply, {:ok, device}, state}
+      :duplicate ->
+        {:reply, {:ignored, :duplicate}, state}
+
+      :accept ->
+        existing_metadata = Map.get(existing, :metadata, %{})
+        merged_metadata = Map.merge(existing_metadata, metadata)
+
+        device = %{
+          friendly_name: friendly_name,
+          payload: Map.merge(existing_payload, payload),
+          metadata: merged_metadata,
+          topic:
+            Map.get(metadata, "topic") || Map.get(metadata, :topic) || Map.get(existing, :topic),
+          first_seen_at: Map.get(existing, :first_seen_at, now),
+          observed_at: observed_at,
+          received_at: now,
+          updated_at: now
+        }
+
+        state = put_device(state, device)
+        {:reply, {:ok, device}, state}
+    end
   end
 
   def handle_call({:upsert_metadata, friendly_name, metadata}, _from, state) do
@@ -154,6 +168,35 @@ defmodule Zaik.Home.DeviceStore do
   end
 
   defp sort_devices(devices), do: Enum.sort_by(devices, &String.downcase(&1.friendly_name))
+
+  defp report_disposition(existing, payload, observed_at) do
+    existing_observed_at = Map.get(existing, :observed_at)
+    existing_payload = Map.get(existing, :payload, %{})
+
+    cond do
+      map_size(existing) == 0 ->
+        :accept
+
+      is_struct(existing_observed_at, DateTime) and is_nil(observed_at) ->
+        :stale
+
+      is_struct(existing_observed_at, DateTime) and is_struct(observed_at, DateTime) and
+          DateTime.compare(observed_at, existing_observed_at) == :lt ->
+        :stale
+
+      is_struct(existing_observed_at, DateTime) and is_struct(observed_at, DateTime) and
+        DateTime.compare(observed_at, existing_observed_at) == :eq and
+          payload_already_present?(existing_payload, payload) ->
+        :duplicate
+
+      true ->
+        :accept
+    end
+  end
+
+  defp payload_already_present?(existing, incoming) do
+    Enum.all?(incoming, fn {key, value} -> Map.get(existing, key) == value end)
+  end
 
   defp source_observed_at(metadata, now) do
     value =

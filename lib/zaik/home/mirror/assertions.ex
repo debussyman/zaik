@@ -41,6 +41,7 @@ defmodule Zaik.Home.Mirror.Assertions do
       passed?: Enum.all?(checks, & &1.passed?),
       checks: checks,
       actions: Zaik.Home.Mirror.actions(mirror),
+      reports: Zaik.Home.Mirror.reports(mirror),
       side_effect_count: Zaik.Home.Mirror.side_effect_count(mirror),
       snapshot: Zaik.Home.Mirror.snapshot(mirror)
     }

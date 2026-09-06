@@ -22,7 +22,11 @@ defmodule Zaik.Home.Mirror.Evals do
       %{name: "later_executor_failure_reports_partial_completion", kind: :partial},
       %{name: "accepted_non_convergence_is_not_verified", kind: :stalled},
       %{name: "virtual_time_drives_expiry_and_retry_eligibility", kind: :virtual_retry},
-      %{name: "production_schema_fixtures_execute_real_sql", kind: :sqlite_fixtures}
+      %{name: "production_schema_fixtures_execute_real_sql", kind: :sqlite_fixtures},
+      %{name: "stale_report_does_not_regress_state", kind: :stale_report},
+      %{name: "duplicate_report_is_idempotent", kind: :duplicate_report},
+      %{name: "out_of_order_reports_preserve_newest_state", kind: :out_of_order_reports},
+      %{name: "conflicting_pending_action_is_rejected", kind: :conflicting_actions}
     ]
   end
 
@@ -175,6 +179,105 @@ defmodule Zaik.Home.Mirror.Evals do
           run.result
         )
       end
+    )
+  end
+
+  defp run_case(%{kind: :stale_report} = definition) do
+    finish(
+      definition,
+      Runner.run(Scenarios.stale_report(), fn mirror, context ->
+        with {:ok, action} <- execute_office(context, "stale-action", "CLOSE") do
+          Zaik.Home.Mirror.advance(mirror, 10)
+
+          %{
+            status:
+              Zaik.Home.ActionVerifier.status(action.action_id,
+                server: mirror.action_verifier
+              ),
+            history_count: Zaik.Home.HistoryStore.count_readings(mirror.history_store, nil)
+          }
+        end
+      end),
+      fn run ->
+        match?(
+          %{status: {:ok, %{status: "pending", verified: false}}, history_count: 0},
+          run.result
+        ) and run.report.passed? and run.report.side_effect_count == 1 and
+          Enum.map(run.report.reports, & &1.disposition) == ["stale"]
+      end
+    )
+  end
+
+  defp run_case(%{kind: :duplicate_report} = definition) do
+    finish(
+      definition,
+      Runner.run(Scenarios.duplicate_report(), fn mirror, context ->
+        with {:ok, action} <- execute_office(context, "duplicate-action", "CLOSE") do
+          Zaik.Home.Mirror.advance(mirror, 20)
+
+          %{
+            status:
+              Zaik.Home.ActionVerifier.status(action.action_id,
+                server: mirror.action_verifier
+              ),
+            history_count: Zaik.Home.HistoryStore.count_readings(mirror.history_store, nil)
+          }
+        end
+      end),
+      fn run ->
+        match?(%{status: {:ok, %{status: "verified"}}, history_count: 1}, run.result) and
+          run.report.passed? and
+          Enum.map(run.report.reports, & &1.disposition) == ["accepted", "duplicate"] and
+          run.report.side_effect_count == 1
+      end
+    )
+  end
+
+  defp run_case(%{kind: :out_of_order_reports} = definition) do
+    finish(
+      definition,
+      Runner.run(Scenarios.out_of_order_reports(), fn mirror, _context ->
+        Zaik.Home.Mirror.advance(mirror, 30)
+        Zaik.Home.HistoryStore.count_readings(mirror.history_store, nil)
+      end),
+      fn run ->
+        run.result == 1 and run.report.passed? and run.report.side_effect_count == 0 and
+          Enum.map(run.report.reports, & &1.disposition) == ["accepted", "stale"]
+      end
+    )
+  end
+
+  defp run_case(%{kind: :conflicting_actions} = definition) do
+    finish(
+      definition,
+      Runner.run(Scenarios.conflicting_actions(), fn mirror, context ->
+        with {:ok, first} <- execute_office(context, "conflict-close", "CLOSE") do
+          second = execute_office(context, "conflict-open", "OPEN")
+          Zaik.Home.Mirror.advance(mirror, 10)
+
+          first_status =
+            Zaik.Home.ActionVerifier.status(first.action_id, server: mirror.action_verifier)
+
+          %{second: second, first_status: first_status}
+        end
+      end),
+      fn run ->
+        match?(
+          %{
+            second: {:error, {:conflicting_action_pending, _action_id}},
+            first_status: {:ok, %{status: "verified"}}
+          },
+          run.result
+        ) and run.report.passed? and run.report.side_effect_count == 1
+      end
+    )
+  end
+
+  defp execute_office(context, message_id, state) do
+    Zaik.Tools.Executor.run(
+      "control_device",
+      action("Office blind", %{"state" => state}),
+      request_context(context, message_id)
     )
   end
 

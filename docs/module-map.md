@@ -120,7 +120,7 @@ Home automation is one optional domain, not the whole harness.
 
 | Current module/file | Role | Future target |
 | --- | --- | --- |
-| `Zaik.Home.DeviceStore` | In-memory raw current device state with observed/received timestamps. | `Zaik.Domains.Home.DeviceStore` |
+| `Zaik.Home.DeviceStore` | In-memory raw current device state with observed/received timestamps and stale/duplicate report rejection. | `Zaik.Domains.Home.DeviceStore` |
 | `Zaik.Home.Entity` | Adapter-neutral identity and typed current-state struct. | Keep as the home-domain entity contract. |
 | `Zaik.Home.World` | Projects adapter payloads into capability-filtered current state. | Keep as the ordinary home reasoning boundary. |
 | `Zaik.Home.Capability` | Behaviour for typed state detection and target validation. | Keep as the semantic capability contract. |
@@ -128,7 +128,7 @@ Home automation is one optional domain, not the whole harness.
 | `Zaik.Home.Executor` | Behaviour for adapter execution of validated capability targets. | Keep as the capability executor contract. |
 | `Zaik.Home.Executors.Registry` | Uncached runtime executor discovery. | Keep as the hot-load-friendly executor registry. |
 | `Zaik.Home.ActionLedger` | SQLite request-scoped action idempotency ledger, including later verified-result reconciliation. | Keep in the home execution/policy layer. |
-| `Zaik.Home.ActionVerifier` | Correlates action IDs with later adapter reports and validates target convergence. | Keep in the home execution/policy layer. |
+| `Zaik.Home.ActionVerifier` | Correlates action IDs with ordered adapter reports, validates target convergence, and rejects conflicting pending targets. | Keep in the home execution/policy layer. |
 | `Zaik.Home.ActionRetryPolicy` | Determines retry eligibility from verification state, fresh device state, cooldown, and attempt budget. | Keep as deterministic policy outside the model. |
 | `Zaik.Home.ActionPlan` | Preflights coordinated actions, shares a bounded verification wait, and reports partial completion. | Keep as the multi-action execution boundary. |
 | `Zaik.Home.HistoryStore` | SQLite home readings/history. | `Zaik.Domains.Home.HistoryStore` |
@@ -139,7 +139,7 @@ Home automation is one optional domain, not the whole harness.
 | `Zaik.Home.Tools.ExecutePlan` | Registered preflighted multi-action control tool. | Keep as the coordinated-action tool. |
 | `Zaik.Home.Tools.RetryAction` | Policy-gated retry by persistent action ID; reconstructs only unresolved original targets. | Keep as the explicit retry boundary. |
 | `Zaik.Home.Mirror` / `Mirror.Scenario` / `Mirror.Scenarios` | Isolated runtime plus fingerprinted and reusable virtual-home fixture definitions. | Keep as the evaluation-world boundary. |
-| `Zaik.Home.Mirror.Store` / `Mirror.Executor` | Deterministic virtual action trace, faults, state transitions, and adapter execution. | Keep isolated from physical adapters. |
+| `Zaik.Home.Mirror.Store` / `Mirror.Executor` | Deterministic virtual action/report traces, scheduled reports, faults, state transitions, and adapter execution. | Keep isolated from physical adapters. |
 | `Zaik.Home.Mirror.Fixtures` | Loads declared history and operational data through production store APIs into per-run temporary SQLite databases. | Keep fixture schemas aligned with production migrations. |
 | `Zaik.Time` / `Zaik.Home.Mirror.Clock` | Injectable production/system time facade and manually advanced mirror timer queue. | Keep time-sensitive policy deterministic in evals. |
 | `Zaik.Home.Mirror.Runner` / `Mirror.Assertions` / `Mirror.Evals` | Executes scenarios and evaluates semantic desired state and safety invariants; exposed by `mix zaik.mirror_eval`. | Grow into trace replay and candidate-model gates. |

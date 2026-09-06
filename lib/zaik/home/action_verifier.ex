@@ -7,8 +7,10 @@ defmodule Zaik.Home.ActionVerifier do
   report newly received device state. A target is only marked verified when a
   post-registration report converges on that target.
 
-  Correlation records are intentionally runtime state. Verified terminal
-  outcomes are reconciled into the persistent action ledger when available.
+  Correlation records are intentionally runtime state. Stale and duplicate
+  observations are ignored, and a conflicting target for the same pending
+  entity capability is rejected before execution. Verified terminal outcomes
+  are reconciled into the persistent action ledger when available.
   """
 
   use GenServer
@@ -103,38 +105,46 @@ defmodule Zaik.Home.ActionVerifier do
 
   @impl true
   def handle_call({:register, action_id, device, capability, target, opts}, _from, state) do
-    now = Zaik.Time.now(state.config.clock)
-    timeout_ms = Keyword.get(opts, :timeout_ms, state.config.timeout_ms)
+    device_key = normalize_device(device)
+    capability = to_string(capability)
 
-    token = make_ref()
+    case pending_conflict(state.actions, action_id, device_key, capability, target) do
+      nil ->
+        now = Zaik.Time.now(state.config.clock)
+        timeout_ms = Keyword.get(opts, :timeout_ms, state.config.timeout_ms)
+        token = make_ref()
 
-    action = %{
-      action_id: action_id,
-      token: token,
-      device: device,
-      device_key: normalize_device(device),
-      capability: to_string(capability),
-      target: target,
-      status: :registered,
-      registered_at: now,
-      published_at: nil,
-      expires_at: DateTime.add(now, timeout_ms, :millisecond),
-      observed_at: nil,
-      observed: nil,
-      reason: nil,
-      ledger_key: Keyword.get(opts, :ledger_key),
-      ledger: Keyword.get(opts, :ledger, Zaik.Home.ActionLedger)
-    }
+        action = %{
+          action_id: action_id,
+          token: token,
+          device: device,
+          device_key: device_key,
+          capability: capability,
+          target: target,
+          status: :registered,
+          registered_at: now,
+          published_at: nil,
+          expires_at: DateTime.add(now, timeout_ms, :millisecond),
+          observed_at: nil,
+          observed: nil,
+          reason: nil,
+          ledger_key: Keyword.get(opts, :ledger_key),
+          ledger: Keyword.get(opts, :ledger, Zaik.Home.ActionLedger)
+        }
 
-    Zaik.Time.send_after(
-      state.config.clock,
-      self(),
-      {:expire, action_id, token},
-      timeout_ms
-    )
+        Zaik.Time.send_after(
+          state.config.clock,
+          self(),
+          {:expire, action_id, token},
+          timeout_ms
+        )
 
-    actions = Map.put(state.actions, action_id, action)
-    {:reply, {:ok, public_status(action)}, %{state | actions: actions}}
+        actions = Map.put(state.actions, action_id, action)
+        {:reply, {:ok, public_status(action)}, %{state | actions: actions}}
+
+      conflict ->
+        {:reply, {:error, {:conflicting_action_pending, conflict.action_id}}, state}
+    end
   end
 
   def handle_call({:published, action_id}, _from, state) do
@@ -177,30 +187,35 @@ defmodule Zaik.Home.ActionVerifier do
   def handle_cast({:observe, device, payload, observed_at}, state) do
     device_key = normalize_device(device)
     observation = %{payload: payload, observed_at: observed_at}
-    observations = Map.put(state.observations, device_key, observation)
-    state = %{state | observations: observations}
 
-    actions =
-      Enum.reduce(state.actions, state.actions, fn {action_id, action}, actions ->
-        if action.device_key == device_key and action.status == :pending and
-             new_enough?(observation, action) and
-             converged_target?(action.capability, action.target, payload, state.config) do
-          verified = %{
-            action
-            | status: :verified,
-              observed_at: observed_at,
-              observed: relevant_observation(action.target, payload)
-          }
+    if stale_or_duplicate_observation?(Map.get(state.observations, device_key), observation) do
+      {:noreply, state}
+    else
+      observations = Map.put(state.observations, device_key, observation)
+      state = %{state | observations: observations}
 
-          schedule_cleanup(verified, state.config)
-          notify_ledger(verified)
-          Map.put(actions, action_id, verified)
-        else
-          actions
-        end
-      end)
+      actions =
+        Enum.reduce(state.actions, state.actions, fn {action_id, action}, actions ->
+          if action.device_key == device_key and action.status == :pending and
+               new_enough?(observation, action) and
+               converged_target?(action.capability, action.target, payload, state.config) do
+            verified = %{
+              action
+              | status: :verified,
+                observed_at: observed_at,
+                observed: relevant_observation(action.target, payload)
+            }
 
-    {:noreply, %{state | actions: actions}}
+            schedule_cleanup(verified, state.config)
+            notify_ledger(verified)
+            Map.put(actions, action_id, verified)
+          else
+            actions
+          end
+        end)
+
+      {:noreply, %{state | actions: actions}}
+    end
   end
 
   @impl true
@@ -225,6 +240,26 @@ defmodule Zaik.Home.ActionVerifier do
       end
 
     {:noreply, %{state | actions: actions}}
+  end
+
+  defp pending_conflict(actions, action_id, device_key, capability, target) do
+    Enum.find_value(actions, fn {_existing_id, action} ->
+      if action.action_id != action_id and action.device_key == device_key and
+           action.capability == capability and action.status in [:registered, :pending] and
+           action.target != target do
+        action
+      end
+    end)
+  end
+
+  defp stale_or_duplicate_observation?(nil, _incoming), do: false
+
+  defp stale_or_duplicate_observation?(current, incoming) do
+    case DateTime.compare(incoming.observed_at, current.observed_at) do
+      :lt -> true
+      :eq -> incoming.payload == current.payload
+      :gt -> false
+    end
   end
 
   defp maybe_verify_from_latest(action, state) do

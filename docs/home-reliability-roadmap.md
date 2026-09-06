@@ -97,7 +97,7 @@ while replacing physical adapters with virtual executors.
 Implemented foundation:
 
 - versionable, fingerprinted scenarios contain areas, entities, presets,
-  initial state, desired state, metadata, and injected faults;
+  initial state, desired state, scheduled reports, metadata, and injected faults;
 - isolated per-run device, preset, ledger, verifier, task, and mirror stores;
 - `Zaik.Home.Mirror.Clock` provides manually advanced wall time and timer queues;
   delayed convergence, verification expiry, ledger timestamps, and retry timing
@@ -112,12 +112,17 @@ Implemented foundation:
 - scenarios can declare home-history and operational-telemetry fixtures that
   are loaded through production store APIs into isolated temporary SQLite files;
 - the bounded SQL tool accepts internal per-run store/path bindings, so mirror
-  reads cannot reach production databases.
+  reads cannot reach production databases;
+- scenario event schedules model source-observed time independently from delivery
+  time and retain accepted/stale/duplicate report traces;
+- named stale, duplicate, out-of-order, and concurrently conflicting action
+  scenarios protect canonical-state and verification invariants;
+- stale and duplicate source-timestamped reports cannot regress current state or
+  manufacture verification, and conflicting pending targets for one capability
+  are rejected before adapter execution.
 
 Remaining:
 
-- model stale reports, duplicate/out-of-order events, and concurrent
-  conflicting actions as named durable scenarios;
 - replay sanitized production failures and capability changes as scenarios;
 - attach capability/tool fingerprints and structured failure labels so passing
   trajectories can later become post-training data;

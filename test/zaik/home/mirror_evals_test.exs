@@ -4,6 +4,6 @@ defmodule Zaik.Home.Mirror.EvalsTest do
   test "deterministic mirror regression suite passes" do
     summary = Zaik.Home.Mirror.Evals.run()
     assert summary.failed == 0
-    assert summary.passed == 6
+    assert summary.passed == 10
   end
 end

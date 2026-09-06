@@ -112,9 +112,11 @@ defmodule Zaik.Home.Mirror do
              {Zaik.Home.Mirror.Store,
               name: nil,
               device_store: device_store,
+              history_store: history_store,
               action_verifier: action_verifier,
               clock: clock_provider,
-              faults: scenario.faults}
+              faults: scenario.faults,
+              events: scenario.events}
            ) do
       {:ok,
        %__MODULE__{
@@ -170,6 +172,7 @@ defmodule Zaik.Home.Mirror do
   end
 
   def actions(%__MODULE__{} = mirror), do: Zaik.Home.Mirror.Store.actions(mirror.store)
+  def reports(%__MODULE__{} = mirror), do: Zaik.Home.Mirror.Store.reports(mirror.store)
 
   def advance(%__MODULE__{} = mirror, milliseconds) do
     target_ms = Zaik.Home.Mirror.Clock.monotonic_ms(mirror.clock) + milliseconds

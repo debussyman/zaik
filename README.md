@@ -435,7 +435,7 @@ Live agent evals exercise read planning against temporary production-schema SQLi
 # Fast deterministic routing/SQL guards: no LLM, no MQTT publish.
 nix develop -c mix zaik.routing_eval
 
-# End-to-end virtual-home plans, faults, verification, desired states, and virtual time.
+# Virtual plans, verification, SQLite fixtures, stale/duplicate reports, and conflicts.
 nix develop -c mix zaik.mirror_eval
 
 # Live model evals with isolated real SQLite queries. No production DB reads or MQTT.
@@ -456,6 +456,7 @@ what have we asked you today?
 what tasks failed recently?
 Lily room temperature/current/trend questions against production-schema fixtures
 Lily bedtime-with-AC planning through real tools, preflight, presets, verification, and mirror desired-state assertions
+stale, duplicate, out-of-order, and conflicting-action safety scenarios
 ```
 
 Optional environment overrides:
