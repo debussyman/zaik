@@ -105,6 +105,12 @@ defmodule Zaik.AgentChat.RoutingEvals do
         expected_error: {:unknown_home_column, "device"}
       },
       %{
+        name: "home_sql_rejects_area_id_column",
+        kind: :sql_guard,
+        sql: "SELECT temperature_f FROM home_readings WHERE area_id = 'lily_bedroom' LIMIT 10",
+        expected_error: {:unknown_home_column, "area_id"}
+      },
+      %{
         name: "latest_temperature_accepts_parenthesized_non_null_filter",
         kind: :sql_guard,
         sql:

@@ -35,6 +35,47 @@ defmodule Zaik.AgentChatTest do
     defp tool_result_message?(_message), do: false
   end
 
+  defmodule SQLResultDriftClient do
+    def chat(_prompt, opts) do
+      messages = Keyword.fetch!(opts, :messages)
+
+      response =
+        cond do
+          Enum.any?(messages, &original_question?/1) ->
+            %{"type" => "final", "answer" => "You asked how Lily's room is."}
+
+          Enum.any?(messages, &sql_result?/1) ->
+            %{
+              "type" => "tool_call",
+              "tool" => "get_home_state",
+              "args" => %{"query" => "lily", "capability" => "temperature"}
+            }
+
+          true ->
+            %{
+              "type" => "tool_call",
+              "tool" => "sql_query",
+              "args" => %{
+                "database" => "ops",
+                "query" => "SELECT content FROM zaik_messages LIMIT 10"
+              }
+            }
+        end
+
+      {:ok, %{model: "sql-drift", response: Jason.encode!(response), done: true, raw: %{}}}
+    end
+
+    defp original_question?(%{content: content}) when is_binary(content),
+      do: String.starts_with?(content, "Original user question:")
+
+    defp original_question?(_message), do: false
+
+    defp sql_result?(%{content: content}) when is_binary(content),
+      do: String.starts_with?(String.trim_leading(content), "SQL TOOL RESULT")
+
+    defp sql_result?(_message), do: false
+  end
+
   defmodule FakeSQLTool do
     def run(query, opts) do
       send(self(), {:sql_tool_called, query, opts})
@@ -762,7 +803,9 @@ defmodule Zaik.AgentChatTest do
 
   test "loops through a read-only SQL tool call and returns final answer" do
     assert {:ok, answer} =
-             Zaik.AgentChat.respond("Was Lily's room warm recently?", %{},
+             Zaik.AgentChat.respond(
+               "Was Lily's room warm recently?",
+               %{sql_tool_opts: [home_db_path: "/tmp/mirror-home.db"]},
                client: FakeClient,
                sql_tool: FakeSQLTool,
                config: %{enabled: true, max_tool_calls: 3}
@@ -774,6 +817,7 @@ defmodule Zaik.AgentChatTest do
     assert query =~ "home_readings"
     assert opts[:db] == :home
     assert opts[:limit] == 5
+    assert opts[:home_db_path] == "/tmp/mirror-home.db"
 
     assert {:ok, %{rows: [row | _]}} =
              Zaik.TelemetryStore.query(
@@ -786,6 +830,47 @@ defmodule Zaik.AgentChatTest do
     assert row["fallback_used"] == 0
     assert row["primary_model"]
     assert row["tool_calls_json"] =~ "home_readings"
+  end
+
+  test "writes traces to an injected telemetry store instead of production telemetry" do
+    {:ok, telemetry} =
+      start_supervised({Zaik.TelemetryStore, name: nil, db_path: ":memory:"})
+
+    prompt = "Was Lily's room warm recently? isolated-#{System.unique_integer([:positive])}"
+
+    assert {:ok, _answer} =
+             Zaik.AgentChat.respond(prompt, %{telemetry_store: telemetry},
+               client: FakeClient,
+               sql_tool: FakeSQLTool,
+               config: %{enabled: true, fallback_enabled: false, max_tool_calls: 3}
+             )
+
+    assert {:ok, %{row_count: 1}} =
+             Zaik.TelemetryStore.query(
+               telemetry,
+               "SELECT id FROM zaik_agent_chat_runs WHERE prompt = ?",
+               [prompt],
+               []
+             )
+
+    assert {:ok, %{row_count: 0}} =
+             Zaik.TelemetryStore.query(
+               "SELECT id FROM zaik_agent_chat_runs WHERE prompt = ?",
+               [prompt]
+             )
+  end
+
+  test "finalizes from successful SQL instead of following stored-message tool drift" do
+    assert {:ok, "You asked how Lily's room is."} =
+             Zaik.AgentChat.respond(
+               "What have we asked today?",
+               %{eval_pid: self()},
+               client: SQLResultDriftClient,
+               sql_tool: FakeSQLTool,
+               config: %{enabled: true, fallback_enabled: false, max_tool_calls: 3}
+             )
+
+    refute_received {:zaik_agent_eval_registered_tool_call, %{tool: "get_home_state"}}
   end
 
   test "does not accept home-control done claims before a tool succeeds" do

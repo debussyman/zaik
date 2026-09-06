@@ -54,14 +54,15 @@ Implemented foundation:
 - ordinary current-state prompts now require `get_home_state`, while historical
   and trend requests retain the bounded SQL path;
 - a composability test verifies that adding Lily's blinds does not alter Lily's
-  temperature snapshot.
+  temperature snapshot;
+- live read evals execute against per-run temporary databases created by the
+  production home-history and operational-telemetry migrations.
 
 Remaining:
 
 - persist explicit areas and entity aliases rather than relying on names;
 - preserve source observation timestamps throughout every adapter;
 - add typed historical queries for capabilities and time windows;
-- replace canned SQL eval responses with real temporary SQLite fixture execution;
 - clean or mark history rows previously produced by bootstrap.
 
 ## Phase 2: Composable capabilities
@@ -97,7 +98,7 @@ Implemented foundation:
 
 - versionable, fingerprinted scenarios contain areas, entities, presets,
   initial state, desired state, metadata, and injected faults;
-- isolated in-memory device, preset, ledger, verifier, task, and mirror stores;
+- isolated per-run device, preset, ledger, verifier, task, and mirror stores;
 - `Zaik.Home.Mirror.Clock` provides manually advanced wall time and timer queues;
   delayed convergence, verification expiry, ledger timestamps, and retry timing
   can be evaluated without wall-clock sleeps;
@@ -107,11 +108,14 @@ Implemented foundation:
 - immediate, delayed, non-converging, transport-failure, and executor-failure
   simulation primitives;
 - the live Lily bedtime control eval now executes against the complete mirror
-  and asserts the resulting virtual state rather than canned executor output.
+  and asserts the resulting virtual state rather than canned executor output;
+- scenarios can declare home-history and operational-telemetry fixtures that
+  are loaded through production store APIs into isolated temporary SQLite files;
+- the bounded SQL tool accepts internal per-run store/path bindings, so mirror
+  reads cannot reach production databases.
 
 Remaining:
 
-- add temporary production-schema history/telemetry fixtures;
 - model stale reports, duplicate/out-of-order events, and concurrent
   conflicting actions as named durable scenarios;
 - replay sanitized production failures and capability changes as scenarios;

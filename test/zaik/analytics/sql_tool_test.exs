@@ -29,6 +29,15 @@ defmodule Zaik.Analytics.SQLToolTest do
              Zaik.Analytics.SQLTool.validate("SELECT id FROM ops_tasks", :ops)
   end
 
+  test "infers the database from an allowed view when the model omits or mislabels it" do
+    assert Zaik.Analytics.SQLTool.database_for("SELECT * FROM home_readings", :ops) == :home
+    assert Zaik.Analytics.SQLTool.database_for("SELECT * FROM zaik_tasks", :home) == :ops
+    assert Zaik.Analytics.SQLTool.database_for("SELECT 1", :home) == :home
+
+    assert Zaik.Analytics.SQLTool.run("SELECT 1", db: :unknown) ==
+             {:error, {:unsupported_database, :unknown}}
+  end
+
   test "validates read-only queries against allowed home views" do
     assert {:ok, _} =
              Zaik.Analytics.SQLTool.validate(
@@ -64,6 +73,18 @@ defmodule Zaik.Analytics.SQLToolTest do
                "SELECT created_at, temperature_f FROM home_readings WHERE lower(room) LIKE '%lily%' LIMIT 10",
                :home
              )
+
+    assert {:error, {:unknown_home_column, "area_id"}} =
+             Zaik.Analytics.SQLTool.validate(
+               "SELECT temperature_f FROM home_readings WHERE area_id = 'lily_bedroom' LIMIT 10",
+               :home
+             )
+
+    assert {:error, {:unknown_home_column, "entity_name"}} =
+             Zaik.Analytics.SQLTool.validate(
+               "SELECT temperature_f FROM home_readings WHERE entity_name = 'lily_bedroom' LIMIT 10",
+               :home
+             )
   end
 
   test "requires non-null filter for latest temperature lookups" do
@@ -76,6 +97,12 @@ defmodule Zaik.Analytics.SQLToolTest do
     assert {:error, {:mis_scoped_non_null_filter, "temperature_f"}} =
              Zaik.Analytics.SQLTool.validate(
                "SELECT recorded_at, temperature_f FROM home_readings WHERE lower(device_name) LIKE '%lily%' OR lower(room) LIKE '%lily%' AND temperature_f IS NOT NULL ORDER BY recorded_at DESC LIMIT 1",
+               :home
+             )
+
+    assert {:error, {:mis_scoped_non_null_filter, "temperature_f"}} =
+             Zaik.Analytics.SQLTool.validate(
+               "SELECT recorded_at, temperature_f FROM home_readings WHERE lower(device_name) LIKE '%lily%' OR lower(room) LIKE '%lily%' AND temperature_f IS NOT NULL AND recorded_at >= datetime('now', '-3 hours') ORDER BY recorded_at ASC",
                :home
              )
 

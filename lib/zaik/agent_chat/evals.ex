@@ -2,10 +2,10 @@ defmodule Zaik.AgentChat.Evals do
   @moduledoc """
   Lightweight live-model evals for the AgentChat tool loop.
 
-  These evals use the configured local model, canned read data, and an isolated
-  mirror world for home actions. They exercise real tools, plans, presets,
-  capability validation, verification, and desired-state assertions without
-  depending on production databases or publishing MQTT.
+  These evals use the configured local model and per-run production-schema
+  SQLite fixtures inside an isolated mirror world. They exercise real reads,
+  tools, plans, presets, capability validation, verification, and desired-state
+  assertions without depending on production databases or publishing MQTT.
   """
 
   defmodule CannedControlTool do
@@ -32,184 +32,13 @@ defmodule Zaik.AgentChat.Evals do
     end
   end
 
-  defmodule CannedSQLTool do
+  defmodule FixtureSQLTool do
     @moduledoc false
 
     def run(query, opts) do
       calls = Process.get(:zaik_agent_eval_tool_calls, [])
       Process.put(:zaik_agent_eval_tool_calls, calls ++ [%{query: query, opts: opts}])
-
-      db = Keyword.fetch!(opts, :db)
-
-      with {:ok, _sql} <- Zaik.Analytics.SQLTool.validate(query, db) do
-        {:ok, canned_result(db, query)}
-      end
-    end
-
-    defp canned_result(:ops, query) do
-      downcased = String.downcase(query)
-
-      cond do
-        String.contains?(downcased, "zaik_messages") ->
-          %{
-            columns: ["created_at", "channel", "sender_id", "chat_id", "content"],
-            rows: [
-              %{
-                "created_at" => "2026-08-17T15:56:00Z",
-                "channel" => "telegram",
-                "sender_id" => "111",
-                "chat_id" => "-100",
-                "content" => "what have we asked you today?"
-              },
-              %{
-                "created_at" => "2026-08-17T16:10:00Z",
-                "channel" => "telegram",
-                "sender_id" => "222",
-                "chat_id" => "-100",
-                "content" => "how's Lily's room?"
-              }
-            ],
-            row_count: 2
-          }
-
-        String.contains?(downcased, "zaik_tasks") ->
-          %{
-            columns: ["id", "type", "status", "completed_at", "error_json"],
-            rows: [
-              %{
-                "id" => "task-1",
-                "type" => "llm_prompt",
-                "status" => "failed",
-                "completed_at" => "2026-08-17T14:00:00Z",
-                "error_json" => "timeout"
-              }
-            ],
-            row_count: 1
-          }
-
-        String.contains?(downcased, "zaik_agent_chat_runs") ->
-          %{
-            columns: [
-              "created_at",
-              "prompt",
-              "primary_model",
-              "fallback_used",
-              "final_model",
-              "status"
-            ],
-            rows: [
-              %{
-                "created_at" => "2026-08-17T17:00:00Z",
-                "prompt" => "what have we asked you today?",
-                "primary_model" => "qwen3:4b-instruct",
-                "fallback_used" => 1,
-                "final_model" => "qwen3-coder:30b",
-                "status" => "ok"
-              }
-            ],
-            row_count: 1
-          }
-
-        true ->
-          %{columns: [], rows: [], row_count: 0}
-      end
-    end
-
-    defp canned_result(:home, query) do
-      downcased = String.downcase(query)
-
-      cond do
-        String.contains?(downcased, "home_device_presets") ->
-          %{
-            columns: ["device_name", "preset_name", "capability", "target_json"],
-            rows: [
-              %{
-                "device_name" => "Lily's bedroom right blind",
-                "preset_name" => "above AC",
-                "capability" => "cover",
-                "target_json" => "{\"position\":71}"
-              }
-            ],
-            row_count: 1
-          }
-
-        String.contains?(downcased, "home_devices") ->
-          %{
-            columns: ["friendly_name", "metadata_json", "updated_at"],
-            rows: [
-              %{
-                "friendly_name" => "Lily's room multi-sensor",
-                "metadata_json" => "{}",
-                "updated_at" => "2026-08-17T16:00:00Z"
-              },
-              %{
-                "friendly_name" => "Lily's bedroom left blind",
-                "metadata_json" => "{}",
-                "updated_at" => "2026-08-17T16:01:00Z"
-              },
-              %{
-                "friendly_name" => "Lily's bedroom right blind",
-                "metadata_json" => "{}",
-                "updated_at" => "2026-08-17T16:01:00Z"
-              }
-            ],
-            row_count: 3
-          }
-
-        String.contains?(downcased, "temperature_f is not null") ->
-          %{
-            columns: [
-              "recorded_at",
-              "device_name",
-              "temperature_f",
-              "humidity",
-              "illuminance",
-              "presence"
-            ],
-            rows: [
-              %{
-                "recorded_at" => "2026-08-17T16:00:00Z",
-                "device_name" => "Lily's room multi-sensor",
-                "temperature_f" => 78.4,
-                "humidity" => 56.0,
-                "illuminance" => 220,
-                "presence" => 1
-              }
-            ],
-            row_count: 1
-          }
-
-        true ->
-          %{
-            columns: [
-              "recorded_at",
-              "device_name",
-              "temperature_f",
-              "humidity",
-              "illuminance",
-              "presence"
-            ],
-            rows: [
-              %{
-                "recorded_at" => "2026-08-17T16:01:00Z",
-                "device_name" => "Lily's bedroom right blind",
-                "temperature_f" => nil,
-                "humidity" => nil,
-                "illuminance" => nil,
-                "presence" => nil
-              },
-              %{
-                "recorded_at" => "2026-08-17T16:00:00Z",
-                "device_name" => "Lily's room multi-sensor",
-                "temperature_f" => 78.4,
-                "humidity" => 56.0,
-                "illuminance" => 220,
-                "presence" => 1
-              }
-            ],
-            row_count: 2
-          }
-      end
+      Zaik.Analytics.SQLTool.run(query, opts)
     end
   end
 
@@ -224,7 +53,8 @@ defmodule Zaik.AgentChat.Evals do
         expected_db: :ops,
         expected_query_terms: ["zaik_messages", "role='user'", "chat_id='-100'"],
         forbidden_query_terms: ["sender_id='user'", "channel='main'", "scope='user'"],
-        expected_answer_terms: ["asked"]
+        expected_answer_terms: [],
+        expected_answer_any_terms: ["asked", "what have", "how's"]
       },
       %{
         name: "ops_messages_today_me",
@@ -363,7 +193,7 @@ defmodule Zaik.AgentChat.Evals do
 
     response =
       Zaik.AgentChat.respond(case_def.prompt, context,
-        sql_tool: CannedSQLTool,
+        sql_tool: FixtureSQLTool,
         control_tool: CannedControlTool,
         config: %{
           enabled: true,
@@ -420,6 +250,12 @@ defmodule Zaik.AgentChat.Evals do
         answer_terms?(response, Map.get(case_def, :expected_answer_terms, []))
       )
     ]
+
+    answer_any_checks =
+      case Map.get(case_def, :expected_answer_any_terms, []) do
+        [] -> []
+        terms -> [check(:answer_mentions_fixture_content, answer_any_term?(response, terms))]
+      end
 
     query_checks =
       if Map.has_key?(case_def, :expected_db) do
@@ -482,7 +318,8 @@ defmodule Zaik.AgentChat.Evals do
       )
     ]
 
-    base ++ query_checks ++ registered_checks ++ control_checks ++ forbidden_checks
+    base ++
+      answer_any_checks ++ query_checks ++ registered_checks ++ control_checks ++ forbidden_checks
   end
 
   defp check(name, passed?), do: %{name: name, passed?: passed?}
@@ -546,6 +383,13 @@ defmodule Zaik.AgentChat.Evals do
 
   defp answer_terms?(_response, _terms), do: false
 
+  defp answer_any_term?({:ok, answer}, terms) do
+    answer = String.downcase(answer)
+    Enum.any?(terms, &String.contains?(answer, String.downcase(&1)))
+  end
+
+  defp answer_any_term?(_response, _terms), do: false
+
   defp mirror_control_calls(actions, case_def) do
     tool = Map.get(case_def, :expected_registered_tool, "mirror_action")
 
@@ -569,7 +413,10 @@ defmodule Zaik.AgentChat.Evals do
   end
 
   defp eval_mirror_scenario do
-    Zaik.Home.Mirror.Scenarios.lily_bedtime_with_ac(id: "agent_eval_lily_bedtime")
+    Zaik.Home.Mirror.Scenarios.lily_with_history_and_telemetry(
+      id: "agent_eval_lily_bedtime",
+      now: DateTime.utc_now()
+    )
   end
 
   defp eval_context do

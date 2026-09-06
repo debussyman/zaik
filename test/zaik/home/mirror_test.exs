@@ -249,12 +249,83 @@ defmodule Zaik.Home.MirrorTest do
     assert left_entity.observed_at == "2026-01-01T00:00:00.030Z"
   end
 
+  test "loads isolated production-schema SQLite history and telemetry fixtures" do
+    scenario = Zaik.Home.Mirror.Scenarios.lily_with_history_and_telemetry()
+
+    assert {:ok, run} =
+             Runner.run(scenario, fn mirror, context ->
+               sql_opts = context.sql_tool_opts
+
+               assert File.exists?(mirror.home_db_path)
+               assert File.exists?(mirror.ops_db_path)
+
+               {:ok, home} =
+                 Zaik.Analytics.SQLTool.run(
+                   "SELECT COUNT(*) AS count, MIN(temperature_c) AS minimum, MAX(temperature_c) AS maximum FROM home_readings WHERE device_name = 'Lily''s room multi-sensor' AND temperature_c IS NOT NULL",
+                   Keyword.merge(sql_opts, db: :home)
+                 )
+
+               {:ok, messages} =
+                 Zaik.Analytics.SQLTool.run(
+                   "SELECT sender_id, content FROM zaik_messages WHERE chat_id = '-100' ORDER BY created_at",
+                   Keyword.merge(sql_opts, db: :ops)
+                 )
+
+               {:ok, presets} =
+                 Zaik.Analytics.SQLTool.run(
+                   "SELECT device_name, preset_name, target_json FROM home_device_presets",
+                   Keyword.merge(sql_opts, db: :home)
+                 )
+
+               %{
+                 home: home,
+                 messages: messages,
+                 presets: presets,
+                 home_db_path: mirror.home_db_path,
+                 ops_db_path: mirror.ops_db_path
+               }
+             end)
+
+    assert run.result.home.rows == [
+             %{"count" => 3, "minimum" => 25.0, "maximum" => 25.7777778}
+           ]
+
+    assert Enum.map(run.result.messages.rows, & &1["sender_id"]) == ["111", "222"]
+
+    assert run.result.presets.rows == [
+             %{
+               "device_name" => "Lily's bedroom right blind",
+               "preset_name" => "above AC",
+               "target_json" => "{\"position\":71}"
+             }
+           ]
+
+    refute File.exists?(run.result.home_db_path)
+    refute File.exists?(run.result.ops_db_path)
+  end
+
   test "rejects malformed scenarios and unavailable declared capabilities" do
     assert {:error, {:invalid_area, _area}} =
              Scenario.new(%{
                id: "bad-area",
                areas: [%{id: "room-without-name"}],
                entities: [],
+               desired_state: []
+             })
+
+    assert {:error, {:invalid_home_history_reading, _reading}} =
+             Scenario.new(%{
+               id: "bad-history",
+               entities: [],
+               home_history: [%{device: "sensor", payload: %{}, observed_at: "not-a-time"}],
+               desired_state: []
+             })
+
+    assert {:error, {:unknown_ops_telemetry_sections, [:unknown]}} =
+             Scenario.new(%{
+               id: "bad-ops",
+               entities: [],
+               ops_telemetry: %{unknown: []},
                desired_state: []
              })
 

@@ -29,8 +29,14 @@ defmodule Zaik.Tools.SQLQuery do
     database = normalize_database(value(args, :database))
     limit = normalize_limit(value(args, :limit), 200)
 
+    opts =
+      case value(context, :sql_tool_opts) do
+        opts when is_list(opts) -> Keyword.merge(opts, db: database, limit: limit)
+        _other -> [db: database, limit: limit]
+      end
+
     if is_binary(query) and String.trim(query) != "" do
-      tool.run(query, db: database, limit: limit)
+      tool.run(query, opts)
     else
       {:error, :missing_query}
     end

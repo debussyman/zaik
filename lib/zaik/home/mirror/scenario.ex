@@ -12,6 +12,8 @@ defmodule Zaik.Home.Mirror.Scenario do
     areas: [],
     entities: [],
     presets: [],
+    home_history: [],
+    ops_telemetry: %{},
     desired_state: [],
     faults: %{},
     metadata: %{}
@@ -26,6 +28,9 @@ defmodule Zaik.Home.Mirror.Scenario do
          :ok <- list_of_maps(scenario.entities, :invalid_entities),
          :ok <- list_of_maps(scenario.areas, :invalid_areas),
          :ok <- list_of_maps(scenario.presets, :invalid_presets),
+         :ok <- list_of_maps(scenario.home_history, :invalid_home_history),
+         :ok <- validate_home_history(scenario.home_history),
+         :ok <- validate_ops_telemetry(scenario.ops_telemetry),
          :ok <- list_of_maps(scenario.desired_state, :invalid_desired_state),
          :ok <- validate_now(scenario.now),
          :ok <- validate_areas(scenario.areas),
@@ -61,6 +66,16 @@ defmodule Zaik.Home.Mirror.Scenario do
   defp validate_now(%DateTime{}), do: :ok
   defp validate_now(_now), do: {:error, :invalid_scenario_time}
 
+  defp valid_datetime?(%DateTime{}), do: true
+
+  defp valid_datetime?(value) when is_binary(value) do
+    match?({:ok, _datetime, _offset}, DateTime.from_iso8601(value))
+  end
+
+  defp valid_datetime?(_value), do: false
+  defp optional_datetime?(nil), do: true
+  defp optional_datetime?(value), do: valid_datetime?(value)
+
   defp validate_areas(areas) do
     invalid =
       Enum.find(areas, fn area ->
@@ -90,6 +105,74 @@ defmodule Zaik.Home.Mirror.Scenario do
     if invalid, do: {:error, {:invalid_preset, invalid}}, else: :ok
   end
 
+  defp validate_home_history(history) do
+    invalid =
+      Enum.find(history, fn reading ->
+        not present?(reading, :device) or not is_map(value(reading, :payload)) or
+          not valid_datetime?(value(reading, :observed_at)) or
+          not is_map(value(reading, :metadata) || %{})
+      end)
+
+    if invalid, do: {:error, {:invalid_home_history_reading, invalid}}, else: :ok
+  end
+
+  defp validate_ops_telemetry(telemetry) when is_map(telemetry) do
+    allowed = ~w(messages tasks agent_chat_runs)a
+
+    unknown =
+      telemetry
+      |> Map.keys()
+      |> Enum.map(&normalize_section/1)
+      |> Enum.reject(&(&1 in allowed))
+
+    invalid =
+      Enum.find(allowed, fn section ->
+        value = Map.get(telemetry, section, Map.get(telemetry, to_string(section), []))
+        not is_list(value) or not Enum.all?(value, &is_map/1)
+      end)
+
+    cond do
+      unknown != [] ->
+        {:error, {:unknown_ops_telemetry_sections, unknown}}
+
+      invalid ->
+        {:error, {:invalid_ops_telemetry_section, invalid}}
+
+      invalid_row = invalid_ops_row(telemetry) ->
+        {:error, invalid_row}
+
+      true ->
+        :ok
+    end
+  end
+
+  defp validate_ops_telemetry(_telemetry), do: {:error, :invalid_ops_telemetry}
+
+  defp invalid_ops_row(telemetry) do
+    validators = %{
+      messages: fn row -> present?(row, :content) and valid_datetime?(value(row, :created_at)) end,
+      tasks: fn row ->
+        present?(row, :id) and present?(row, :status) and
+          valid_datetime?(value(row, :submitted_at)) and
+          optional_datetime?(value(row, :started_at)) and
+          optional_datetime?(value(row, :completed_at))
+      end,
+      agent_chat_runs: fn row ->
+        present?(row, :id) and present?(row, :prompt) and present?(row, :status) and
+          valid_datetime?(value(row, :created_at))
+      end
+    }
+
+    Enum.find_value(validators, fn {section, valid?} ->
+      rows = Map.get(telemetry, section, Map.get(telemetry, to_string(section), []))
+
+      case Enum.find(rows, &(not valid?.(&1))) do
+        nil -> nil
+        row -> {:invalid_ops_telemetry_row, section, row}
+      end
+    end)
+  end
+
   defp validate_desired_state(desired_state) do
     invalid =
       Enum.find(desired_state, fn target ->
@@ -107,6 +190,19 @@ defmodule Zaik.Home.Mirror.Scenario do
   end
 
   defp list_of_maps(_value, error), do: {:error, error}
+
+  defp normalize_section(section) when is_atom(section), do: section
+
+  defp normalize_section(section) when is_binary(section) do
+    case section do
+      "messages" -> :messages
+      "tasks" -> :tasks
+      "agent_chat_runs" -> :agent_chat_runs
+      other -> other
+    end
+  end
+
+  defp normalize_section(section), do: section
 
   defp non_empty(value, _error) when is_binary(value) and byte_size(value) > 0, do: :ok
   defp non_empty(_value, error), do: {:error, error}

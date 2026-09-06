@@ -140,6 +140,7 @@ Home automation is one optional domain, not the whole harness.
 | `Zaik.Home.Tools.RetryAction` | Policy-gated retry by persistent action ID; reconstructs only unresolved original targets. | Keep as the explicit retry boundary. |
 | `Zaik.Home.Mirror` / `Mirror.Scenario` / `Mirror.Scenarios` | Isolated runtime plus fingerprinted and reusable virtual-home fixture definitions. | Keep as the evaluation-world boundary. |
 | `Zaik.Home.Mirror.Store` / `Mirror.Executor` | Deterministic virtual action trace, faults, state transitions, and adapter execution. | Keep isolated from physical adapters. |
+| `Zaik.Home.Mirror.Fixtures` | Loads declared history and operational data through production store APIs into per-run temporary SQLite databases. | Keep fixture schemas aligned with production migrations. |
 | `Zaik.Time` / `Zaik.Home.Mirror.Clock` | Injectable production/system time facade and manually advanced mirror timer queue. | Keep time-sensitive policy deterministic in evals. |
 | `Zaik.Home.Mirror.Runner` / `Mirror.Assertions` / `Mirror.Evals` | Executes scenarios and evaluates semantic desired state and safety invariants; exposed by `mix zaik.mirror_eval`. | Grow into trace replay and candidate-model gates. |
 | `Zaik.Home.ControlTool` / `Zaik.Home.Tools.ControlBlind` | Compatibility blind-control surfaces for AgentChat. | Retire after skills/prompts use `control_device`. |

@@ -509,7 +509,8 @@ defmodule Zaik.AgentChat.Prompts do
     HARD SCHEMA RULES:
     - The database is home.
     - The only readings view is home_readings. Never use sensor_readings, zaik_sensor_readings, home_read, or home_reads.
-    - SQL entity filters for this request must use the requested lookup text above, for example lower(device_name) LIKE '%#{escape_sql_literal(lookup)}%' or lower(room) LIKE '%#{escape_sql_literal(lookup)}%'.
+    - REQUIRED ENTITY PREDICATE for this request: (lower(device_name) LIKE '%#{escape_sql_literal(lookup)}%' OR lower(room) LIKE '%#{escape_sql_literal(lookup)}%'). Copy that predicate exactly into home_readings SQL.
+    - Do not use area IDs, snake_case names, exact equality, or backslash-escaped apostrophes as substitutes for the required predicate.
 
     Available read tools:
     - get_home_state for current/latest typed state. It filters entities by capability so covers cannot mask temperature sensors.

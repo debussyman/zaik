@@ -12,8 +12,13 @@ defmodule Zaik.Home.Mirror do
   defstruct [
     :scenario,
     :supervisor,
+    :temp_dir,
     :clock,
     :device_store,
+    :history_store,
+    :telemetry_store,
+    :home_db_path,
+    :ops_db_path,
     :preset_store,
     :action_verifier,
     :action_ledger,
@@ -24,13 +29,21 @@ defmodule Zaik.Home.Mirror do
   @type t :: %__MODULE__{}
 
   def start(%Scenario{} = scenario) do
-    with {:ok, supervisor} <- DynamicSupervisor.start_link(strategy: :one_for_one) do
-      case start_runtime(supervisor, scenario) do
-        {:ok, mirror} ->
-          {:ok, mirror}
+    with {:ok, temp_dir} <- create_temp_dir(scenario) do
+      case DynamicSupervisor.start_link(strategy: :one_for_one) do
+        {:ok, supervisor} ->
+          case start_runtime(supervisor, scenario, temp_dir) do
+            {:ok, mirror} ->
+              {:ok, mirror}
+
+            {:error, reason} ->
+              safe_stop(supervisor)
+              cleanup_temp_dir(temp_dir)
+              {:error, reason}
+          end
 
         {:error, reason} ->
-          safe_stop(supervisor)
+          cleanup_temp_dir(temp_dir)
           {:error, reason}
       end
     end
@@ -40,7 +53,9 @@ defmodule Zaik.Home.Mirror do
     with {:ok, scenario} <- Scenario.new(attrs), do: start(scenario)
   end
 
-  defp start_runtime(supervisor, scenario) do
+  defp start_runtime(supervisor, scenario, temp_dir) do
+    paths = Zaik.Home.Mirror.Fixtures.paths(temp_dir)
+
     with {:ok, clock} <-
            start_child(
              supervisor,
@@ -52,10 +67,21 @@ defmodule Zaik.Home.Mirror do
              supervisor,
              {Zaik.Home.DeviceStore, name: nil, clock: clock_provider}
            ),
+         {:ok, history_store} <-
+           start_child(
+             supervisor,
+             {Zaik.Home.HistoryStore, name: nil, db_path: paths.home}
+           ),
+         {:ok, telemetry_store} <-
+           start_child(
+             supervisor,
+             {Zaik.TelemetryStore, name: nil, db_path: paths.ops}
+           ),
          {:ok, preset_store} <-
            start_child(
              supervisor,
-             {Zaik.Home.DevicePresetStore, name: nil, db_path: ":memory:"}
+             {Zaik.Home.DevicePresetStore,
+              name: nil, db_path: paths.home, import_legacy_blind_presets?: false}
            ),
          {:ok, action_ledger} <-
            start_child(
@@ -75,6 +101,11 @@ defmodule Zaik.Home.Mirror do
          {:ok, task_supervisor} <- start_child(supervisor, {Task.Supervisor, name: nil}),
          :ok <- load_entities(device_store, scenario),
          :ok <- load_presets(preset_store, scenario),
+         :ok <-
+           Zaik.Home.Mirror.Fixtures.load(scenario, %{
+             history_store: history_store,
+             telemetry_store: telemetry_store
+           }),
          {:ok, store} <-
            start_child(
              supervisor,
@@ -89,8 +120,13 @@ defmodule Zaik.Home.Mirror do
        %__MODULE__{
          scenario: scenario,
          supervisor: supervisor,
+         temp_dir: temp_dir,
          clock: clock,
          device_store: device_store,
+         history_store: history_store,
+         telemetry_store: telemetry_store,
+         home_db_path: paths.home,
+         ops_db_path: paths.ops,
          preset_store: preset_store,
          action_verifier: action_verifier,
          action_ledger: action_ledger,
@@ -106,6 +142,12 @@ defmodule Zaik.Home.Mirror do
         clock: {Zaik.Home.Mirror.Clock, mirror.clock},
         device_store: mirror.device_store,
         preset_store: mirror.preset_store,
+        history_store: mirror.history_store,
+        telemetry_store: mirror.telemetry_store,
+        sql_tool_opts: [
+          telemetry_store: mirror.telemetry_store,
+          home_db_path: mirror.home_db_path
+        ],
         action_verifier: mirror.action_verifier,
         action_ledger: mirror.action_ledger,
         task_supervisor: mirror.task_supervisor,
@@ -141,6 +183,7 @@ defmodule Zaik.Home.Mirror do
 
   def stop(%__MODULE__{} = mirror) do
     safe_stop(mirror.supervisor)
+    cleanup_temp_dir(mirror.temp_dir)
     :ok
   end
 
@@ -214,6 +257,26 @@ defmodule Zaik.Home.Mirror do
       advance_until(mirror, target_ms, total_fired)
     else
       %{step | fired: total_fired}
+    end
+  end
+
+  defp create_temp_dir(scenario) do
+    suffix = System.unique_integer([:positive, :monotonic])
+    safe_id = scenario.id |> String.replace(~r/[^a-zA-Z0-9_-]/, "-") |> String.slice(0, 60)
+    path = Path.join([System.tmp_dir!(), "zaik-mirror", "#{safe_id}-#{suffix}"])
+
+    case File.mkdir_p(path) do
+      :ok -> {:ok, path}
+      {:error, reason} -> {:error, {:mirror_temp_dir_failed, reason}}
+    end
+  end
+
+  defp cleanup_temp_dir(nil), do: :ok
+
+  defp cleanup_temp_dir(path) do
+    case File.rm_rf(path) do
+      {:ok, _files} -> :ok
+      {:error, reason, _file} -> {:error, reason}
     end
   end
 

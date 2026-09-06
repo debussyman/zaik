@@ -21,7 +21,8 @@ defmodule Zaik.Home.Mirror.Evals do
       %{name: "invalid_plan_has_zero_side_effects", kind: :invalid},
       %{name: "later_executor_failure_reports_partial_completion", kind: :partial},
       %{name: "accepted_non_convergence_is_not_verified", kind: :stalled},
-      %{name: "virtual_time_drives_expiry_and_retry_eligibility", kind: :virtual_retry}
+      %{name: "virtual_time_drives_expiry_and_retry_eligibility", kind: :virtual_retry},
+      %{name: "production_schema_fixtures_execute_real_sql", kind: :sqlite_fixtures}
     ]
   end
 
@@ -136,6 +137,40 @@ defmodule Zaik.Home.Mirror.Evals do
            %{
              decision: %{eligible: true, reason: "fresh_state_not_converged"},
              now: ~U[2026-01-01 00:00:00.100Z]
+           }},
+          run.result
+        )
+      end
+    )
+  end
+
+  defp run_case(%{kind: :sqlite_fixtures} = definition) do
+    scenario = Scenarios.lily_with_history_and_telemetry(id: definition.name)
+
+    finish(
+      definition,
+      Runner.run(scenario, fn _mirror, context ->
+        opts = context.sql_tool_opts
+
+        with {:ok, home} <-
+               Zaik.Analytics.SQLTool.run(
+                 "SELECT COUNT(*) AS reading_count FROM home_readings WHERE temperature_c IS NOT NULL",
+                 Keyword.merge(opts, db: :home)
+               ),
+             {:ok, ops} <-
+               Zaik.Analytics.SQLTool.run(
+                 "SELECT COUNT(*) AS message_count FROM zaik_messages",
+                 Keyword.merge(opts, db: :ops)
+               ) do
+          {:ok, %{home: home, ops: ops}}
+        end
+      end),
+      fn run ->
+        match?(
+          {:ok,
+           %{
+             home: %{rows: [%{"reading_count" => 3}]},
+             ops: %{rows: [%{"message_count" => 2}]}
            }},
           run.result
         )

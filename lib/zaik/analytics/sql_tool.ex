@@ -76,15 +76,45 @@ defmodule Zaik.Analytics.SQLTool do
   def allowed_views(:home), do: MapSet.to_list(@home_views)
 
   def run(sql, opts \\ []) when is_binary(sql) and is_list(opts) do
-    db = Keyword.get(opts, :db, :ops)
+    db = database_for(sql, Keyword.get(opts, :db, :ops))
     limit = Keyword.get(opts, :limit, 200)
 
     with {:ok, normalized_sql} <- validate(sql, db) do
       case db do
-        :ops -> Zaik.TelemetryStore.query(normalized_sql, [], limit: limit)
-        :home -> query_file(home_db_path(), normalized_sql, limit)
-        other -> {:error, {:unsupported_database, other}}
+        :ops ->
+          telemetry_store = Keyword.get(opts, :telemetry_store, Zaik.TelemetryStore)
+          Zaik.TelemetryStore.query(telemetry_store, normalized_sql, [], limit: limit)
+
+        :home ->
+          query_file(home_db_path(opts), normalized_sql, limit)
+
+        other ->
+          {:error, {:unsupported_database, other}}
       end
+    end
+  end
+
+  def database_for(sql, requested_db) when is_binary(sql) do
+    downcased = String.downcase(sql)
+
+    cond do
+      Regex.match?(
+        ~r/\b(?:from|join)\s+[\[`"]?(home_readings|home_devices|home_device_presets)\b/,
+        downcased
+      ) ->
+        :home
+
+      Regex.match?(~r/\b(?:from|join)\s+[\[`"]?zaik_[a-z_]+\b/, downcased) ->
+        :ops
+
+      requested_db in [:home, "home"] ->
+        :home
+
+      requested_db in [:ops, "ops"] ->
+        :ops
+
+      true ->
+        requested_db
     end
   end
 
@@ -194,6 +224,8 @@ defmodule Zaik.Analytics.SQLTool do
         Regex.match?(~r/\bfriendly_name\b/i, sql) -> "friendly_name"
         Regex.match?(~r/\bcreated_at\b/i, sql) -> "created_at"
         Regex.match?(~r/\btemperature_celsius\b/i, sql) -> "temperature_celsius"
+        Regex.match?(~r/\barea_id\b/i, sql) -> "area_id"
+        Regex.match?(~r/\bentity_name\b/i, sql) -> "entity_name"
         Regex.match?(~r/\bentity_id\b/i, sql) -> "entity_id"
         Regex.match?(~r/\bentity\b/i, sql) -> "entity"
         Regex.match?(~r/\bdevice\b/i, sql) -> "device"
@@ -208,17 +240,21 @@ defmodule Zaik.Analytics.SQLTool do
   end
 
   defp latest_temperature_query_with_mis_scoped_non_null_filter?(sql) do
-    latest_temperature_query?(sql) and
+    home_temperature_query?(sql) and
       Regex.match?(~r/\sor\s/, sql) and
       Regex.match?(~r/temperature_[fc]\s+is\s+not\s+null/i, sql) and
-      not Regex.match?(~r/\)\s+and\s+temperature_[fc]\s+is\s+not\s+null/i, sql)
+      not Regex.match?(~r/where\s*\(.*\sor\s.*\)\s+and/is, sql)
   end
 
   defp latest_temperature_query?(sql) do
-    String.contains?(sql, "home_readings") and
-      (String.contains?(sql, "temperature_f") or String.contains?(sql, "temperature_c")) and
+    home_temperature_query?(sql) and
       Regex.match?(~r/order\s+by\s+[^\n]*recorded_at\s+desc/i, sql) and
       Regex.match?(~r/limit\s+1\b/i, sql)
+  end
+
+  defp home_temperature_query?(sql) do
+    String.contains?(sql, "home_readings") and
+      (String.contains?(sql, "temperature_f") or String.contains?(sql, "temperature_c"))
   end
 
   defp allowed_relations?(sql, db) do
@@ -267,8 +303,9 @@ defmodule Zaik.Analytics.SQLTool do
     |> String.downcase()
   end
 
-  defp home_db_path do
-    Zaik.Home.HistoryStore.config().db_path
+  defp home_db_path(opts) do
+    opts
+    |> Keyword.get(:home_db_path, Zaik.Home.HistoryStore.config().db_path)
     |> expand_path()
   end
 
