@@ -94,6 +94,27 @@ defmodule Zaik do
   end
 
   @doc """
+  Cancel a pending ambiguous action so a conflicting replacement may be issued.
+
+  This never marks physical convergence and is intentionally operator-only.
+  """
+  def resolve_home_action(action_id, resolution, reason \\ "operator_cancelled")
+
+  def resolve_home_action(action_id, :cancel, reason) do
+    Zaik.Home.ActionVerifier.cancel(action_id, reason)
+  end
+
+  def resolve_home_action(_action_id, resolution, _reason),
+    do: {:error, {:unsupported_resolution, resolution}}
+
+  @doc """
+  Reset the bounded retry count for an existing action and retain an audit row.
+  """
+  def reset_home_action_retry_budget(action_id, reset_by \\ nil) do
+    Zaik.Home.ActionLedger.reset_retry_budget(action_id, reset_by)
+  end
+
+  @doc """
   Evaluate deterministic retry eligibility without executing an action.
   """
   def home_action_retry_eligibility(action_id, context \\ %{}) do

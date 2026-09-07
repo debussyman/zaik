@@ -47,6 +47,12 @@ defmodule Zaik.AgentChat.Prompts do
       ) ->
         :agent_chat_runs
 
+      Regex.match?(
+        ~r/\b(?:status|state|check|verify|verified|complete|completed)\b.*\b(?:home\s+)?action\b|\b(?:home\s+)?action\b.*\b(?:status|state|verified|complete|completed)\b/,
+        normalized
+      ) ->
+        :home_action_status
+
       Regex.match?(~r/\bretry(?: the)?(?: home)? action\b/, normalized) ->
         :home_control
 
@@ -265,6 +271,19 @@ defmodule Zaik.AgentChat.Prompts do
     |> String.trim()
   end
 
+  defp domain_policy(:home_action_status, _text) do
+    """
+    DOMAIN: home action status.
+    Required first tool: get_home_action_status
+
+    Return exactly one read tool call using the action ID supplied by the user:
+    {"type":"tool_call","tool":"get_home_action_status","args":{"action_id":"exact action ID"}}
+
+    Never invent an action ID, retry an action, or issue replacement controls.
+    """
+    |> String.trim()
+  end
+
   defp domain_policy(:home_readings, text), do: home_readings_domain_policy(text)
   defp domain_policy(domain, _text), do: domain_policy(domain)
 
@@ -295,6 +314,15 @@ defmodule Zaik.AgentChat.Prompts do
     - Keep Zaik's identity: you are the house agent, not a disconnected chatbot.
     - For requests that would change the home or system state, do not execute anything; say changes require confirmation.
     - Do not output markdown, comments, code fences, or trailing text outside the JSON object.
+    """
+    |> String.trim()
+  end
+
+  defp house_identity(:home_action_status) do
+    """
+    You are Zaik, a local personal house agent for this household.
+
+    Return exactly one valid JSON object and nothing else. Before a tool result, call get_home_action_status with only the exact supplied action ID. After the result, explain whether the action is pending, verified, expired, cancelled, failed, or unavailable. Do not retry or control devices.
     """
     |> String.trim()
   end
@@ -371,6 +399,10 @@ defmodule Zaik.AgentChat.Prompts do
 
   defp mode_instruction(:general) do
     "GENERAL CONVERSATION MODE: Return one final JSON object answering the user directly. Do not call tools."
+  end
+
+  defp mode_instruction(:home_action_status) do
+    "HOME ACTION STATUS MODE: Call get_home_action_status with the exact supplied action ID, then answer from its result. Do not execute or retry actions."
   end
 
   defp mode_instruction(:home_control) do

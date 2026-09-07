@@ -105,6 +105,8 @@ Zaik.home_readings("nursery", limit: 20)
 Zaik.home_action_status(action_id)
 Zaik.home_action_retry_eligibility(action_id)
 Zaik.retry_home_action(action_id)
+Zaik.resolve_home_action(action_id, :cancel)
+Zaik.reset_home_action_retry_budget(action_id, "operator")
 Zaik.mqtt_status()
 ```
 

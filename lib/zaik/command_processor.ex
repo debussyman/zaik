@@ -89,6 +89,15 @@ defmodule Zaik.CommandProcessor do
       String.starts_with?(downcase(text), "submit llm ") ->
         text |> rest_after("submit llm") |> submit_llm_prompt(context)
 
+      String.starts_with?(downcase(text), "home action status ") ->
+        text |> rest_after("home action status") |> format_home_action_status()
+
+      String.starts_with?(downcase(text), "home action cancel ") ->
+        text |> rest_after("home action cancel") |> cancel_home_action(context)
+
+      String.starts_with?(downcase(text), "home action retry-reset ") ->
+        text |> rest_after("home action retry-reset") |> reset_home_action_retry(context)
+
       String.starts_with?(downcase(text), "tasks ") ->
         text |> rest_after("tasks") |> format_tasks()
 
@@ -172,6 +181,9 @@ defmodule Zaik.CommandProcessor do
     blinds <room/name> capture <preset name>
     home sensors
     home trends
+    home action status <action_id>
+    home action cancel <action_id>
+    home action retry-reset <action_id>
     presence
     sensor <device name>
     sensor <device name> trend
@@ -211,6 +223,34 @@ defmodule Zaik.CommandProcessor do
     Timed out: #{tasks.timed_out}
     """
     |> String.trim()
+  end
+
+  defp format_home_action_status(action_id) do
+    case Zaik.home_action_status(String.trim(action_id)) do
+      {:ok, result} -> "Home action status: #{format_value(result)}"
+      {:error, :not_found} -> "Home action not found: #{String.trim(action_id)}"
+      {:error, reason} -> "Could not read home action status: #{format_value(reason)}"
+    end
+  end
+
+  defp cancel_home_action(action_id, context) do
+    actor = Map.get(context, :sender_id) || Map.get(context, "sender_id") || "operator"
+
+    case Zaik.resolve_home_action(String.trim(action_id), :cancel, "cancelled_by_#{actor}") do
+      :ok -> "Cancelled pending home action #{String.trim(action_id)}."
+      {:error, :not_found} -> "Pending home action not found: #{String.trim(action_id)}"
+      {:error, reason} -> "Could not cancel home action: #{format_value(reason)}"
+    end
+  end
+
+  defp reset_home_action_retry(action_id, context) do
+    actor = Map.get(context, :sender_id) || Map.get(context, "sender_id") || "operator"
+
+    case Zaik.reset_home_action_retry_budget(String.trim(action_id), to_string(actor)) do
+      {:ok, _reset} -> "Reset retry budget for home action #{String.trim(action_id)}."
+      {:error, :not_found} -> "Home action not found: #{String.trim(action_id)}"
+      {:error, reason} -> "Could not reset retry budget: #{format_value(reason)}"
+    end
   end
 
   defp format_queue do

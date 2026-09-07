@@ -60,6 +60,10 @@ defmodule Zaik.Home.ActionLedger do
     GenServer.call(server, {:retries_for, key})
   end
 
+  def reset_retry_budget(key, reset_by \\ nil, server \\ __MODULE__) when is_binary(key) do
+    GenServer.call(server, {:reset_retry_budget, key, reset_by})
+  end
+
   def idempotency_key(tool, args, context) when is_map(args) and is_map(context) do
     case request_key(context) do
       nil ->
@@ -161,6 +165,25 @@ defmodule Zaik.Home.ActionLedger do
     {:reply, retries, state}
   end
 
+  def handle_call({:reset_retry_budget, _key, _reset_by}, _from, %{conn: nil} = state),
+    do: {:reply, {:error, :disabled}, state}
+
+  def handle_call({:reset_retry_budget, key, reset_by}, _from, state) do
+    reply =
+      if fetch(state.conn, key) do
+        now = Zaik.Time.now(state.config.clock) |> DateTime.to_iso8601()
+
+        case reset_retry_entries(state.conn, key, reset_by, now) do
+          :ok -> {:ok, %{action_id: key, reset_at: now, reset_by: reset_by}}
+          {:error, reason} -> {:error, reason}
+        end
+      else
+        {:error, :not_found}
+      end
+
+    {:reply, reply, state}
+  end
+
   @impl true
   def handle_cast(
         {:mark_verification, _key, _action_id, _verification},
@@ -211,6 +234,16 @@ defmodule Zaik.Home.ActionLedger do
 
     CREATE INDEX IF NOT EXISTS home_action_ledger_request_idx
       ON home_action_ledger(request_key, inserted_at);
+
+    CREATE TABLE IF NOT EXISTS home_action_retry_resets (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      action_key TEXT NOT NULL,
+      reset_by TEXT,
+      reset_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS home_action_retry_resets_action_idx
+      ON home_action_retry_resets(action_key, reset_at);
     """)
   end
 
@@ -266,6 +299,38 @@ defmodule Zaik.Home.ActionLedger do
         inserted_at: inserted_at,
         updated_at: updated_at
       }
+    end)
+  end
+
+  defp reset_retry_entries(conn, action_key, reset_by, now) do
+    with :ok <- exec(conn, "BEGIN IMMEDIATE", []),
+         :ok <- delete_retry_entries(conn, action_key),
+         :ok <-
+           exec(
+             conn,
+             "INSERT INTO home_action_retry_resets (action_key, reset_by, reset_at) VALUES (?, ?, ?)",
+             [action_key, reset_by, now]
+           ),
+         :ok <- exec(conn, "COMMIT", []) do
+      :ok
+    else
+      {:error, reason} ->
+        _ = exec(conn, "ROLLBACK", [])
+        {:error, reason}
+    end
+  end
+
+  defp delete_retry_entries(conn, action_key) do
+    conn
+    |> fetch_retry_entries()
+    |> Enum.filter(&(value(&1.args, :action_id) == action_key))
+    |> Enum.reduce_while(:ok, fn entry, :ok ->
+      case exec(conn, "DELETE FROM home_action_ledger WHERE idempotency_key = ?", [
+             entry.idempotency_key
+           ]) do
+        :ok -> {:cont, :ok}
+        error -> {:halt, error}
+      end
     end)
   end
 

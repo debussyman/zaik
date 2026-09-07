@@ -34,12 +34,11 @@ Implemented:
 - `retry_home_action` reconstructs targets from the ledger rather than accepting
   replacement device targets from the model;
 - unverified responses expose their correlation ID for status and explicit retry;
-- Zigbee2MQTT state-file bootstrap no longer manufactures history rows.
-
-Remaining:
-
-- expose pending/expired action status as a natural-language read tool;
-- add operator controls for retry-budget reset and manual ambiguity resolution.
+- Zigbee2MQTT state-file bootstrap no longer manufactures history rows;
+- `get_home_action_status` exposes pending, verified, expired, cancelled, and
+  persisted action state to natural-language chat without executing a retry;
+- deterministic operator commands can cancel an ambiguous pending action or
+  reset its bounded retry budget, with retry resets retained in an audit table.
 
 ## Phase 1: Canonical home state
 

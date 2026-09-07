@@ -209,6 +209,52 @@ defmodule Zaik.Home.ActionLedgerTest do
     refute first == second
   end
 
+  test "operator retry-budget reset clears counted attempts without removing the original action",
+       %{
+         ledger: ledger
+       } do
+    original_context = %{channel: :telegram, chat_id: "-100", message_id: 60}
+    original_args = %{"device" => "Office blind", "target" => %{"position" => 37}}
+
+    assert {:ok, original_key} =
+             Zaik.Home.ActionLedger.claim(
+               "control_device",
+               original_args,
+               original_context,
+               ledger
+             )
+
+    assert :ok =
+             Zaik.Home.ActionLedger.complete(
+               original_key,
+               {:ok, %{status: "accepted", verified: false}},
+               ledger
+             )
+
+    assert {:ok, retry_key} =
+             Zaik.Home.ActionLedger.claim(
+               "retry_home_action",
+               %{"action_id" => original_key},
+               %{channel: :telegram, chat_id: "-100", message_id: 61},
+               ledger
+             )
+
+    assert :ok =
+             Zaik.Home.ActionLedger.complete(
+               retry_key,
+               {:ok, %{retried: true, status: "accepted"}},
+               ledger
+             )
+
+    assert length(Zaik.Home.ActionLedger.retries_for(original_key, ledger)) == 1
+
+    assert {:ok, %{action_id: ^original_key, reset_by: "operator"}} =
+             Zaik.Home.ActionLedger.reset_retry_budget(original_key, "operator", ledger)
+
+    assert Zaik.Home.ActionLedger.retries_for(original_key, ledger) == []
+    assert {:ok, %{status: "succeeded"}} = Zaik.Home.ActionLedger.lookup(original_key, ledger)
+  end
+
   test "requests without a stable ingress identity are explicitly untracked", %{ledger: ledger} do
     assert {:ok, nil} =
              Zaik.Home.ActionLedger.claim(

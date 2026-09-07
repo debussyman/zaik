@@ -167,6 +167,7 @@ defmodule Zaik.Home.ActionVerifier do
       {:ok, action} ->
         action = %{action | status: :cancelled, reason: inspect(reason)}
         schedule_cleanup(action, state.config)
+        notify_ledger(action)
         {:reply, :ok, put_action(state, action)}
     end
   end
