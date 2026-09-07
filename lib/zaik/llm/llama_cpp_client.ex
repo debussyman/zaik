@@ -18,6 +18,7 @@ defmodule Zaik.LLM.LlamaCppClient do
 
   `num_ctx` is generally a server-startup setting for llama.cpp, so this client
   does not send it by default. `num_predict` maps to OpenAI `max_tokens`.
+  Managed-server model-load failures are retried once before being returned.
   """
 
   @behaviour Zaik.LLM.Provider
@@ -49,11 +50,13 @@ defmodule Zaik.LLM.LlamaCppClient do
 
     result =
       with {:ok, decoded} <-
-             http_client.post_json(
+             post_chat_completion(
+               http_client,
                config().base_url,
-               "/v1/chat/completions",
                payload,
-               Keyword.get(opts, :timeout_ms, config().timeout_ms)
+               Keyword.get(opts, :timeout_ms, config().timeout_ms),
+               Keyword.get(opts, :model_load_retries, 1),
+               Keyword.get(opts, :model_load_retry_delay_ms, 1_000)
              ) do
         content = get_in(decoded, ["choices", Access.at(0), "message", "content"])
 
@@ -112,6 +115,26 @@ defmodule Zaik.LLM.LlamaCppClient do
           Keyword.get(llm_config, :temperature, 0.2)
     }
   end
+
+  defp post_chat_completion(http_client, base_url, payload, timeout_ms, retries, delay_ms) do
+    result = http_client.post_json(base_url, "/v1/chat/completions", payload, timeout_ms)
+
+    if retries > 0 and transient_model_load_failure?(result) do
+      Process.sleep(max(delay_ms, 0))
+      post_chat_completion(http_client, base_url, payload, timeout_ms, retries - 1, delay_ms)
+    else
+      result
+    end
+  end
+
+  defp transient_model_load_failure?(
+         {:error, {:http_error, status, %{"error" => %{"message" => message}}}}
+       )
+       when status in [500, 503] and is_binary(message) do
+    String.contains?(String.downcase(message), "failed to load")
+  end
+
+  defp transient_model_load_failure?(_result), do: false
 
   defp normalize_messages(messages) when is_list(messages) do
     Enum.map(messages, fn

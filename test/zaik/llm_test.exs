@@ -18,6 +18,26 @@ defmodule Zaik.LLMTest do
     :ok
   end
 
+  defmodule TransientModelLoadHTTP do
+    def post_json(_base_url, _path, payload, _timeout) do
+      attempt = Process.get(:model_load_attempt, 0) + 1
+      Process.put(:model_load_attempt, attempt)
+      send(self(), {:model_load_attempt, attempt})
+
+      if attempt == 1 do
+        {:error,
+         {:http_error, 500,
+          %{"error" => %{"message" => "model name=#{payload.model} failed to load"}}}}
+      else
+        {:ok,
+         %{
+           "model" => payload.model,
+           "choices" => [%{"message" => %{"content" => "OK"}}]
+         }}
+      end
+    end
+  end
+
   defmodule FakeHTTP do
     def post_json(base_url, path, payload, timeout) do
       send(self(), {:llama_cpp_request, base_url, path, payload, timeout})
@@ -43,6 +63,20 @@ defmodule Zaik.LLMTest do
     System.put_env("ZAIK_LLM_PROVIDER", "llama.cpp")
 
     assert Zaik.LLM.client() == Zaik.LLM.LlamaCppClient
+  end
+
+  test "llama.cpp client retries a transient managed-model load failure" do
+    Process.delete(:model_load_attempt)
+
+    assert {:ok, %{response: "OK"}} =
+             Zaik.LLM.LlamaCppClient.chat("hello",
+               model: "house",
+               http_client: TransientModelLoadHTTP,
+               model_load_retry_delay_ms: 0
+             )
+
+    assert_received {:model_load_attempt, 1}
+    assert_received {:model_load_attempt, 2}
   end
 
   test "llama.cpp client uses OpenAI-compatible chat completions" do
