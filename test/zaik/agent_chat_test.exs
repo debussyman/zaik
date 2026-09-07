@@ -1150,7 +1150,7 @@ defmodule Zaik.AgentChatTest do
                config: %{enabled: true, fallback_enabled: false, max_tool_calls: 2}
              )
 
-    assert_received {:plan_action_executed, "left", %{"state" => "CLOSE"}}
+    assert_received {:plan_action_executed, "left", %{"position" => 0}}
     assert_received {:plan_action_executed, "right", %{"position" => 71}}
   end
 

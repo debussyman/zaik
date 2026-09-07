@@ -42,6 +42,17 @@ defmodule Zaik.Home.CoverExecutorVerificationTest do
     %{verifier: verifier, store: store, entity: entity}
   end
 
+  test "normalizes open and close commands to canonical positions", %{entity: entity} do
+    assert {:ok, %{"position" => 0}} =
+             Zaik.Home.Capabilities.Cover.validate_target(%{"state" => "CLOSE"})
+
+    assert {:ok, %{"position" => 100}} =
+             Zaik.Home.Capabilities.Cover.validate_target(%{"state" => "OPEN"})
+
+    assert {:ok, %{"position" => 0}} =
+             Zaik.Home.Executors.Cover.prepare(entity, %{"position" => 0}, %{})
+  end
+
   test "returns verified only after the reported cover state converges", %{
     verifier: verifier,
     store: store,

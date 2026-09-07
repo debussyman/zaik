@@ -439,14 +439,26 @@ defmodule Zaik.Home.HistoryStore do
   defp configure_entity_row(conn, device_query, area_id, aliases) do
     query_key = normalize(device_query)
 
+    devices = query_devices(conn)
+
     matches =
-      conn
-      |> query_devices()
-      |> Enum.filter(fn device ->
-        normalize(device.id) == query_key or normalize(device.friendly_name) == query_key or
-          query_key in Enum.map(device.aliases, &normalize/1) or
-          String.contains?(normalize(device.friendly_name), query_key)
-      end)
+      case Enum.filter(devices, &(normalize(&1.id) == query_key)) do
+        [] ->
+          exact =
+            Enum.filter(devices, fn device ->
+              normalize(device.friendly_name) == query_key or
+                query_key in Enum.map(device.aliases, &normalize/1)
+            end)
+
+          if exact == [] do
+            Enum.filter(devices, &String.contains?(normalize(&1.friendly_name), query_key))
+          else
+            prefer_canonical_identity(exact)
+          end
+
+        exact_id ->
+          exact_id
+      end
 
     case matches do
       [device] ->
@@ -485,6 +497,16 @@ defmodule Zaik.Home.HistoryStore do
       devices ->
         {:error, {:ambiguous, Enum.map(devices, & &1.friendly_name)}}
     end
+  end
+
+  defp prefer_canonical_identity(devices) do
+    preferred =
+      Enum.filter(devices, fn device ->
+        metadata_id = device.metadata["ieee_address"] || device.metadata["entity_id"]
+        is_binary(metadata_id) and normalize(device.id) == normalize(metadata_id)
+      end)
+
+    if length(preferred) == 1, do: preferred, else: devices
   end
 
   defp insert_aliases(conn, device_id, aliases, now) do

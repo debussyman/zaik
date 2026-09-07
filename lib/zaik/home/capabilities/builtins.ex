@@ -117,7 +117,11 @@ defmodule Zaik.Home.Capabilities.Cover do
     do: %{
       id: "cover",
       description: "Window covering position and movement",
-      state_schema: %{"position" => "integer|null", "state" => "string|null"},
+      state_schema: %{
+        "position" => "number|null",
+        "state" => "string|null",
+        "adapter_state" => "string|null"
+      },
       target_schema: %{
         "one_of" => [
           %{"state" => ["OPEN", "CLOSE", "STOP"]},
@@ -130,7 +134,17 @@ defmodule Zaik.Home.Capabilities.Cover do
   def detected?(device), do: Payload.present?(device, "position")
 
   def state(device) do
-    %{position: Payload.value(device, "position"), state: Payload.value(device, "state")}
+    position = Payload.numeric(device, "position")
+    reported_state = Payload.value(device, "state")
+
+    semantic_state =
+      cond do
+        is_number(position) and position <= 1 -> "CLOSE"
+        is_number(position) and position >= 99 -> "OPEN"
+        true -> reported_state
+      end
+
+    %{position: position, state: semantic_state, adapter_state: reported_state}
   end
 
   def validate_target(%{"position" => position}) when is_integer(position) and position in 0..100,
@@ -139,11 +153,12 @@ defmodule Zaik.Home.Capabilities.Cover do
   def validate_target(%{position: position}) when is_integer(position) and position in 0..100,
     do: {:ok, %{"position" => position}}
 
-  def validate_target(%{"state" => state}) when state in ["OPEN", "CLOSE", "STOP"],
-    do: {:ok, %{"state" => state}}
-
-  def validate_target(%{state: state}) when state in ["OPEN", "CLOSE", "STOP"],
-    do: {:ok, %{"state" => state}}
+  def validate_target(%{"state" => "CLOSE"}), do: {:ok, %{"position" => 0}}
+  def validate_target(%{state: "CLOSE"}), do: {:ok, %{"position" => 0}}
+  def validate_target(%{"state" => "OPEN"}), do: {:ok, %{"position" => 100}}
+  def validate_target(%{state: "OPEN"}), do: {:ok, %{"position" => 100}}
+  def validate_target(%{"state" => "STOP"}), do: {:ok, %{"state" => "STOP"}}
+  def validate_target(%{state: "STOP"}), do: {:ok, %{"state" => "STOP"}}
 
   def validate_target(%{"preset" => preset}) when is_binary(preset) and preset != "",
     do: {:ok, %{"preset" => preset}}
