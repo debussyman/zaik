@@ -74,7 +74,7 @@ defmodule Zaik.Analytics.SQLToolTest do
                :home
              )
 
-    assert {:error, {:unknown_home_column, "area_id"}} =
+    assert {:ok, _} =
              Zaik.Analytics.SQLTool.validate(
                "SELECT temperature_f FROM home_readings WHERE area_id = 'lily_bedroom' LIMIT 10",
                :home

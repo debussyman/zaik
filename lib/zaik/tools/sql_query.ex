@@ -26,7 +26,10 @@ defmodule Zaik.Tools.SQLQuery do
   def run(args, context) do
     tool = value(context, :sql_tool) || Zaik.Analytics.SQLTool
     query = value(args, :query)
-    database = normalize_database(value(args, :database))
+
+    database =
+      value(context, :required_sql_database) || normalize_database(value(args, :database))
+
     limit = normalize_limit(value(args, :limit), 200)
 
     opts =

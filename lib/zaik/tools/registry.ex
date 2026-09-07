@@ -11,6 +11,7 @@ defmodule Zaik.Tools.Registry do
     Zaik.Tools.SQLQuery,
     Zaik.Home.Tools.ListDevices,
     Zaik.Home.Tools.GetState,
+    Zaik.Home.Tools.GetHistory,
     Zaik.Home.Tools.GetActionStatus,
     Zaik.Home.Tools.RetryAction,
     Zaik.Home.Tools.ExecutePlan,
@@ -41,6 +42,15 @@ defmodule Zaik.Tools.Registry do
       {:ok, descriptor} -> [descriptor]
       {:error, _reason} -> []
     end)
+  end
+
+  def fingerprint(opts \\ []) do
+    opts
+    |> descriptors()
+    |> Enum.sort_by(& &1.name)
+    |> :erlang.term_to_binary()
+    |> then(&:crypto.hash(:sha256, &1))
+    |> Base.encode16(case: :lower)
   end
 
   def validate(opts \\ []) do

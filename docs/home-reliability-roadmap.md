@@ -5,6 +5,9 @@ schema- and device-specific prompting toward typed, composable capabilities.
 Phase 3 self-extension is intentionally left open; Zaik's registries avoid code
 caches so Elixir hot code loading remains a first-class future option.
 
+**Status:** Phases 0 through 2.5 are complete. Phase 3 remains a deliberately
+pinned future-design boundary rather than permission for recursive deployment.
+
 ## Phase 0: Stabilize action execution
 
 Implemented:
@@ -55,14 +58,15 @@ Implemented foundation:
 - a composability test verifies that adding Lily's blinds does not alter Lily's
   temperature snapshot;
 - live read evals execute against per-run temporary databases created by the
-  production home-history and operational-telemetry migrations.
-
-Remaining:
-
-- persist explicit areas and entity aliases rather than relying on names;
-- preserve source observation timestamps throughout every adapter;
-- add typed historical queries for capabilities and time windows;
-- clean or mark history rows previously produced by bootstrap.
+  production home-history and operational-telemetry migrations;
+- explicit entity areas and aliases persist in the production home database and
+  participate in canonical lookup without replacing adapter identity;
+- source observation timestamps are retained from adapters through current
+  state, history, verification, mirror reports, and typed query results;
+- `get_home_history` provides bounded capability and time-window reads for
+  ordinary history/trend questions, leaving raw SQL for advanced aggregation;
+- history rows now carry provenance: newly delivered reports are `observed`,
+  while rows predating the provenance migration are marked `legacy_unknown`.
 
 ## Phase 2: Composable capabilities
 
@@ -76,16 +80,18 @@ Implemented foundation:
 - `execute_home_plan` preflights coordinated actions and is now preferred by
   multi-action home-control prompts and skills;
 - cover control is the first capability executor;
-- existing `sql_query` and `control_blind` remain compatibility paths.
-
-Remaining:
-
-- generate the planner's available-tool section from registry descriptors;
-- migrate remaining skills from device-specific tools to capability targets;
-- route existing SQL and blind compatibility calls entirely through generic dispatch;
-- enforce skill `allowed_tools` and risk declarations at the execution boundary;
-- require capability contract and baseline composability tests for each module;
-- make application child composition runtime-configurable by domain/adapter.
+- existing `sql_query` and `control_blind` remain compatibility paths;
+- planner tool contracts are generated at request time from uncached registry
+  descriptors instead of maintaining a second hand-written schema;
+- household skills describe generic capability targets and coordinated plans;
+- SQL and blind compatibility modules execute through the same registry and
+  supervised executor dispatch as newly added tools;
+- active skill `allowed_tools` and declared risk ceilings are enforced before
+  an action is claimed or started;
+- every configured capability must pass an executable descriptor, target, and
+  unrelated-payload composability baseline contract;
+- application domains, adapters, and additional child specs are composed from
+  runtime configuration without editing the root supervisor.
 
 ## Phase 2.5: Mirror-world evaluation and learning foundation
 
@@ -118,15 +124,16 @@ Implemented foundation:
   scenarios protect canonical-state and verification invariants;
 - stale and duplicate source-timestamped reports cannot regress current state or
   manufacture verification, and conflicting pending targets for one capability
-  are rejected before adapter execution.
-
-Remaining:
-
-- replay sanitized production failures and capability changes as scenarios;
-- attach capability/tool fingerprints and structured failure labels so passing
-  trajectories can later become post-training data;
-- gate candidate prompts, adapters, and models on repeated mirror pass rates
-  before shadow or physical-canary use.
+  are rejected before adapter execution;
+- privacy-filtered production traces and capability-contract changes can be
+  attached to explicit canonical scenario templates as fingerprinted replays;
+- mirror reports and AgentChat traces carry scenario, tool, and capability
+  fingerprints plus stable planning, validation, policy, transport,
+  non-convergence, and user-feedback labels;
+- candidate prompts, adapters, and models require at least three repeated mirror
+  runs, a configured pass-rate threshold, and zero safety failures before
+  shadowing; physical canaries and promotion additionally require explicit
+  shadow/canary evidence and operator approval.
 
 ## Phase 3: Future self-extension
 

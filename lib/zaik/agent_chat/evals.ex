@@ -86,11 +86,11 @@ defmodule Zaik.AgentChat.Evals do
       %{
         name: "home_lily_warm_recently",
         prompt: "has Lily's room been warm recently?",
-        expected_db: :home,
         context: eval_context(),
         max_tool_calls: 5,
-        expected_query_terms: ["home_readings", "lily"],
-        forbidden_query_terms: [],
+        expected_registered_tool: "get_home_history",
+        expected_registered_arg_terms: ["lily", "temperature"],
+        forbidden_query_terms: ["home_readings"],
         expected_answer_terms: ["lily", "warm"]
       },
       %{
@@ -106,21 +106,21 @@ defmodule Zaik.AgentChat.Evals do
       %{
         name: "home_lily_temperature_change_30_minutes",
         prompt: "what was Lily's temperature change in the past 30 minutes?",
-        expected_db: :home,
         context: eval_context(),
         max_tool_calls: 5,
-        expected_query_terms: ["home_readings", "lily", "datetime('now','-30 minutes')"],
-        forbidden_query_terms: ["'-3 hours'", "'-1 hour'"],
+        expected_registered_tool: "get_home_history",
+        expected_registered_arg_terms: ["lily", "temperature", "30"],
+        forbidden_query_terms: ["home_readings", "180"],
         expected_answer_terms: ["temperature"]
       },
       %{
         name: "home_lily_temperature_change_3_hours",
         prompt: "what was Lily's temperature change in the past 3 hours?",
-        expected_db: :home,
         context: eval_context(),
         max_tool_calls: 5,
-        expected_query_terms: ["home_readings", "lily", "datetime('now','-3 hours')"],
-        forbidden_query_terms: ["'-30 minutes'", "'-1 hour'"],
+        expected_registered_tool: "get_home_history",
+        expected_registered_arg_terms: ["lily", "temperature", "180"],
+        forbidden_query_terms: ["home_readings", "30"],
         expected_answer_terms: ["temperature"]
       },
       %{

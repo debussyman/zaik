@@ -1,6 +1,22 @@
 defmodule Zaik.Tools.ExecutorTest do
   use ExUnit.Case, async: true
 
+  defmodule SkillAction do
+    @behaviour Zaik.Tool
+
+    def descriptor do
+      %{
+        name: "skill_action",
+        description: "Test skill action",
+        input_schema: %{"type" => "object"},
+        kind: :action,
+        risk: :medium
+      }
+    end
+
+    def run(_args, _context), do: {:ok, %{status: "accepted"}}
+  end
+
   setup do
     {:ok, ledger} =
       start_supervised({Zaik.Home.ActionLedger, name: nil, db_path: ":memory:"})
@@ -64,6 +80,49 @@ defmodule Zaik.Tools.ExecutorTest do
              )
 
     assert_received {:action_id, ^expected_id}
+  end
+
+  test "enforces active skill tool and risk declarations", %{
+    ledger: ledger,
+    supervisor: supervisor
+  } do
+    base_context = %{
+      channel: :telegram,
+      chat_id: "-100",
+      message_id: 100,
+      action_ledger: ledger,
+      task_supervisor: supervisor
+    }
+
+    denied_tool =
+      Map.put(base_context, :active_skills, [
+        %{name: "safe skill", risk: "high", allowed_tools: ["another_action"]}
+      ])
+
+    assert {:error, {:skill_tool_not_allowed, "safe skill", "skill_action"}} =
+             Zaik.Tools.Executor.run("skill_action", %{}, denied_tool,
+               registry_opts: [modules: [SkillAction]]
+             )
+
+    denied_risk =
+      Map.put(base_context, :active_skills, [
+        %{name: "low skill", risk: "low", allowed_tools: ["skill_action"]}
+      ])
+
+    assert {:error, {:skill_risk_exceeded, "low skill", "low", :medium}} =
+             Zaik.Tools.Executor.run("skill_action", %{}, denied_risk,
+               registry_opts: [modules: [SkillAction]]
+             )
+
+    allowed =
+      Map.put(base_context, :active_skills, [
+        %{name: "medium skill", risk: "medium", allowed_tools: ["skill_action"]}
+      ])
+
+    assert {:ok, %{status: "accepted"}} =
+             Zaik.Tools.Executor.run("skill_action", %{}, allowed,
+               registry_opts: [modules: [SkillAction]]
+             )
   end
 
   test "bounds action execution time", %{ledger: ledger, supervisor: supervisor} do

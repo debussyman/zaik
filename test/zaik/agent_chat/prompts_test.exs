@@ -1,6 +1,22 @@
 defmodule Zaik.AgentChat.PromptsTest do
   use ExUnit.Case, async: false
 
+  defmodule RuntimeHistoryTool do
+    @behaviour Zaik.Tool
+
+    def descriptor do
+      %{
+        name: "get_home_history",
+        description: "Runtime replacement history contract marker.",
+        input_schema: %{"type" => "object", "required" => ["runtime_marker"]},
+        kind: :read,
+        risk: :none
+      }
+    end
+
+    def run(_args, _context), do: {:ok, []}
+  end
+
   test "house prompt includes current time context without hardcoding this morning semantics" do
     prompt = Zaik.AgentChat.Prompts.planner("what changed in Lily's room this morning?", %{})
 
@@ -83,6 +99,18 @@ defmodule Zaik.AgentChat.PromptsTest do
     assert prompt =~ "Required action tool: retry_home_action"
     assert prompt =~ ~s("action_id":"exact ID supplied by the user")
     assert prompt =~ "Never invent or infer an action ID"
+  end
+
+  test "planner tool contracts come from runtime registry descriptors" do
+    prompt =
+      Zaik.AgentChat.Prompts.planner(
+        "What changed in Lily's room recently?",
+        %{registry_opts: [modules: [RuntimeHistoryTool]]}
+      )
+
+    assert prompt =~ "runtime generated"
+    assert prompt =~ "Runtime replacement history contract marker"
+    assert prompt =~ "runtime_marker"
   end
 
   test "known dynamic device names classify as home readings without static room keywords" do

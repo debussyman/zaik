@@ -60,11 +60,12 @@ defmodule Zaik.Analytics.SQLTool do
     """
     Allowed home views:
 
-    home_devices(id, friendly_name, source, topic, metadata_json, inserted_at, updated_at)
+    home_devices(id, friendly_name, area_id, source, topic, metadata_json, inserted_at, updated_at)
 
-    home_readings(id, device_id, device_name, room, recorded_at, temperature_c,
-      temperature_f, humidity, illuminance, presence, pir_detection, battery,
-      voltage, linkquality, target_distance, payload_json)
+    home_readings(id, device_id, device_name, room, area_id, recorded_at,
+      temperature_c, temperature_f, humidity, illuminance, presence,
+      pir_detection, battery, voltage, linkquality, target_distance, provenance,
+      payload_json)
 
     home_device_presets(device_name, preset_name, capability, target_json,
       source, created_by, metadata_json, created_at, updated_at)
@@ -224,7 +225,6 @@ defmodule Zaik.Analytics.SQLTool do
         Regex.match?(~r/\bfriendly_name\b/i, sql) -> "friendly_name"
         Regex.match?(~r/\bcreated_at\b/i, sql) -> "created_at"
         Regex.match?(~r/\btemperature_celsius\b/i, sql) -> "temperature_celsius"
-        Regex.match?(~r/\barea_id\b/i, sql) -> "area_id"
         Regex.match?(~r/\bentity_name\b/i, sql) -> "entity_name"
         Regex.match?(~r/\bentity_id\b/i, sql) -> "entity_id"
         Regex.match?(~r/\bentity\b/i, sql) -> "entity"

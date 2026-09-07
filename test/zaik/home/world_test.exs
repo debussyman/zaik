@@ -80,6 +80,48 @@ defmodule Zaik.Home.WorldTest do
     assert right_blind.name == "Lily's bedroom right blind"
   end
 
+  test "persisted aliases and areas participate in canonical lookup", %{store: store} do
+    {:ok, history} =
+      start_supervised({Zaik.Home.HistoryStore, name: nil, db_path: ":memory:"},
+        id: :identity_history
+      )
+
+    metadata = %{"ieee_address" => "0xclimate"}
+
+    Zaik.Home.DeviceStore.upsert_device(
+      store,
+      "Lily's room multi-sensor",
+      %{"temperature" => 25.0},
+      metadata
+    )
+
+    :ok =
+      Zaik.Home.HistoryStore.record_device(
+        history,
+        "Lily's room multi-sensor",
+        %{"temperature" => 25.0},
+        metadata
+      )
+
+    {:ok, _identity} =
+      Zaik.Home.HistoryStore.configure_entity(
+        "0xclimate",
+        "lily_bedroom",
+        ["nursery climate"],
+        history
+      )
+
+    assert {:ok, entity} =
+             Zaik.Home.World.get("nursery climate",
+               device_store: store,
+               identity_store: history,
+               capability: "temperature"
+             )
+
+    assert entity.area_id == "lily_bedroom"
+    assert entity.aliases == ["nursery climate"]
+  end
+
   test "bootstrap state remains distinguishable from a fresh observation", %{store: store} do
     Zaik.Home.DeviceStore.upsert_device(
       store,

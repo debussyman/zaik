@@ -11,10 +11,18 @@ defmodule Zaik.Home.Mirror.Runner do
         settle_ms = Keyword.get(opts, :settle_ms, 0)
         if settle_ms > 0, do: Zaik.Home.Mirror.advance(mirror, settle_ms)
 
+        report = Zaik.Home.Mirror.Assertions.evaluate(mirror)
+
         {:ok,
          %{
            result: result,
-           report: Zaik.Home.Mirror.Assertions.evaluate(mirror)
+           report: report,
+           failure_labels: Zaik.Learning.FailureLabels.classify(result, report.actions),
+           fingerprints: %{
+             scenario: report.scenario_fingerprint,
+             tools: report.tool_fingerprint,
+             capabilities: report.capability_fingerprint
+           }
          }}
       after
         Zaik.Home.Mirror.stop(mirror)

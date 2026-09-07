@@ -70,6 +70,13 @@ defmodule Zaik do
   def home_device(query), do: Zaik.Home.DeviceStore.find_device(query)
 
   @doc """
+  Persist an explicit area and aliases for a canonical home entity.
+  """
+  def configure_home_entity(device_query, area_id, aliases \\ []) do
+    Zaik.Home.HistoryStore.configure_entity(device_query, area_id, aliases)
+  end
+
+  @doc """
   Return latest known devices that expose a presence field.
   """
   def presence_devices, do: Zaik.Home.DeviceStore.presence_devices()

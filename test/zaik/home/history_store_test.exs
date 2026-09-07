@@ -40,6 +40,58 @@ defmodule Zaik.Home.HistoryStoreTest do
     assert reading.payload["battery"] == 100
   end
 
+  test "persists explicit area aliases and serves bounded typed capability history", %{
+    history: history
+  } do
+    assert :ok =
+             Zaik.Home.HistoryStore.record_device(
+               history,
+               "Lily's room multi-sensor",
+               %{"temperature" => 25.0},
+               %{"ieee_address" => "0xlily"},
+               observed_at: ~U[2026-08-14 10:00:00Z]
+             )
+
+    assert :ok =
+             Zaik.Home.HistoryStore.record_device(
+               history,
+               "Lily's room multi-sensor",
+               %{"temperature" => 26.0},
+               %{"ieee_address" => "0xlily"},
+               observed_at: ~U[2026-08-14 11:00:00Z]
+             )
+
+    assert {:ok, identity} =
+             Zaik.Home.HistoryStore.configure_entity(
+               "0xlily",
+               "lily_bedroom",
+               ["nursery", "Lily climate"],
+               history
+             )
+
+    assert identity.area_id == "lily_bedroom"
+    assert identity.aliases == ["nursery", "Lily climate"]
+
+    assert [%{area_id: "lily_bedroom", aliases: aliases}] =
+             Zaik.Home.HistoryStore.list_devices(history)
+
+    assert aliases == ["Lily climate", "nursery"]
+
+    assert {:ok, [reading]} =
+             Zaik.Home.HistoryStore.capability_history(
+               "nursery",
+               "temperature_f",
+               [from: ~U[2026-08-14 10:30:00Z], limit: 10],
+               history
+             )
+
+    assert reading.device_id == "0xlily"
+    assert reading.area_id == "lily_bedroom"
+    assert reading.value.celsius == 26.0
+    assert reading.value.fahrenheit == 78.8
+    assert reading.provenance == "observed"
+  end
+
   test "queries readings since a timestamp", %{history: history} do
     Zaik.Home.HistoryStore.record_device(history, "Lily", %{"temperature" => 25.0}, %{},
       observed_at: ~U[2026-08-14 10:00:00Z]

@@ -30,6 +30,7 @@ defmodule Zaik.Home.Tools.GetState do
         opts =
           []
           |> put_if(:device_store, value(context, :device_store))
+          |> put_if(:identity_store, value(context, :history_store))
           |> put_if(:capability, value(args, :capability))
           |> put_if(:capability_opts, value(context, :capability_opts))
 

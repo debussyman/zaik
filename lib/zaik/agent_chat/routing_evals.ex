@@ -34,7 +34,7 @@ defmodule Zaik.AgentChat.RoutingEvals do
         kind: :domain,
         prompt: "Is Lily's room getting warmer or cooler?",
         expected_domain: :home_readings,
-        prompt_must_include: ["home_readings"],
+        prompt_must_include: ["get_home_history"],
         prompt_must_not_include: ["control_blind"]
       },
       %{
@@ -116,10 +116,10 @@ defmodule Zaik.AgentChat.RoutingEvals do
         expected_error: {:unknown_home_column, "device"}
       },
       %{
-        name: "home_sql_rejects_area_id_column",
+        name: "home_sql_accepts_persisted_area_id_column",
         kind: :sql_guard,
         sql: "SELECT temperature_f FROM home_readings WHERE area_id = 'lily_bedroom' LIMIT 10",
-        expected_error: {:unknown_home_column, "area_id"}
+        expected_ok?: true
       },
       %{
         name: "latest_temperature_accepts_parenthesized_non_null_filter",

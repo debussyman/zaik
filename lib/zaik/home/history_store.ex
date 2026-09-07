@@ -11,6 +11,20 @@ defmodule Zaik.Home.HistoryStore do
 
   alias Exqlite.Sqlite3
 
+  @history_capabilities %{
+    "temperature" => {"temperature_c", :temperature},
+    "temperature_c" => {"temperature_c", :temperature},
+    "temperature_f" => {"temperature_c", :temperature},
+    "humidity" => {"humidity", :humidity},
+    "illuminance" => {"illuminance", :illuminance},
+    "presence" => {"presence", :boolean},
+    "pir_detection" => {"pir_detection", :boolean},
+    "battery" => {"battery", :battery},
+    "voltage" => {"voltage", :voltage},
+    "linkquality" => {"linkquality", :linkquality},
+    "target_distance" => {"target_distance", :target_distance}
+  }
+
   @telemetry_keys %{
     temperature_c: "temperature",
     humidity: "humidity",
@@ -64,6 +78,11 @@ defmodule Zaik.Home.HistoryStore do
     GenServer.call(server, :list_devices)
   end
 
+  def configure_entity(device_query, area_id, aliases \\ [], server \\ __MODULE__)
+      when is_binary(device_query) and is_list(aliases) do
+    GenServer.call(server, {:configure_entity, device_query, area_id, aliases})
+  end
+
   def recent_readings(friendly_name) when is_binary(friendly_name),
     do: recent_readings(__MODULE__, friendly_name, [])
 
@@ -90,6 +109,11 @@ defmodule Zaik.Home.HistoryStore do
   def readings_since(server, friendly_name, since, opts)
       when is_binary(friendly_name) and is_struct(since, DateTime) and is_list(opts) do
     GenServer.call(server, {:readings_since, friendly_name, since, opts})
+  end
+
+  def capability_history(query, capability, opts \\ [], server \\ __MODULE__)
+      when is_binary(query) and is_list(opts) do
+    GenServer.call(server, {:capability_history, query, capability, opts})
   end
 
   def count_readings, do: count_readings(__MODULE__, nil)
@@ -154,6 +178,14 @@ defmodule Zaik.Home.HistoryStore do
     {:reply, query_devices(state.conn), state}
   end
 
+  def handle_call({:configure_entity, _query, _area_id, _aliases}, _from, %{conn: nil} = state),
+    do: {:reply, {:error, :disabled}, state}
+
+  def handle_call({:configure_entity, device_query, area_id, aliases}, _from, state) do
+    reply = configure_entity_row(state.conn, device_query, area_id, aliases)
+    {:reply, reply, state}
+  end
+
   def handle_call({:recent_readings, _friendly_name, _opts}, _from, %{conn: nil} = state) do
     {:reply, {:ok, []}, state}
   end
@@ -170,6 +202,14 @@ defmodule Zaik.Home.HistoryStore do
   def handle_call({:readings_since, friendly_name, since, opts}, _from, state) do
     limit = Keyword.get(opts, :limit, 500)
     {:reply, {:ok, query_readings_since(state.conn, friendly_name, since, limit)}, state}
+  end
+
+  def handle_call({:capability_history, _query, _capability, _opts}, _from, %{conn: nil} = state),
+    do: {:reply, {:ok, []}, state}
+
+  def handle_call({:capability_history, entity_query, capability, opts}, _from, state) do
+    reply = query_capability_history(state.conn, entity_query, capability, opts)
+    {:reply, reply, state}
   end
 
   def handle_call({:count_readings, _friendly_name}, _from, %{conn: nil} = state) do
@@ -202,6 +242,7 @@ defmodule Zaik.Home.HistoryStore do
     CREATE TABLE IF NOT EXISTS devices (
       id TEXT PRIMARY KEY,
       friendly_name TEXT NOT NULL,
+      area_id TEXT,
       source TEXT,
       topic TEXT,
       metadata_json TEXT NOT NULL DEFAULT '{}',
@@ -223,6 +264,7 @@ defmodule Zaik.Home.HistoryStore do
       linkquality REAL,
       target_distance REAL,
       payload_json TEXT NOT NULL,
+      provenance TEXT NOT NULL DEFAULT 'observed',
       FOREIGN KEY(device_id) REFERENCES devices(id)
     );
 
@@ -232,32 +274,16 @@ defmodule Zaik.Home.HistoryStore do
     CREATE INDEX IF NOT EXISTS readings_time_idx
       ON readings(observed_at);
 
-    CREATE VIEW IF NOT EXISTS home_devices AS
-      SELECT id, friendly_name, source, topic, metadata_json, inserted_at, updated_at
-      FROM devices;
+    CREATE TABLE IF NOT EXISTS home_entity_aliases (
+      device_id TEXT NOT NULL,
+      alias TEXT NOT NULL COLLATE NOCASE,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY(device_id, alias),
+      FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE
+    );
 
-    CREATE VIEW IF NOT EXISTS home_readings AS
-      SELECT r.id,
-             r.device_id,
-             d.friendly_name AS device_name,
-             d.friendly_name AS room,
-             r.observed_at AS recorded_at,
-             r.temperature_c,
-             CASE
-               WHEN r.temperature_c IS NULL THEN NULL
-               ELSE r.temperature_c * 9.0 / 5.0 + 32.0
-             END AS temperature_f,
-             r.humidity,
-             r.illuminance,
-             r.presence,
-             r.pir_detection,
-             r.battery,
-             r.voltage,
-             r.linkquality,
-             r.target_distance,
-             r.payload_json
-      FROM readings r
-      JOIN devices d ON d.id = r.device_id;
+    CREATE INDEX IF NOT EXISTS home_entity_aliases_alias_idx
+      ON home_entity_aliases(alias);
 
     CREATE TABLE IF NOT EXISTS home_device_preset_rows (
       device_key TEXT NOT NULL,
@@ -289,6 +315,68 @@ defmodule Zaik.Home.HistoryStore do
              updated_at
       FROM home_device_preset_rows;
     """)
+    |> case do
+      :ok ->
+        with :ok <- ensure_column(conn, "devices", "area_id", "TEXT"),
+             :ok <-
+               ensure_column(
+                 conn,
+                 "readings",
+                 "provenance",
+                 "TEXT NOT NULL DEFAULT 'legacy_unknown'"
+               ) do
+          recreate_home_views(conn)
+        end
+
+      error ->
+        error
+    end
+  end
+
+  defp ensure_column(conn, table, column, definition) do
+    existing = query(conn, "PRAGMA table_info(#{table})") |> Enum.map(&Enum.at(&1, 1))
+
+    if column in existing do
+      :ok
+    else
+      Sqlite3.execute(conn, "ALTER TABLE #{table} ADD COLUMN #{column} #{definition}")
+    end
+  end
+
+  defp recreate_home_views(conn) do
+    Sqlite3.execute(conn, """
+    DROP VIEW IF EXISTS home_devices;
+    DROP VIEW IF EXISTS home_readings;
+
+    CREATE VIEW home_devices AS
+      SELECT id, friendly_name, area_id, source, topic, metadata_json, inserted_at, updated_at
+      FROM devices;
+
+    CREATE VIEW home_readings AS
+      SELECT r.id,
+             r.device_id,
+             d.friendly_name AS device_name,
+             COALESCE(d.area_id, d.friendly_name) AS room,
+             d.area_id,
+             r.observed_at AS recorded_at,
+             r.temperature_c,
+             CASE
+               WHEN r.temperature_c IS NULL THEN NULL
+               ELSE r.temperature_c * 9.0 / 5.0 + 32.0
+             END AS temperature_f,
+             r.humidity,
+             r.illuminance,
+             r.presence,
+             r.pir_detection,
+             r.battery,
+             r.voltage,
+             r.linkquality,
+             r.target_distance,
+             r.provenance,
+             r.payload_json
+      FROM readings r
+      JOIN devices d ON d.id = r.device_id;
+    """)
   end
 
   defp upsert_device(conn, device_id, friendly_name, metadata, observed_at) do
@@ -297,10 +385,11 @@ defmodule Zaik.Home.HistoryStore do
     exec(
       conn,
       """
-      INSERT INTO devices (id, friendly_name, source, topic, metadata_json, inserted_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO devices (id, friendly_name, area_id, source, topic, metadata_json, inserted_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         friendly_name = excluded.friendly_name,
+        area_id = COALESCE(devices.area_id, excluded.area_id),
         source = excluded.source,
         topic = excluded.topic,
         metadata_json = excluded.metadata_json,
@@ -309,6 +398,8 @@ defmodule Zaik.Home.HistoryStore do
       [
         device_id,
         friendly_name,
+        metadata["area_id"] || metadata[:area_id] || metadata["area"] || metadata[:area] ||
+          metadata["room"] || metadata[:room],
         metadata["source"] || metadata[:source],
         metadata["topic"] || metadata[:topic],
         Jason.encode!(metadata),
@@ -324,8 +415,8 @@ defmodule Zaik.Home.HistoryStore do
       """
       INSERT INTO readings (
         device_id, observed_at, temperature_c, humidity, illuminance, presence,
-        pir_detection, battery, voltage, linkquality, target_distance, payload_json
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        pir_detection, battery, voltage, linkquality, target_distance, payload_json, provenance
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       """,
       [
         device_id,
@@ -339,21 +430,106 @@ defmodule Zaik.Home.HistoryStore do
         numeric(payload[@telemetry_keys.voltage]),
         numeric(payload[@telemetry_keys.linkquality]),
         numeric(payload[@telemetry_keys.target_distance]),
-        Jason.encode!(payload)
+        Jason.encode!(payload),
+        "observed"
       ]
     )
   end
 
+  defp configure_entity_row(conn, device_query, area_id, aliases) do
+    query_key = normalize(device_query)
+
+    matches =
+      conn
+      |> query_devices()
+      |> Enum.filter(fn device ->
+        normalize(device.id) == query_key or normalize(device.friendly_name) == query_key or
+          query_key in Enum.map(device.aliases, &normalize/1) or
+          String.contains?(normalize(device.friendly_name), query_key)
+      end)
+
+    case matches do
+      [device] ->
+        area_id = normalize_optional(area_id)
+
+        aliases =
+          aliases
+          |> Enum.map(&String.trim(to_string(&1)))
+          |> Enum.reject(&(&1 == ""))
+          |> Enum.uniq_by(&normalize/1)
+
+        now = DateTime.utc_now() |> DateTime.to_iso8601()
+
+        with :ok <- exec(conn, "BEGIN IMMEDIATE", []),
+             :ok <-
+               exec(conn, "UPDATE devices SET area_id = ?, updated_at = ? WHERE id = ?", [
+                 area_id,
+                 now,
+                 device.id
+               ]),
+             :ok <-
+               exec(conn, "DELETE FROM home_entity_aliases WHERE device_id = ?", [device.id]),
+             :ok <- insert_aliases(conn, device.id, aliases, now),
+             :ok <- exec(conn, "COMMIT", []) do
+          {:ok,
+           %{device_id: device.id, name: device.friendly_name, area_id: area_id, aliases: aliases}}
+        else
+          {:error, reason} ->
+            _ = exec(conn, "ROLLBACK", [])
+            {:error, reason}
+        end
+
+      [] ->
+        {:error, :not_found}
+
+      devices ->
+        {:error, {:ambiguous, Enum.map(devices, & &1.friendly_name)}}
+    end
+  end
+
+  defp insert_aliases(conn, device_id, aliases, now) do
+    Enum.reduce_while(aliases, :ok, fn alias_name, :ok ->
+      case exec(
+             conn,
+             "INSERT INTO home_entity_aliases (device_id, alias, created_at) VALUES (?, ?, ?)",
+             [device_id, alias_name, now]
+           ) do
+        :ok -> {:cont, :ok}
+        error -> {:halt, error}
+      end
+    end)
+  end
+
+  defp query_aliases(conn, device_id) do
+    query(
+      conn,
+      "SELECT alias FROM home_entity_aliases WHERE device_id = ? ORDER BY alias COLLATE NOCASE",
+      [device_id]
+    )
+    |> Enum.map(&hd/1)
+  end
+
   defp query_devices(conn) do
     query(conn, """
-    SELECT id, friendly_name, source, topic, metadata_json, inserted_at, updated_at
+    SELECT id, friendly_name, area_id, source, topic, metadata_json, inserted_at, updated_at
     FROM devices
     ORDER BY friendly_name COLLATE NOCASE
     """)
-    |> Enum.map(fn [id, friendly_name, source, topic, metadata_json, inserted_at, updated_at] ->
+    |> Enum.map(fn [
+                     id,
+                     friendly_name,
+                     area_id,
+                     source,
+                     topic,
+                     metadata_json,
+                     inserted_at,
+                     updated_at
+                   ] ->
       %{
         id: id,
         friendly_name: friendly_name,
+        area_id: area_id,
+        aliases: query_aliases(conn, id),
         source: source,
         topic: topic,
         metadata: decode_json(metadata_json, %{}),
@@ -369,7 +545,7 @@ defmodule Zaik.Home.HistoryStore do
       """
       SELECT r.id, r.device_id, d.friendly_name, r.observed_at, r.temperature_c, r.humidity,
              r.illuminance, r.presence, r.pir_detection, r.battery, r.voltage,
-             r.linkquality, r.target_distance, r.payload_json
+             r.linkquality, r.target_distance, r.payload_json, r.provenance
       FROM readings r
       JOIN devices d ON d.id = r.device_id
       WHERE lower(d.friendly_name) = lower(?) OR lower(d.friendly_name) LIKE lower(?)
@@ -387,7 +563,7 @@ defmodule Zaik.Home.HistoryStore do
       """
       SELECT r.id, r.device_id, d.friendly_name, r.observed_at, r.temperature_c, r.humidity,
              r.illuminance, r.presence, r.pir_detection, r.battery, r.voltage,
-             r.linkquality, r.target_distance, r.payload_json
+             r.linkquality, r.target_distance, r.payload_json, r.provenance
       FROM readings r
       JOIN devices d ON d.id = r.device_id
       WHERE (lower(d.friendly_name) = lower(?) OR lower(d.friendly_name) LIKE lower(?))
@@ -415,7 +591,8 @@ defmodule Zaik.Home.HistoryStore do
                      voltage,
                      linkquality,
                      target_distance,
-                     payload_json
+                     payload_json,
+                     provenance
                    ] ->
       %{
         id: id,
@@ -432,10 +609,103 @@ defmodule Zaik.Home.HistoryStore do
         voltage: voltage,
         linkquality: linkquality,
         target_distance: target_distance,
-        payload: decode_json(payload_json, %{})
+        payload: decode_json(payload_json, %{}),
+        provenance: provenance
       }
     end)
   end
+
+  defp query_capability_history(conn, entity_query, capability, opts) do
+    capability = capability |> to_string() |> String.downcase()
+
+    case Map.fetch(@history_capabilities, capability) do
+      {:ok, {column, type}} ->
+        limit = opts |> Keyword.get(:limit, 100) |> clamp_limit()
+        from = Keyword.get(opts, :from)
+        until_time = Keyword.get(opts, :until)
+        {time_sql, time_params} = history_time_filter(from, until_time)
+        like_query = "%#{entity_query}%"
+
+        rows =
+          query(
+            conn,
+            """
+            SELECT d.id, d.friendly_name, d.area_id, r.observed_at, r.#{column}, r.provenance
+            FROM readings r
+            JOIN devices d ON d.id = r.device_id
+            WHERE (
+              lower(d.id) = lower(?) OR
+              lower(d.friendly_name) = lower(?) OR
+              lower(d.friendly_name) LIKE lower(?) OR
+              lower(COALESCE(d.area_id, '')) = lower(?) OR
+              EXISTS (
+                SELECT 1 FROM home_entity_aliases a
+                WHERE a.device_id = d.id AND lower(a.alias) = lower(?)
+              )
+            )
+              AND r.#{column} IS NOT NULL
+              #{time_sql}
+            ORDER BY r.observed_at ASC
+            LIMIT ?
+            """,
+            [entity_query, entity_query, like_query, entity_query, entity_query] ++
+              time_params ++ [limit]
+          )
+          |> Enum.map(fn [device_id, name, area_id, observed_at, value, provenance] ->
+            %{
+              device_id: device_id,
+              device: name,
+              area_id: area_id,
+              capability: capability,
+              value: history_value(type, capability, value),
+              observed_at: observed_at,
+              provenance: provenance
+            }
+          end)
+
+        {:ok, rows}
+
+      :error ->
+        {:error, {:unsupported_capability, capability}}
+    end
+  end
+
+  defp history_time_filter(from, until_time) do
+    filters =
+      []
+      |> maybe_time_filter("r.observed_at >= ?", from)
+      |> maybe_time_filter("r.observed_at <= ?", until_time)
+
+    case filters do
+      [] ->
+        {"", []}
+
+      filters ->
+        {"AND " <> Enum.map_join(filters, " AND ", &elem(&1, 0)), Enum.map(filters, &elem(&1, 1))}
+    end
+  end
+
+  defp maybe_time_filter(filters, _sql, nil), do: filters
+
+  defp maybe_time_filter(filters, sql, %DateTime{} = datetime),
+    do: filters ++ [{sql, DateTime.to_iso8601(datetime)}]
+
+  defp maybe_time_filter(filters, sql, value) when is_binary(value),
+    do: filters ++ [{sql, value}]
+
+  defp maybe_time_filter(filters, _sql, _value), do: filters
+
+  defp history_value(:temperature, "temperature_f", value),
+    do: %{fahrenheit: celsius_to_fahrenheit(value), celsius: value}
+
+  defp history_value(:temperature, _capability, value),
+    do: %{celsius: value, fahrenheit: celsius_to_fahrenheit(value)}
+
+  defp history_value(:boolean, _capability, value), do: integer_boolean(value)
+  defp history_value(_type, _capability, value), do: value
+
+  defp clamp_limit(value) when is_integer(value), do: value |> max(1) |> min(500)
+  defp clamp_limit(_value), do: 100
 
   defp count_readings_for(conn, nil) do
     [[count]] = query(conn, "SELECT COUNT(*) FROM readings")
@@ -531,6 +801,15 @@ defmodule Zaik.Home.HistoryStore do
     case DateTime.from_iso8601(value) do
       {:ok, datetime, _offset} -> datetime
       _ -> value
+    end
+  end
+
+  defp normalize_optional(nil), do: nil
+
+  defp normalize_optional(value) do
+    case String.trim(to_string(value)) do
+      "" -> nil
+      value -> value
     end
   end
 

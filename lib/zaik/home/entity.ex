@@ -7,6 +7,7 @@ defmodule Zaik.Home.Entity do
           id: String.t(),
           name: String.t(),
           area_id: String.t() | nil,
+          aliases: [String.t()],
           source: String.t() | nil,
           capabilities: [String.t()],
           state: map(),
@@ -21,6 +22,7 @@ defmodule Zaik.Home.Entity do
     :source,
     :observed_at,
     :received_at,
+    aliases: [],
     capabilities: [],
     state: %{}
   ]

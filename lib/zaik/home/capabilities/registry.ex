@@ -53,11 +53,30 @@ defmodule Zaik.Home.Capabilities.Registry do
     end)
   end
 
+  def fingerprint(opts \\ []) do
+    opts
+    |> modules()
+    |> Enum.filter(&valid_module?/1)
+    |> Enum.map(& &1.descriptor())
+    |> Enum.sort_by(& &1.id)
+    |> :erlang.term_to_binary()
+    |> then(&:crypto.hash(:sha256, &1))
+    |> Base.encode16(case: :lower)
+  end
+
   def validate(opts \\ []) do
-    invalid = Enum.reject(modules(opts), &valid_module?/1)
+    modules = modules(opts)
+
+    contract_errors =
+      Enum.flat_map(modules, fn module ->
+        case Zaik.Home.Capabilities.Contract.validate(module) do
+          :ok -> []
+          {:error, reason} -> [{module, reason}]
+        end
+      end)
 
     descriptors =
-      modules(opts)
+      modules
       |> Enum.filter(&valid_module?/1)
       |> Enum.map(& &1.descriptor())
 
@@ -65,7 +84,7 @@ defmodule Zaik.Home.Capabilities.Registry do
     duplicates = ids -- Enum.uniq(ids)
 
     cond do
-      invalid != [] -> {:error, {:invalid_capability_modules, invalid}}
+      contract_errors != [] -> {:error, {:capability_contract_errors, contract_errors}}
       duplicates != [] -> {:error, {:duplicate_capability_ids, Enum.uniq(duplicates)}}
       true -> :ok
     end

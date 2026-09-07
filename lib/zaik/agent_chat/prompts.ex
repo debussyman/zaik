@@ -15,6 +15,7 @@ defmodule Zaik.AgentChat.Prompts do
       house_identity(domain),
       current_time_context(),
       domain_policy(domain, text),
+      registry_tool_contracts(domain, text, context),
       request_context(context),
       mode_instruction(domain)
     ]
@@ -382,6 +383,31 @@ defmodule Zaik.AgentChat.Prompts do
     |> String.trim()
   end
 
+  defp registry_tool_contracts(domain, text, context) do
+    names = tool_names_for_domain(domain, text)
+    registry_opts = Map.get(context, :registry_opts) || Map.get(context, "registry_opts") || []
+
+    contracts =
+      registry_opts
+      |> Zaik.Tools.Registry.descriptors()
+      |> Enum.filter(&(&1.name in names))
+      |> Enum.map(fn descriptor ->
+        Map.take(descriptor, [:name, :description, :kind, :risk, :input_schema])
+      end)
+
+    if contracts == [] do
+      "AVAILABLE REGISTERED TOOL CONTRACTS: none"
+    else
+      "AVAILABLE REGISTERED TOOL CONTRACTS (runtime generated):\n" <> Jason.encode!(contracts)
+    end
+  end
+
+  defp tool_names_for_domain(:general, _text), do: []
+  defp tool_names_for_domain(:home_action_status, _text), do: ["get_home_action_status"]
+  defp tool_names_for_domain(:home_readings, text), do: [home_read_mode(text)]
+  defp tool_names_for_domain(:home_control, text), do: [home_control_required_tool(text)]
+  defp tool_names_for_domain(_domain, _text), do: ["sql_query"]
+
   defp current_time_context do
     utc_now = DateTime.utc_now()
     local = local_datetime_tuple()
@@ -410,7 +436,7 @@ defmodule Zaik.AgentChat.Prompts do
   end
 
   defp mode_instruction(:home_readings) do
-    "HOME STATE MODE: For current/latest state return get_home_state. For historical, windowed, or trend questions return sql_query. Copy room/device terms from the exact user request. Do not answer before a tool result."
+    "HOME STATE MODE: For current/latest state return get_home_state. For historical, windowed, or trend questions return get_home_history. Copy room/device terms and exact time windows from the request. Do not answer before a tool result."
   end
 
   defp mode_instruction(_domain) do
@@ -502,7 +528,7 @@ defmodule Zaik.AgentChat.Prompts do
   defp home_readings_domain_policy(text) do
     case home_read_mode(text) do
       "get_home_state" -> current_home_readings_policy(text)
-      "sql_query" -> historical_home_readings_policy(text)
+      "get_home_history" -> historical_home_readings_policy(text)
     end
   end
 
@@ -526,72 +552,25 @@ defmodule Zaik.AgentChat.Prompts do
 
   defp historical_home_readings_policy(text) do
     lookup = home_lookup_hint(text)
-    read_mode = home_read_mode(text)
 
     """
     DOMAIN: home sensor readings and trends.
+    MODE: typed historical capability state.
     Exact user request: #{text}
     Requested entity lookup text: #{lookup}
-    Required first tool: #{read_mode}
+    Required first tool: get_home_history
 
-    TOOL SELECTION IS REQUIRED:
-    - If Required first tool is sql_query, the request asks about history/change/a time window. You MUST use sql_query and MUST NOT substitute get_home_state.
-    - If Required first tool is get_home_state, the request asks only for current/latest state. You MUST use get_home_state.
+    Return one bounded typed-history call before answering:
+    {"type":"tool_call","tool":"get_home_history","args":{"query":"#{lookup}","capability":"requested capability","since_minutes":30,"limit":100}}
 
-    HARD SCHEMA RULES:
-    - The database is home.
-    - The only readings view is home_readings. Never use sensor_readings, zaik_sensor_readings, home_read, or home_reads.
-    - REQUIRED ENTITY PREDICATE for this request: (lower(device_name) LIKE '%#{escape_sql_literal(lookup)}%' OR lower(room) LIKE '%#{escape_sql_literal(lookup)}%'). Copy that predicate exactly into home_readings SQL.
-    - Do not use area IDs, snake_case names, exact equality, or backslash-escaped apostrophes as substitutes for the required predicate.
-
-    Available read tools:
-    - get_home_state for current/latest typed state. It filters entities by capability so covers cannot mask temperature sensors.
-    - sql_query against database home for historical readings, explicit time windows, and trends.
-
-    get_home_state shape:
-    {"type":"tool_call","tool":"get_home_state","args":{"query":"exact room/device words from the user request","capability":"requested capability"}}
-
-    Database: home
-    SQL may use these views only:
-    home_readings(id, device_id, device_name, room, recorded_at, temperature_c, temperature_f, humidity, illuminance, presence, pir_detection, battery, voltage, linkquality, target_distance, payload_json)
-    home_devices(id, friendly_name, source, topic, metadata_json, inserted_at, updated_at)
-    home_device_presets(device_name, preset_name, capability, target_json, source, created_by, metadata_json, created_at, updated_at)
-
-    Semantics:
-    - Device and room names are dynamic. Match the user's room/device words against lower(device_name), lower(room), and home_devices.friendly_name when needed.
-    - Always replace example room/device names with the user's actual requested room/device. Never copy "nursery" or "main bedroom" from examples unless the user asked for that room.
-    - For a named room/device like "main bedroom", filter lower(device_name) LIKE '%main bedroom%' OR lower(room) LIKE '%main bedroom%'.
-    - If a named room/device has no matching home_readings rows, query home_devices with the same name words before saying there is no data.
-    - For casual room-state questions like "what is it like in <room>" or "how is <room>", query the latest temperature_f, humidity, illuminance, presence, and linkquality for that room/device.
-    - For specific temperature questions, query home_readings with temperature_f IS NOT NULL so blinds/covers with no temperature do not mask the room sensor.
-    - For humidity, illuminance, presence, battery, voltage, or linkquality questions, prefer rows where the requested field IS NOT NULL.
-    - For recent readings, ORDER BY recorded_at DESC.
-    - Prefer temperature_f for household-facing temperature answers.
-    - Boolean fields are 1=true, 0=false.
-    - Use SQLite date/time syntax, e.g. datetime('now', '-7 days'). Do not use NOW() or INTERVAL.
-    - There is no sensor_readings, home_read, or home_reads view. Use home_readings.
-    - In home_readings, the device-name column is device_name. There is no device, friendly_name, or room_name column on home_readings. Use room or device_name.
-    - Only home_devices has friendly_name. Do not use friendly_name when querying home_readings.
-    - Device presets are named remembered target states, not live readings. For example capability='cover' target_json='{"position":71}' means a cover/blind preset target.
-    - Do not join to home_devices unless you need device metadata. home_readings already has device_name and room.
-
-    Time windows:
-    - Current local and UTC time are shown in CURRENT TIME CONTEXT.
-    - Interpret natural-language time phrases using current local time.
-    - For "today", use substr(recorded_at, 1, 10) = date('now') or equivalent UTC ISO bounds.
-    - For "recently" without a precise window, use ORDER BY recorded_at DESC LIMIT 10 or 20.
-    - For explicit relative durations such as "past/last 30 minutes", use recorded_at >= datetime('now', '-30 minutes').
-    - For explicit relative durations such as "past/last 3 hours", use recorded_at >= datetime('now', '-3 hours').
-    - For explicit relative durations such as "past/last N hours/minutes/days", translate N exactly into SQLite datetime('now', '-N unit').
-    - For calendar phrases or parts of the day, infer the appropriate local calendar interval from current local time rather than copying a relative-duration example.
-    - Do not collapse different requested time windows into one default trend window.
-
-    For temperature/humidity/illuminance change over a window, compare the newest and oldest non-null readings for the requested field inside exactly that window. For temperature change, include `temperature_f IS NOT NULL`.
-
-    SQL planning constraints:
-    - Every room/device literal in a SQL filter must come from the exact user request above. Do not substitute a room name learned from an example or another request.
-    - Current/latest state does not need an arbitrary recent time window; use get_home_state instead.
-    - Historical temperature SQL must include temperature_f IS NOT NULL inside the requested entity/time filter.
+    Rules:
+    - Copy the exact entity/room words into query.
+    - Use one capability: temperature, temperature_f, humidity, illuminance, presence, pir_detection, battery, voltage, linkquality, or target_distance.
+    - Translate an explicit relative duration exactly: 30 minutes -> since_minutes=30, 3 hours -> 180, 2 days -> 2880. Do not collapse different requested time windows into one default.
+    - Interpret natural-language time phrases from CURRENT TIME CONTEXT. For calendar bounds such as today or yesterday, use ISO-8601 `from` and `until` instead of guessing a duration.
+    - For "recently" with no exact duration, omit bounds and use limit=20.
+    - Values are returned oldest to newest with source observation time and provenance. Compare first and last values for a change/trend answer.
+    - Do not call sql_query for ordinary capability history. Raw SQL is reserved for advanced cross-domain aggregation.
     """
     |> String.trim()
   end
@@ -603,7 +582,7 @@ defmodule Zaik.AgentChat.Prompts do
          ~r/\b(recent|recently|past|last|ago|since|today|tonight|morning|afternoon|evening|yesterday|minute|minutes|hour|hours|day|days|week|weeks|change|changed|changing|trend|trending|getting|warmer|cooler|history|historical|was|were)\b|\bhas been\b|\bhave been\b/,
          normalized
        ) do
-      "sql_query"
+      "get_home_history"
     else
       "get_home_state"
     end

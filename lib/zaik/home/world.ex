@@ -13,10 +13,11 @@ defmodule Zaik.Home.World do
   def entities(opts \\ []) do
     store = Keyword.get(opts, :device_store, Zaik.Home.DeviceStore)
     capability_opts = Keyword.get(opts, :capability_opts, [])
+    identities = identity_index(opts)
 
     store
     |> Zaik.Home.DeviceStore.list_devices()
-    |> Enum.map(&to_entity(&1, capability_opts))
+    |> Enum.map(&to_entity(&1, capability_opts, identities))
     |> Enum.sort_by(&String.downcase(&1.name))
   end
 
@@ -53,6 +54,7 @@ defmodule Zaik.Home.World do
       id: entity.id,
       name: entity.name,
       area_id: entity.area_id,
+      aliases: entity.aliases,
       source: entity.source,
       capabilities: entity.capabilities,
       state: entity.state,
@@ -61,13 +63,18 @@ defmodule Zaik.Home.World do
     }
   end
 
-  defp to_entity(device, capability_opts) do
+  defp to_entity(device, capability_opts, identities) do
     detected = Registry.detected(device, capability_opts)
+    id = entity_id(device)
+
+    identity =
+      Map.get(identities, id) || Map.get(identities, normalize(device.friendly_name)) || %{}
 
     %Entity{
-      id: entity_id(device),
+      id: id,
       name: device.friendly_name,
-      area_id: area_id(device.metadata),
+      area_id: Map.get(identity, :area_id) || area_id(device.metadata),
+      aliases: Map.get(identity, :aliases, []),
       source: metadata_value(device.metadata, :source),
       capabilities: Enum.map(detected, & &1.descriptor.id),
       state: Map.new(detected, &{&1.descriptor.id, &1.state}),
@@ -110,9 +117,33 @@ defmodule Zaik.Home.World do
         normalize_lookup(entity.name) == lookup_query or
         String.contains?(normalize_lookup(entity.name), lookup_query) or
         fuzzy_tokens_match?(lookup_query, normalize_lookup(entity.name)) or
+        Enum.any?(entity.aliases, fn alias_name ->
+          normalize_lookup(alias_name) == lookup_query or
+            String.contains?(normalize_lookup(alias_name), lookup_query)
+        end) or
         String.contains?(normalize_lookup(entity.area_id || ""), lookup_query) or
         fuzzy_tokens_match?(lookup_query, normalize_lookup(entity.area_id || ""))
     end)
+  end
+
+  defp identity_index(opts) do
+    store = Keyword.get(opts, :identity_store, Zaik.Home.HistoryStore)
+
+    if is_pid(store) or Process.whereis(store) do
+      store
+      |> Zaik.Home.HistoryStore.list_devices()
+      |> Enum.reduce(%{}, fn identity, acc ->
+        acc
+        |> Map.put(identity.id, identity)
+        |> Map.put(normalize(identity.friendly_name), identity)
+      end)
+    else
+      %{}
+    end
+  rescue
+    _error -> %{}
+  catch
+    :exit, _reason -> %{}
   end
 
   defp filter_capability(entities, nil), do: entities

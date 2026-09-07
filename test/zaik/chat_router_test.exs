@@ -47,7 +47,7 @@ defmodule Zaik.ChatRouterTest do
     assert_received {:house_agent_called, user_message, system_prompt}
     assert user_message =~ "past 30 minutes"
     assert system_prompt =~ "You are Zaik, a local personal house agent"
-    assert system_prompt =~ "home_readings"
+    assert system_prompt =~ "get_home_history"
     assert system_prompt =~ "CURRENT TIME CONTEXT"
     assert system_prompt =~ "Interpret natural-language time phrases"
     assert system_prompt =~ "Do not collapse different requested time windows"

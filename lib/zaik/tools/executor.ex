@@ -12,7 +12,8 @@ defmodule Zaik.Tools.Executor do
   def run(tool, args, context \\ %{}, opts \\ []) do
     registry_opts = Keyword.get(opts, :registry_opts, [])
 
-    with {:ok, %{descriptor: descriptor}} <- Zaik.Tools.Registry.fetch(tool, registry_opts) do
+    with {:ok, %{descriptor: descriptor}} <- Zaik.Tools.Registry.fetch(tool, registry_opts),
+         :ok <- authorize_active_skills(descriptor, context) do
       if descriptor.kind == :action do
         run_action(
           descriptor.name,
@@ -59,6 +60,47 @@ defmodule Zaik.Tools.Executor do
         {:error, {:action_claim_failed, reason}}
     end
   end
+
+  defp authorize_active_skills(%{kind: kind}, _context) when kind != :action, do: :ok
+
+  defp authorize_active_skills(descriptor, context) do
+    skills = List.wrap(context_value(context, :active_skills))
+
+    Enum.reduce_while(skills, :ok, fn skill, :ok ->
+      allowed_tools = Map.get(skill, :allowed_tools) || Map.get(skill, "allowed_tools") || []
+      declared_risk = Map.get(skill, :risk) || Map.get(skill, "risk")
+
+      cond do
+        not skill_allows_tool?(descriptor.name, allowed_tools) ->
+          {:halt,
+           {:error,
+            {:skill_tool_not_allowed, Map.get(skill, :name) || Map.get(skill, "name"),
+             descriptor.name}}}
+
+        risk_rank(declared_risk) < risk_rank(descriptor.risk) ->
+          {:halt,
+           {:error,
+            {:skill_risk_exceeded, Map.get(skill, :name) || Map.get(skill, "name"), declared_risk,
+             descriptor.risk}}}
+
+        true ->
+          {:cont, :ok}
+      end
+    end)
+  end
+
+  defp skill_allows_tool?(tool, allowed_tools) do
+    allowed = Enum.map(allowed_tools, &normalize_tool_name/1)
+
+    tool in allowed or (tool == "control_blind" and "control_device" in allowed)
+  end
+
+  defp normalize_tool_name(name), do: name |> to_string() |> String.trim() |> String.downcase()
+  defp risk_rank(value) when value in [:none, "none"], do: 0
+  defp risk_rank(value) when value in [:low, "low"], do: 1
+  defp risk_rank(value) when value in [:medium, "medium"], do: 2
+  defp risk_rank(value) when value in [:high, "high"], do: 3
+  defp risk_rank(_value), do: -1
 
   defp invoke(fun, _context) when is_function(fun, 0), do: fun.()
   defp invoke(fun, context) when is_function(fun, 1), do: fun.(context)

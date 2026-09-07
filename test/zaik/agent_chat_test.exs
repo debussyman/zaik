@@ -707,7 +707,7 @@ defmodule Zaik.AgentChatTest do
     end
 
     defp tool_result?(%{content: content}) when is_binary(content),
-      do: String.starts_with?(String.trim_leading(content), "TOOL RESULT")
+      do: String.starts_with?(String.trim_leading(content), "HOME TOOL RESULT")
 
     defp tool_result?(_message), do: false
   end
@@ -1167,7 +1167,7 @@ defmodule Zaik.AgentChatTest do
     assert_received {:sql_tool_called, query, opts}
     assert query =~ "home_readings"
     assert opts[:db] == :home
-    refute_received {:zaik_agent_eval_registered_tool_call, _call}
+    assert_received {:zaik_agent_eval_registered_tool_call, %{tool: "sql_query"}}
   end
 
   test "does not replay a home action through model fallback" do

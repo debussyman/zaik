@@ -35,16 +35,29 @@ defmodule Zaik.Home.Mirror.Assertions do
 
     checks = desired_checks ++ invariant_checks(mirror)
 
-    %{
+    passed? = Enum.all?(checks, & &1.passed?)
+
+    report = %{
       scenario_id: mirror.scenario.id,
       scenario_fingerprint: Zaik.Home.Mirror.Scenario.fingerprint(mirror.scenario),
-      passed?: Enum.all?(checks, & &1.passed?),
+      tool_fingerprint: Zaik.Tools.Registry.fingerprint(),
+      capability_fingerprint: Zaik.Home.Capabilities.Registry.fingerprint(),
+      passed?: passed?,
       checks: checks,
       actions: Zaik.Home.Mirror.actions(mirror),
       reports: Zaik.Home.Mirror.reports(mirror),
       side_effect_count: Zaik.Home.Mirror.side_effect_count(mirror),
       snapshot: Zaik.Home.Mirror.snapshot(mirror)
     }
+
+    Map.put(
+      report,
+      :failure_labels,
+      if(passed?,
+        do: [],
+        else: Zaik.Learning.FailureLabels.classify({:error, checks}, report.actions)
+      )
+    )
   end
 
   defp invariant_checks(mirror) do

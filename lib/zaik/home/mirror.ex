@@ -167,6 +167,7 @@ defmodule Zaik.Home.Mirror do
   def snapshot(%__MODULE__{} = mirror) do
     Zaik.Home.World.snapshot(nil,
       device_store: mirror.device_store,
+      identity_store: mirror.history_store,
       clock: {Zaik.Home.Mirror.Clock, mirror.clock}
     )
   end
