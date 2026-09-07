@@ -127,7 +127,11 @@ defmodule Zaik.SkillStore do
   end
 
   defp parse_list(nil), do: []
-  defp parse_list(value) when is_list(value), do: Enum.map(value, &to_string/1)
+
+  defp parse_list(value) when is_list(value) do
+    value |> Enum.map(&to_string/1) |> Enum.map(&String.trim/1) |> Enum.reject(&(&1 == ""))
+  end
+
   defp parse_list(""), do: []
 
   defp parse_list(value) when is_binary(value) do

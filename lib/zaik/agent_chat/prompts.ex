@@ -16,7 +16,7 @@ defmodule Zaik.AgentChat.Prompts do
       current_time_context(),
       domain_policy(domain, text),
       registry_tool_contracts(domain, text, context),
-      request_context(context),
+      planner_request_context(domain, context),
       mode_instruction(domain)
     ]
     |> Enum.join("\n\n")
@@ -383,6 +383,20 @@ defmodule Zaik.AgentChat.Prompts do
     |> String.trim()
   end
 
+  defp planner_request_context(domain, context)
+       when domain in [:ops_messages, :ops_tasks, :agent_chat_runs],
+       do: request_context(context)
+
+  defp planner_request_context(_domain, context) do
+    """
+    CURRENT REQUEST CONTEXT:
+    channel: #{format_context_value(context_value(context, :channel))}
+    sender_id: #{format_context_value(context_value(context, :sender_id) || context_value(context, :sender))}
+    chat_id: #{format_context_value(context_value(context, :chat_id))}
+    """
+    |> String.trim()
+  end
+
   defp registry_tool_contracts(domain, text, context) do
     names = tool_names_for_domain(domain, text)
     registry_opts = Map.get(context, :registry_opts) || Map.get(context, "registry_opts") || []
@@ -432,7 +446,7 @@ defmodule Zaik.AgentChat.Prompts do
   end
 
   defp mode_instruction(:home_control) do
-    "HOME CONTROL MODE: For an explicit retry with an action ID return retry_home_action. For two or more coordinated new changes return one complete execute_home_plan call. For one new change return control_device. If required information is missing, return a clarification question."
+    "HOME CONTROL MODE: For an explicit retry with an action ID return retry_home_action. For a relevant multi-step skill, copy every expected plan step with exact device names into one execute_home_plan call; never replace an exact device name with a room name. For one new action return control_device. If required information is missing, return a clarification question."
   end
 
   defp mode_instruction(:home_readings) do

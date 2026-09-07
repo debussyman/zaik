@@ -23,6 +23,9 @@ defmodule Zaik.AgentChat do
       enabled: env_bool("ZAIK_AGENT_CHAT_ENABLED", Keyword.get(configured, :enabled, true)),
       model:
         System.get_env("ZAIK_AGENT_MODEL") || Keyword.get(configured, :model, @default_model),
+      home_control_model:
+        System.get_env("ZAIK_AGENT_HOME_CONTROL_MODEL") ||
+          Keyword.get(configured, :home_control_model),
       fallback_enabled:
         env_bool("ZAIK_AGENT_FALLBACK_ENABLED", Keyword.get(configured, :fallback_enabled, true)),
       fallback_model:
@@ -50,10 +53,12 @@ defmodule Zaik.AgentChat do
       client = Keyword.get(opts, :client, Zaik.LLM)
       sql_tool = Keyword.get(opts, :sql_tool, Zaik.Analytics.SQLTool)
       control_tool = Keyword.get(opts, :control_tool, Zaik.Home.ControlTool)
+      domain = Keyword.get(opts, :prompt_domain) || Zaik.AgentChat.Prompts.domain(text)
+      cfg = maybe_select_domain_model(cfg, domain)
 
       active_skills = Zaik.SkillStore.relevant(text)
       context = Map.put(context, :active_skills, active_skills)
-      messages = base_messages(text, context, Keyword.get(opts, :prompt_domain))
+      messages = base_messages(text, context, domain)
 
       tool_context =
         context
@@ -65,6 +70,12 @@ defmodule Zaik.AgentChat do
       {:error, :disabled}
     end
   end
+
+  defp maybe_select_domain_model(%{home_control_model: model} = cfg, :home_control)
+       when is_binary(model) and model != "",
+       do: %{cfg | model: model}
+
+  defp maybe_select_domain_model(cfg, _domain), do: cfg
 
   defp respond_with_fallback(client, sql_tool, control_tool, messages, cfg, text, context) do
     started_mono = System.monotonic_time(:millisecond)
@@ -505,6 +516,7 @@ defmodule Zaik.AgentChat do
     The plan was rejected during preflight and no plan action was executed.
     Return one corrected execute_home_plan call. Do not switch to individual control tools.
     `args.plan` must not be a skill name. Use `args.actions`, an array containing every action.
+    Re-read the relevant skill and copy every expected step into the actions array. Use each exact device name from CURRENT BLINDS; a room name such as `lily` is not a device.
     Each action must contain `device`, `capability`, and an object `target`, for example:
     {"device":"exact known device name","capability":"cover","target":{"state":"CLOSE"}}
     or {"device":"exact known device name","capability":"cover","target":{"preset":"known preset name"}}
@@ -1254,17 +1266,28 @@ defmodule Zaik.AgentChat do
 
   defp strip_code_fence(response), do: response
 
-  defp normalize_tool_result({:ok, result}) when is_map(result), do: Map.put(result, :ok, true)
-  defp normalize_tool_result({:ok, result}), do: %{ok: true, result: result}
+  defp normalize_tool_result({:ok, result}) when is_map(result),
+    do: result |> Map.put(:ok, true) |> json_safe()
+
+  defp normalize_tool_result({:ok, result}), do: %{ok: true, result: json_safe(result)}
 
   defp normalize_tool_result({:error, {:action_plan_failed, report}}),
-    do: %{ok: false, error: "action_plan_failed", report: report}
+    do: %{ok: false, error: "action_plan_failed", report: json_safe(report)}
 
   defp normalize_tool_result({:error, {:invalid_action_plan, errors}}),
-    do: %{ok: false, error: "invalid_action_plan", errors: errors}
+    do: %{ok: false, error: "invalid_action_plan", errors: json_safe(errors)}
 
   defp normalize_tool_result({:error, reason}), do: %{ok: false, error: inspect(reason)}
   defp normalize_tool_result(other), do: %{ok: false, error: inspect(other)}
+
+  defp json_safe(%DateTime{} = value), do: value
+  defp json_safe(value) when is_tuple(value), do: inspect(value)
+  defp json_safe(value) when is_list(value), do: Enum.map(value, &json_safe/1)
+
+  defp json_safe(value) when is_map(value),
+    do: Map.new(value, fn {key, nested} -> {key, json_safe(nested)} end)
+
+  defp json_safe(value), do: value
 
   defp env_bool(name, default) do
     case System.get_env(name) do
