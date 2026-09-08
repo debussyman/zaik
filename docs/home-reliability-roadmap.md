@@ -90,8 +90,8 @@ Implemented foundation:
   an action is claimed or started;
 - every configured capability must pass an executable descriptor, target, and
   unrelated-payload composability baseline contract; cover OPEN/CLOSE targets
-  are normalized to canonical positions so adapter direction labels cannot
-  invert physical intent;
+  are normalized to the household scale (`0=open`, `100=closed`) so adapter
+  direction labels cannot invert physical intent;
 - application domains, adapters, and additional child specs are composed from
   runtime configuration without editing the root supervisor.
 

@@ -15,14 +15,14 @@ defmodule Zaik.Home.Mirror.Scenarios do
         %{device: "Office blind", capability: "cover", target: %{"state" => "OPEN"}}
       ],
       faults: %{"Office blind" => :never_converges},
-      events: [state_report(10, now, -1_000, %{"state" => "CLOSE", "position" => 0})],
+      events: [state_report(10, now, -1_000, %{"state" => "CLOSE", "position" => 100})],
       metadata: %{max_side_effects: 1, verification_wait_ms: 0}
     })
   end
 
   def duplicate_report do
     now = ~U[2026-02-01 12:00:00Z]
-    report = state_report(10, now, 10, %{"state" => "CLOSE", "position" => 0})
+    report = state_report(10, now, 10, %{"state" => "CLOSE", "position" => 100})
 
     single_blind_scenario(%{
       id: "duplicate_report_is_idempotent",
@@ -46,8 +46,8 @@ defmodule Zaik.Home.Mirror.Scenarios do
         %{device: "Office blind", capability: "cover", target: %{"state" => "CLOSE"}}
       ],
       events: [
-        state_report(20, now, 10, %{"state" => "CLOSE", "position" => 0}),
-        state_report(30, now, 5, %{"state" => "OPEN", "position" => 100})
+        state_report(20, now, 10, %{"state" => "CLOSE", "position" => 100}),
+        state_report(30, now, 5, %{"state" => "OPEN", "position" => 0})
       ],
       metadata: %{max_side_effects: 0}
     })
@@ -63,7 +63,7 @@ defmodule Zaik.Home.Mirror.Scenarios do
         %{device: "Office blind", capability: "cover", target: %{"state" => "CLOSE"}}
       ],
       faults: %{"Office blind" => :never_converges},
-      events: [state_report(10, now, 10, %{"state" => "CLOSE", "position" => 0})],
+      events: [state_report(10, now, 10, %{"state" => "CLOSE", "position" => 100})],
       metadata: %{max_side_effects: 1, verification_wait_ms: 0}
     })
   end
@@ -104,7 +104,7 @@ defmodule Zaik.Home.Mirror.Scenarios do
           name: "Lily's bedroom left blind",
           area_id: "lily_bedroom",
           capabilities: ["cover"],
-          payload: %{"position" => 100, "state" => "OPEN"},
+          payload: %{"position" => 0, "state" => "OPEN"},
           metadata: %{"manufacturer" => "Smartwings"}
         },
         %{
@@ -112,7 +112,7 @@ defmodule Zaik.Home.Mirror.Scenarios do
           name: "Lily's bedroom right blind",
           area_id: "lily_bedroom",
           capabilities: ["cover"],
-          payload: %{"position" => 100, "state" => "OPEN"},
+          payload: %{"position" => 0, "state" => "OPEN"},
           metadata: %{"manufacturer" => "Smartwings"}
         }
       ],
@@ -160,7 +160,7 @@ defmodule Zaik.Home.Mirror.Scenarios do
           name: "Office blind",
           area_id: "office",
           capabilities: ["cover"],
-          payload: %{"position" => 100, "state" => "OPEN"}
+          payload: %{"position" => 0, "state" => "OPEN"}
         }
       ],
       desired_state: attrs.desired_state,
@@ -192,7 +192,7 @@ defmodule Zaik.Home.Mirror.Scenarios do
       }),
       %{
         device: "Lily's bedroom right blind",
-        payload: %{"position" => 100, "state" => "OPEN"},
+        payload: %{"position" => 0, "state" => "OPEN"},
         metadata: %{"source" => "mirror"},
         observed_at: DateTime.add(now, -30, :second)
       }

@@ -1129,11 +1129,11 @@ defmodule Zaik.AgentChatTest do
   test "executes a registered preflighted home plan through the generic agent loop" do
     {:ok, store} = start_supervised({Zaik.Home.DeviceStore, name: nil})
 
-    Zaik.Home.DeviceStore.upsert_device(store, "Left blind", %{"position" => 100}, %{
+    Zaik.Home.DeviceStore.upsert_device(store, "Left blind", %{"position" => 0}, %{
       "ieee_address" => "left"
     })
 
-    Zaik.Home.DeviceStore.upsert_device(store, "Right blind", %{"position" => 100}, %{
+    Zaik.Home.DeviceStore.upsert_device(store, "Right blind", %{"position" => 0}, %{
       "ieee_address" => "right"
     })
 
@@ -1150,7 +1150,7 @@ defmodule Zaik.AgentChatTest do
                config: %{enabled: true, fallback_enabled: false, max_tool_calls: 2}
              )
 
-    assert_received {:plan_action_executed, "left", %{"position" => 0}}
+    assert_received {:plan_action_executed, "left", %{"position" => 100}}
     assert_received {:plan_action_executed, "right", %{"position" => 71}}
   end
 

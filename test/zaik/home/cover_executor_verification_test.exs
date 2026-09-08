@@ -2,8 +2,8 @@ defmodule Zaik.Home.CoverExecutorVerificationPublisher do
   def publish(_topic, payload, _opts) do
     report =
       case payload do
-        %{"state" => "CLOSE"} -> %{"state" => "CLOSE", "position" => 0}
-        %{"state" => "OPEN"} -> %{"state" => "OPEN", "position" => 100}
+        %{"state" => "CLOSE"} -> %{"state" => "CLOSE", "position" => 100}
+        %{"state" => "OPEN"} -> %{"state" => "OPEN", "position" => 0}
         other -> other
       end
 
@@ -43,10 +43,10 @@ defmodule Zaik.Home.CoverExecutorVerificationTest do
   end
 
   test "normalizes open and close commands to canonical positions", %{entity: entity} do
-    assert {:ok, %{"position" => 0}} =
+    assert {:ok, %{"position" => 100}} =
              Zaik.Home.Capabilities.Cover.validate_target(%{"state" => "CLOSE"})
 
-    assert {:ok, %{"position" => 100}} =
+    assert {:ok, %{"position" => 0}} =
              Zaik.Home.Capabilities.Cover.validate_target(%{"state" => "OPEN"})
 
     assert {:ok, %{"position" => 0}} =

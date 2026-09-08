@@ -73,12 +73,12 @@ defmodule Zaik.Home.ActionVerifierTest do
 
     Zaik.Home.ActionVerifier.observe(
       "Office blind",
-      %{"state" => "CLOSE", "position" => 1},
+      %{"state" => "CLOSE", "position" => 99},
       DateTime.utc_now(),
       server: verifier
     )
 
-    assert %{verified: true, observed: %{"position" => 1, "state" => "CLOSE"}} =
+    assert %{verified: true, observed: %{"position" => 99, "state" => "CLOSE"}} =
              Zaik.Home.ActionVerifier.await(action_id, 100, server: verifier)
   end
 
@@ -126,14 +126,14 @@ defmodule Zaik.Home.ActionVerifierTest do
 
     Zaik.Home.ActionVerifier.observe(
       "Office blind",
-      %{"state" => "CLOSE", "position" => 0},
+      %{"state" => "CLOSE", "position" => 100},
       DateTime.add(now, 10, :second),
       server: verifier
     )
 
     Zaik.Home.ActionVerifier.observe(
       "Office blind",
-      %{"state" => "OPEN", "position" => 100},
+      %{"state" => "OPEN", "position" => 0},
       DateTime.add(now, 5, :second),
       server: verifier
     )

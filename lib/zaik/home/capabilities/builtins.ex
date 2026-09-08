@@ -116,7 +116,7 @@ defmodule Zaik.Home.Capabilities.Cover do
   def descriptor,
     do: %{
       id: "cover",
-      description: "Window covering position and movement",
+      description: "Window covering position (0=open, 100=closed) and movement",
       state_schema: %{
         "position" => "number|null",
         "state" => "string|null",
@@ -139,8 +139,8 @@ defmodule Zaik.Home.Capabilities.Cover do
 
     semantic_state =
       cond do
-        is_number(position) and position <= 1 -> "CLOSE"
-        is_number(position) and position >= 99 -> "OPEN"
+        is_number(position) and position <= 1 -> "OPEN"
+        is_number(position) and position >= 99 -> "CLOSE"
         true -> reported_state
       end
 
@@ -153,10 +153,10 @@ defmodule Zaik.Home.Capabilities.Cover do
   def validate_target(%{position: position}) when is_integer(position) and position in 0..100,
     do: {:ok, %{"position" => position}}
 
-  def validate_target(%{"state" => "CLOSE"}), do: {:ok, %{"position" => 0}}
-  def validate_target(%{state: "CLOSE"}), do: {:ok, %{"position" => 0}}
-  def validate_target(%{"state" => "OPEN"}), do: {:ok, %{"position" => 100}}
-  def validate_target(%{state: "OPEN"}), do: {:ok, %{"position" => 100}}
+  def validate_target(%{"state" => "CLOSE"}), do: {:ok, %{"position" => 100}}
+  def validate_target(%{state: "CLOSE"}), do: {:ok, %{"position" => 100}}
+  def validate_target(%{"state" => "OPEN"}), do: {:ok, %{"position" => 0}}
+  def validate_target(%{state: "OPEN"}), do: {:ok, %{"position" => 0}}
   def validate_target(%{"state" => "STOP"}), do: {:ok, %{"state" => "STOP"}}
   def validate_target(%{state: "STOP"}), do: {:ok, %{"state" => "STOP"}}
 

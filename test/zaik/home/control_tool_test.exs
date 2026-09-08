@@ -57,7 +57,7 @@ defmodule Zaik.Home.ControlToolTest do
                "action" => "close"
              })
 
-    assert left.payload == %{"position" => 0}
+    assert left.payload == %{"position" => 100}
 
     assert {:ok, right} =
              Zaik.Home.ControlTool.run("control_blind", %{
@@ -69,7 +69,7 @@ defmodule Zaik.Home.ControlToolTest do
     assert right.payload == %{"position" => 71}
 
     assert Zaik.Home.ControlToolTestPublisher.published() == [
-             {"zigbee2mqtt/Lily's bedroom left blind/set", %{"position" => 0}},
+             {"zigbee2mqtt/Lily's bedroom left blind/set", %{"position" => 100}},
              {"zigbee2mqtt/Lily's bedroom right blind/set", %{"position" => 71}}
            ]
   end

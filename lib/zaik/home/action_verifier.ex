@@ -308,8 +308,8 @@ defmodule Zaik.Home.ActionVerifier do
     actual_position = value(payload, :position)
 
     case state do
-      "OPEN" -> target_position?(100, actual_position, tolerance)
-      "CLOSE" -> target_position?(0, actual_position, tolerance)
+      "OPEN" -> target_position?(0, actual_position, tolerance)
+      "CLOSE" -> target_position?(100, actual_position, tolerance)
       "STOP" -> is_binary(actual_state) and String.upcase(actual_state) == "STOP"
       _ -> false
     end

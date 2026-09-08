@@ -214,10 +214,10 @@ defmodule Zaik.Home.Mirror.Store do
   end
 
   defp transition_payload(%{"state" => "OPEN"}, fault),
-    do: %{"state" => "OPEN", "position" => fault_value(fault, :reported_position, 100)}
+    do: %{"state" => "OPEN", "position" => fault_value(fault, :reported_position, 0)}
 
   defp transition_payload(%{"state" => "CLOSE"}, fault),
-    do: %{"state" => "CLOSE", "position" => fault_value(fault, :reported_position, 0)}
+    do: %{"state" => "CLOSE", "position" => fault_value(fault, :reported_position, 100)}
 
   defp transition_payload(%{"state" => "STOP"}, _fault), do: %{"state" => "STOP"}
   defp transition_payload(target, _fault), do: target

@@ -60,14 +60,14 @@ defmodule Zaik.Home.ActionPlanTest do
     Zaik.Home.DeviceStore.upsert_device(
       store,
       "Left blind",
-      %{"position" => 100, "state" => "OPEN"},
+      %{"position" => 0, "state" => "OPEN"},
       %{"ieee_address" => "left", "area_id" => "bedroom"}
     )
 
     Zaik.Home.DeviceStore.upsert_device(
       store,
       "Right blind",
-      %{"position" => 100, "state" => "OPEN"},
+      %{"position" => 0, "state" => "OPEN"},
       %{"ieee_address" => "right", "area_id" => "bedroom"}
     )
 
@@ -92,9 +92,9 @@ defmodule Zaik.Home.ActionPlanTest do
     assert result.action_count == 2
     assert result.verified == false
 
-    assert_receive {:prepared, "left", %{"position" => 0}}
+    assert_receive {:prepared, "left", %{"position" => 100}}
     assert_receive {:prepared, "right", %{"position" => 71}}
-    assert_receive {:executed, "left", %{"position" => 0}}
+    assert_receive {:executed, "left", %{"position" => 100}}
     assert_receive {:executed, "right", %{"position" => 71}}
   end
 
@@ -133,7 +133,7 @@ defmodule Zaik.Home.ActionPlanTest do
              Zaik.Home.ActionPlan.run("invalid setup", actions, context)
 
     assert Enum.any?(errors, &(&1.index == 1 and &1.reason == :invalid_cover_target))
-    assert_receive {:prepared, "left", %{"position" => 0}}
+    assert_receive {:prepared, "left", %{"position" => 100}}
     refute_received {:executed, _entity, _target}
   end
 
@@ -206,7 +206,7 @@ defmodule Zaik.Home.ActionPlanTest do
              )
 
     assert result.completed_count == 2
-    assert_receive {:executed, "left", %{"position" => 0}}
+    assert_receive {:executed, "left", %{"position" => 100}}
     assert_receive {:executed, "right", %{"preset" => "above vent"}}
   end
 

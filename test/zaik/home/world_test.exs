@@ -49,7 +49,7 @@ defmodule Zaik.Home.WorldTest do
     Zaik.Home.DeviceStore.upsert_device(
       store,
       "Lily's bedroom left blind",
-      %{"position" => 100, "state" => "OPEN"},
+      %{"position" => 0, "state" => "OPEN"},
       %{"ieee_address" => "0xleft", "area_id" => "lily_bedroom"}
     )
 

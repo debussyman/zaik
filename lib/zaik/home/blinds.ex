@@ -163,8 +163,8 @@ defmodule Zaik.Home.Blinds do
     with {:ok, position} <- normalize_position(position), do: {:ok, %{"position" => position}}
   end
 
-  defp control_payload(_device, {:state, "CLOSE"}, _cfg), do: {:ok, %{"position" => 0}}
-  defp control_payload(_device, {:state, "OPEN"}, _cfg), do: {:ok, %{"position" => 100}}
+  defp control_payload(_device, {:state, "CLOSE"}, _cfg), do: {:ok, %{"position" => 100}}
+  defp control_payload(_device, {:state, "OPEN"}, _cfg), do: {:ok, %{"position" => 0}}
   defp control_payload(_device, {:state, "STOP"}, _cfg), do: {:ok, %{"state" => "STOP"}}
 
   defp control_payload(device, {:preset, preset_name}, cfg) do
@@ -191,8 +191,8 @@ defmodule Zaik.Home.Blinds do
     with {:ok, position} <- normalize_position(position), do: {:ok, %{"position" => position}}
   end
 
-  defp validate_cover_target(%{"state" => "CLOSE"}), do: {:ok, %{"position" => 0}}
-  defp validate_cover_target(%{"state" => "OPEN"}), do: {:ok, %{"position" => 100}}
+  defp validate_cover_target(%{"state" => "CLOSE"}), do: {:ok, %{"position" => 100}}
+  defp validate_cover_target(%{"state" => "OPEN"}), do: {:ok, %{"position" => 0}}
   defp validate_cover_target(%{"state" => "STOP"}), do: {:ok, %{"state" => "STOP"}}
 
   defp validate_cover_target(_target), do: {:error, :invalid_target}
