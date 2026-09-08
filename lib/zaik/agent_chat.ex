@@ -301,7 +301,7 @@ defmodule Zaik.AgentChat do
               )
 
             true ->
-              {{:ok, String.trim(answer)}, tool_calls}
+              {{:ok, grounded_final_answer(messages, answer)}, tool_calls}
           end
 
         %{"type" => "tool_call", "tool" => tool, "args" => args} = action
@@ -984,7 +984,7 @@ defmodule Zaik.AgentChat do
            ),
          {:ok, action} <- decode_action(result.response),
          {:ok, answer} <- final_answer_text(action) do
-      {:ok, String.trim(answer)}
+      {:ok, grounded_final_answer(final_messages, answer)}
     else
       {:error, {:invalid_final_action, action}} when correction_messages == [] ->
         correction_messages = [
@@ -1009,6 +1009,70 @@ defmodule Zaik.AgentChat do
         {:error, reason}
     end
   end
+
+  defp grounded_final_answer(messages, proposed_answer) do
+    user_text = user_text_from(messages)
+
+    if cover_position_request?(user_text) do
+      case cover_position_entities(messages) do
+        [] -> String.trim(proposed_answer)
+        entities -> Enum.map_join(entities, " ", &cover_position_sentence/1)
+      end
+    else
+      String.trim(proposed_answer)
+    end
+  end
+
+  defp cover_position_request?(text) do
+    normalized = String.downcase(text)
+
+    Regex.match?(~r/\b(blind|blinds|shade|shades|cover|covers)\b/, normalized) and
+      (Regex.match?(~r/\b(position|positions)\b/, normalized) or
+         String.contains?(normalized, "how open") or
+         String.contains?(normalized, "how closed"))
+  end
+
+  defp cover_position_entities(messages) do
+    messages
+    |> Enum.flat_map(fn
+      %{role: "user", content: content} when is_binary(content) ->
+        with true <- String.contains?(content, "tool: get_home_state"),
+             [_, json] <- Regex.run(~r/result_json:\s*(\{.*\})\s*$/s, content),
+             {:ok, %{"entities" => entities}} when is_list(entities) <- Jason.decode(json) do
+          Enum.flat_map(entities, fn entity ->
+            case get_in(entity, ["state", "cover", "position"]) do
+              position when is_number(position) ->
+                [%{name: entity["name"], position: position}]
+
+              _ ->
+                []
+            end
+          end)
+        else
+          _ -> []
+        end
+
+      _ ->
+        []
+    end)
+  end
+
+  defp cover_position_sentence(%{name: name, position: position}) do
+    label =
+      cond do
+        position <= 1 -> "fully open"
+        position >= 99 -> "fully closed"
+        true -> "partially closed"
+      end
+
+    "#{name} is at position #{format_position(position)} (#{label})."
+  end
+
+  defp format_position(position) when is_float(position) do
+    if position == trunc(position), do: trunc(position), else: Float.round(position, 1)
+  end
+
+  defp format_position(position), do: position
 
   defp final_answer_text(%{"type" => "final", "answer" => answer}) when is_binary(answer),
     do: {:ok, answer}

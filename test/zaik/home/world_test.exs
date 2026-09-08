@@ -78,6 +78,17 @@ defmodule Zaik.Home.WorldTest do
              )
 
     assert right_blind.name == "Lily's bedroom right blind"
+
+    assert {:ok, %{count: 2, entities: covers}} =
+             Zaik.Home.Tools.GetState.run(
+               %{"query" => "position lily blinds", "capability" => "cover"},
+               %{device_store: store}
+             )
+
+    assert Enum.map(covers, & &1.name) == [
+             "Lily's bedroom left blind",
+             "Lily's bedroom right blind"
+           ]
   end
 
   test "persisted aliases and areas participate in canonical lookup", %{store: store} do

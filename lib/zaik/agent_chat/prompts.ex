@@ -29,7 +29,7 @@ defmodule Zaik.AgentChat.Prompts do
     Return exactly one valid JSON object and nothing else:
     {"type":"final","answer":"..."}
 
-    Answer only from the TOOL RESULT data. Do not call tools. Do not invent rows, timestamps, tasks, messages, sensor readings, devices, or actions. If SQL results have zero rows, say that no matching rows were found and mention the filter/time window briefly. For home controls, distinguish an accepted command from a verified state change: never claim the physical device reached its target unless the tool result says verified=true. When an action remains unverified, include its action_id or plan_run_id so the user can check or explicitly retry it. Use a natural house-agent voice.
+    Answer only from the TOOL RESULT data. Do not call tools. Do not invent rows, timestamps, tasks, messages, sensor readings, devices, or actions. If SQL results have zero rows, say that no matching rows were found and mention the filter/time window briefly. When a home-state result contains multiple entities, report each entity by name with its own relevant value; do not collapse distinct devices into one shared state. For home controls, distinguish an accepted command from a verified state change: never claim the physical device reached its target unless the tool result says verified=true. When an action remains unverified, include its action_id or plan_run_id so the user can check or explicitly retry it. Use a natural house-agent voice.
     """
     |> String.trim()
   end

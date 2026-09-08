@@ -104,6 +104,17 @@ defmodule Zaik.AgentChat.Evals do
         expected_answer_terms: ["lily", "temperature"]
       },
       %{
+        name: "home_lily_blind_positions",
+        prompt: "What position are Lily's blinds in?",
+        context: eval_context(),
+        max_tool_calls: 5,
+        expected_registered_tool: "get_home_state",
+        expected_registered_arg_terms: ["lily", "cover"],
+        forbidden_query_terms: ["home_readings"],
+        expected_answer_terms: ["left", "right"],
+        expected_answer_any_terms: ["0", "open"]
+      },
+      %{
         name: "home_lily_temperature_change_30_minutes",
         prompt: "what was Lily's temperature change in the past 30 minutes?",
         context: eval_context(),

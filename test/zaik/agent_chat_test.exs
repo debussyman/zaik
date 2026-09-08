@@ -662,6 +662,30 @@ defmodule Zaik.AgentChatTest do
     defp typed_tool_result?(_message), do: false
   end
 
+  defmodule MultiCoverStateClient do
+    def chat(_prompt, opts) do
+      messages = Keyword.fetch!(opts, :messages)
+
+      response =
+        if Enum.any?(messages, &tool_result?/1) do
+          %{"type" => "final", "answer" => "Lily's blinds have a position."}
+        else
+          %{
+            "type" => "tool_call",
+            "tool" => "get_home_state",
+            "args" => %{"query" => "position lily blinds", "capability" => "cover"}
+          }
+        end
+
+      {:ok, %{model: "multi-cover", response: Jason.encode!(response), done: true, raw: %{}}}
+    end
+
+    defp tool_result?(%{content: content}) when is_binary(content),
+      do: String.starts_with?(String.trim_leading(content), "TOOL RESULT")
+
+    defp tool_result?(_message), do: false
+  end
+
   defmodule PlanCoverExecutor do
     @behaviour Zaik.Home.Executor
 
@@ -1124,6 +1148,35 @@ defmodule Zaik.AgentChatTest do
                client: TypedHomeStateClient,
                config: %{enabled: true, fallback_enabled: false, max_tool_calls: 2}
              )
+  end
+
+  test "reports each matching blind when the model emits a verbose state query" do
+    {:ok, store} = start_supervised({Zaik.Home.DeviceStore, name: nil})
+
+    Zaik.Home.DeviceStore.upsert_device(
+      store,
+      "Lily's bedroom left blind",
+      %{"position" => 100, "state" => "OPEN"},
+      %{"ieee_address" => "left"}
+    )
+
+    Zaik.Home.DeviceStore.upsert_device(
+      store,
+      "Lily's bedroom right blind",
+      %{"position" => 71, "state" => "CLOSE"},
+      %{"ieee_address" => "right"}
+    )
+
+    assert {:ok, answer} =
+             Zaik.AgentChat.respond(
+               "What position are Lily's blinds in?",
+               %{device_store: store},
+               client: MultiCoverStateClient,
+               config: %{enabled: true, fallback_enabled: false, max_tool_calls: 2}
+             )
+
+    assert answer =~ "Lily's bedroom left blind is at position 100 (fully closed)."
+    assert answer =~ "Lily's bedroom right blind is at position 71 (partially closed)."
   end
 
   test "executes a registered preflighted home plan through the generic agent loop" do
