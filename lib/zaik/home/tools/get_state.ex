@@ -2,13 +2,6 @@ defmodule Zaik.Home.Tools.GetState do
   @moduledoc false
   @behaviour Zaik.Tool
 
-  @lookup_noise MapSet.new(~w(
-                  a an are at blind blinds can cover covers current currently device devices
-                  do does for give how in is latest me of please position positions reading
-                  readings shade shades show state status tell the value values what where which
-                  window windows you
-                ))
-
   @impl true
   def descriptor do
     %{
@@ -41,25 +34,12 @@ defmodule Zaik.Home.Tools.GetState do
           |> put_if(:capability, value(args, :capability))
           |> put_if(:capability_opts, value(context, :capability_opts))
 
-        snapshot = Zaik.Home.World.snapshot(lookup_query(query), opts)
+        snapshot = Zaik.Home.World.snapshot(Zaik.Home.Query.entity_lookup(query), opts)
         if snapshot.count == 0, do: {:error, :not_found}, else: {:ok, snapshot}
 
       _ ->
         {:error, :missing_query}
     end
-  end
-
-  defp lookup_query(query) do
-    meaningful =
-      query
-      |> String.downcase()
-      |> String.replace(~r/['’]/, "")
-      |> String.replace(~r/[^a-z0-9:_-]+/, " ")
-      |> String.split(" ", trim: true)
-      |> Enum.reject(&MapSet.member?(@lookup_noise, &1))
-      |> Enum.join(" ")
-
-    if meaningful == "", do: nil, else: meaningful
   end
 
   defp put_if(opts, _key, nil), do: opts

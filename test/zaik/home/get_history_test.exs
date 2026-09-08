@@ -44,5 +44,20 @@ defmodule Zaik.Home.GetHistoryTest do
 
     assert reading.value == 50.0
     assert reading.observed_at == "2026-08-14T11:45:00Z"
+
+    assert {:ok, [same_reading]} =
+             Zaik.Home.Tools.GetHistory.run(
+               %{
+                 "query" => "nursery humidity trend over the past 30 minutes",
+                 "capability" => "humidity",
+                 "since_minutes" => 30
+               },
+               %{
+                 history_store: history,
+                 clock: {Zaik.Home.Mirror.Clock, clock}
+               }
+             )
+
+    assert same_reading.value == 50.0
   end
 end

@@ -53,6 +53,7 @@ defmodule Zaik.Home.Tools.GetHistory do
     store = value(context, :history_store) || Zaik.Home.HistoryStore
 
     with {:ok, query} <- non_empty(query, :missing_query),
+         {:ok, query} <- non_empty(Zaik.Home.Query.entity_lookup(query), :missing_query),
          {:ok, capability} <- non_empty(capability, :missing_capability),
          {:ok, from} <- lower_bound(args, context),
          {:ok, until_time} <- parse_optional_datetime(value(args, :until), :invalid_until) do

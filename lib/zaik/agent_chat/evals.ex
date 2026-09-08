@@ -94,6 +94,17 @@ defmodule Zaik.AgentChat.Evals do
         expected_answer_terms: ["lily", "warm"]
       },
       %{
+        name: "home_lily_warmer_or_cooler",
+        prompt: "Is it getting warmer or cooler in Lily's room?",
+        context: eval_context(),
+        max_tool_calls: 5,
+        expected_registered_tool: "get_home_history",
+        expected_registered_arg_terms: ["lily", "temperature"],
+        forbidden_query_terms: ["home_readings"],
+        expected_answer_terms: ["temperature"],
+        expected_answer_any_terms: ["warmer", "cooler", "increased", "decreased", "stable"]
+      },
+      %{
         name: "home_lily_current_temperature_ignores_blind_nulls",
         prompt: "What's the temperature in Lily's room?",
         context: eval_context(),
