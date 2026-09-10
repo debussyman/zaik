@@ -69,7 +69,7 @@ defmodule Zaik.Home.Autonomy.Engine do
   @impl true
   def handle_info({:zaik_home_event, %{type: :device_observed} = event}, state) do
     if relevant_event?(event) do
-      key = event.device
+      {key, query} = event_scope(event, state.config)
 
       if Map.has_key?(state.pending, key) do
         {:noreply, state}
@@ -78,7 +78,7 @@ defmodule Zaik.Home.Autonomy.Engine do
           Zaik.Time.send_after(
             Map.get(state.config, :clock),
             self(),
-            {:evaluate_event, key, event},
+            {:evaluate_event, key, Map.put(event, :query, query)},
             state.config.event_debounce_ms
           )
 
@@ -93,7 +93,7 @@ defmodule Zaik.Home.Autonomy.Engine do
     state = update_in(state.pending, &Map.delete(&1, key))
     opts = state.config |> Map.to_list() |> Keyword.put(:mode, state.config.mode)
 
-    case evaluate_request(event.device, state.config.mode, state.config, opts) do
+    case evaluate_request(event.query, state.config.mode, state.config, opts) do
       {:ok, decision} -> {:noreply, %{state | last_decision: decision}}
       {:error, _reason} -> {:noreply, state}
     end
@@ -205,11 +205,30 @@ defmodule Zaik.Home.Autonomy.Engine do
     |> then(&("decision_" <> String.slice(&1, 0, 24)))
   end
 
+  defp event_scope(event, config) do
+    opts =
+      []
+      |> put_if(:device_store, Map.get(config, :device_store))
+      |> put_if(:identity_store, Map.get(config, :history_store))
+      |> put_if(:capability_opts, Map.get(config, :capability_opts))
+
+    case Zaik.Home.World.get(event.device, opts) do
+      {:ok, %{area_id: area_id}} when is_binary(area_id) and area_id != "" -> {area_id, area_id}
+      {:ok, entity} -> {entity.id, entity.name}
+      _ -> {event.device, event.device}
+    end
+  catch
+    :exit, _reason -> {event.device, event.device}
+  end
+
   defp relevant_event?(event) do
     Enum.any?(List.wrap(Map.get(event, :changed_keys)), fn key ->
       key in ["presence", "illuminance", "temperature", "position"]
     end)
   end
+
+  defp put_if(opts, _key, nil), do: opts
+  defp put_if(opts, key, value), do: Keyword.put(opts, key, value)
 
   defp process_available?(server) when is_pid(server), do: Process.alive?(server)
   defp process_available?(server) when is_atom(server), do: not is_nil(Process.whereis(server))

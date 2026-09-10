@@ -120,13 +120,13 @@ defmodule Zaik.Home.AutonomyEngineTest do
 
     event = %{
       type: :device_observed,
-      device: "lily",
-      changed_keys: ["presence"],
+      device: "Lily's bedroom left blind",
+      changed_keys: ["position"],
       observed_at: context.now
     }
 
     Zaik.Home.EventBus.publish(event, bus)
-    Zaik.Home.EventBus.publish(event, bus)
+    Zaik.Home.EventBus.publish(%{event | device: "Lily's bedroom right blind"}, bus)
 
     assert_eventually(fn -> Zaik.Home.Autonomy.Engine.status(event_engine).pending_count == 1 end)
     Zaik.Home.Mirror.Clock.advance(context.clock, 99)

@@ -182,7 +182,7 @@ from raw rows.
 - [x] Emit accepted canonical state-change events through a monitored local bus
   without emitting stale or duplicate observations.
 - [ ] Coalesce noisy observations before policy evaluation. Initial virtual-time
-  per-device debounce is implemented; area/dependency coalescing remains.
+  area-scoped debounce is implemented; dependency-specific coalescing remains.
 
 Acceptance:
 
