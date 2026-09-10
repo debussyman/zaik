@@ -234,14 +234,16 @@ Acceptance:
 Goal: let established household policies continuously produce candidate desired
 states without directly controlling devices.
 
-- [ ] Introduce a hot-load-friendly `Zaik.Home.Policy` behaviour with descriptors,
+- [x] Introduce a hot-load-friendly `Zaik.Home.Policy` behaviour with descriptors,
   dependencies, candidate-goal output, and validation contracts.
-- [ ] Add an uncached runtime policy registry and fingerprints.
+- [x] Add an uncached runtime policy registry and fingerprints.
 - [ ] Define a candidate-goal schema containing scope, desired state, priority,
-  evidence, confidence, expiry, reason, and policy version.
+  evidence, confidence, expiry, reason, and policy version. The initial typed
+  schema, capability validation, stable IDs, and fingerprints are implemented;
+  confidence calibration remains.
 - [ ] Implement initial generic policies:
-  - daylight harvesting;
-  - bedtime/privacy comfort;
+  - [x] shadow-first daylight harvesting;
+  - [ ] bedtime/privacy comfort;
   - solar-heat avoidance;
   - occupancy lighting after light capabilities exist;
   - absence-based lighting shutdown.
@@ -273,12 +275,15 @@ Goal: choose one explainable desired state when policies and people disagree.
 - [ ] Define household priority classes, initially:
   safety/security > explicit user/manual override > privacy/sleep > comfort >
   daylight/energy optimization.
-- [ ] Add deterministic arbitration per entity capability.
-- [ ] Record selected and suppressed candidates with reasons.
+- [x] Add deterministic priority arbitration per entity capability.
+- [x] Record selected and suppressed candidates with expired, equivalent, or
+  conflicting reasons.
 - [ ] Add a desired-state store with source, priority, lease/expiry, and policy
   fingerprint.
-- [ ] Diff desired state against fresh canonical observations.
-- [ ] Skip converged targets and create actions only for unresolved differences.
+- [x] Diff selected desired state against fresh canonical observations, blocking
+  missing or stale state.
+- [x] Skip converged targets and emit inert action arguments only for unresolved
+  differences.
 - [ ] Enforce per-device, per-room, and global action-rate budgets.
 - [ ] Prevent oscillation through hysteresis, settle windows, cooldowns, and
   conflict locks.

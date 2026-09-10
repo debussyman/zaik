@@ -53,7 +53,9 @@ Home automation is one domain built on the harness, not the whole harness. Futur
 
 `Zaik.Home.World` projects raw adapter state into stable entities with typed capabilities. `Zaik.Home.Capabilities.Registry` owns semantic state and target validation, while `Zaik.Home.Executors.Registry` maps validated targets to adapter execution. `Zaik.Home.RoomContext` expands a matched entity to its persisted area and combines current entities with deterministic environment facts and bounded `Zaik.Home.HistorySummary` aggregates; `get_area_context` exposes that snapshot for room summaries and future goal/policy evaluation. Zigbee2MQTT state-file bootstrap restores current state without inserting artificial historical readings.
 
-Existing `control_blind` and SQL prompts remain as compatibility paths while AgentChat migrates toward `get_home_state` and `control_device`.
+Policies are a separate inert decision layer: `Zaik.Home.Policy` modules inspect immutable room context and emit validated `Zaik.Home.GoalCandidate` desired states through an uncached registry. They cannot invoke tools or adapters. The first built-in daylight-harvesting policy defaults to shadow mode; future arbitration and reconciliation remain responsible for selecting and executing candidates.
+
+Existing `control_blind` and SQL prompts remain as compatibility paths while AgentChat migrates toward typed context and `control_device`.
 
 See [`home-reliability-roadmap.md`](home-reliability-roadmap.md) for the completed reliability foundation and [`zaik-home-brain-roadmap.md`](zaik-home-brain-roadmap.md) for the active continuous-observation, policy, and autonomy roadmap.
 

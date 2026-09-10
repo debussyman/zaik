@@ -130,6 +130,13 @@ config :zaik, :device_presets,
 config :zaik, :tools, additional_modules: []
 config :zaik, :home_capabilities, additional_modules: []
 config :zaik, :home_executors, additional_modules: []
+config :zaik, :home_policies, additional_modules: []
+
+config :zaik, :daylight_harvesting,
+  low_light_lux: 50,
+  maximum_temperature_f: 76.0,
+  closed_position_min: 90,
+  candidate_ttl_seconds: 120
 
 config :zaik, :tool_execution, action_timeout_ms: 30_000
 config :zaik, :home_action_plans, max_actions: 10

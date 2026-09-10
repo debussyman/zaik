@@ -125,6 +125,11 @@ Home automation is one optional domain, not the whole harness.
 | `Zaik.Home.World` | Projects adapter payloads into capability-filtered current state. | Keep as the ordinary home reasoning boundary. |
 | `Zaik.Home.Capability` | Behaviour for typed state detection and target validation. | Keep as the semantic capability contract. |
 | `Zaik.Home.Capabilities.Registry` / `Capabilities.Contract` | Uncached discovery, fingerprints, and executable baseline composability validation. | Keep as the hot-load-friendly capability acceptance boundary. |
+| `Zaik.Home.GoalCandidate` | Validated inert desired-state proposal with evidence, priority, expiry, and fingerprint. | Keep in the home policy/arbitration layer. |
+| `Zaik.Home.Policy` / `Zaik.Home.Policies.Registry` | Hot-load-friendly policy contract and uncached descriptor/fingerprint registry. | Keep in the home policy layer. |
+| `Zaik.Home.Policies.DaylightHarvesting` | Shadow-first generic candidate policy for occupied, dark, daytime, cool rooms. | Keep as a built-in policy example/default. |
+| `Zaik.Home.Arbitrator` | Pure priority/conflict selection producing chosen and suppressed desired targets. | Keep in the home policy layer. |
+| `Zaik.Home.Reconciler` | Pure freshness-aware diff from selected desired state to inert unresolved actions. | Keep before the existing action-plan execution boundary. |
 | `Zaik.Home.Executor` | Behaviour for adapter execution of validated capability targets. | Keep as the capability executor contract. |
 | `Zaik.Home.Executors.Registry` | Uncached runtime executor discovery. | Keep as the hot-load-friendly executor registry. |
 | `Zaik.Home.ActionLedger` | SQLite request-scoped action idempotency ledger, including later verified-result reconciliation. | Keep in the home execution/policy layer. |
