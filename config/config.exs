@@ -138,11 +138,10 @@ config :zaik, :daylight_harvesting,
   closed_position_min: 90,
   candidate_ttl_seconds: 120
 
-# Disabled until shadow event subscriptions and operator inspection are wired.
-# Even when enabled, the first autonomy engine only supports shadow/advisory
-# decisions and cannot execute canary/active actions.
+# Explicit shadow evaluation is enabled, but event subscription remains off.
+# The engine rejects canary/active execution regardless of configuration.
 config :zaik, :home_autonomy,
-  enabled: false,
+  enabled: true,
   mode: :shadow,
   max_state_age_seconds: 120,
   context_window_minutes: 180,

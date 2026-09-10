@@ -77,6 +77,30 @@ defmodule Zaik do
   end
 
   @doc """
+  Build a deterministic current, historical, occupancy, and environment context
+  for a room or area without executing an action.
+  """
+  def home_room_context(query, opts \\ []), do: Zaik.Home.RoomContext.build(query, opts)
+
+  @doc """
+  Evaluate configured home policies in the inert shadow/advisory pipeline.
+  Canary and active execution are not enabled by this API.
+  """
+  def evaluate_home_autonomy(query, opts \\ []),
+    do: Zaik.Home.Autonomy.Engine.evaluate(query, opts)
+
+  @doc """
+  Return the current supervised home-autonomy evaluator status.
+  """
+  def home_autonomy_status, do: Zaik.Home.Autonomy.Engine.status()
+
+  @doc """
+  Return recent durable home-autonomy decisions.
+  """
+  def home_autonomy_decisions(limit \\ 20),
+    do: Zaik.Home.Autonomy.DecisionStore.recent(limit)
+
+  @doc """
   Return latest known devices that expose a presence field.
   """
   def presence_devices, do: Zaik.Home.DeviceStore.presence_devices()
