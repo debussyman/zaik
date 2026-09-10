@@ -65,7 +65,7 @@ defmodule Zaik.Home.Mirror do
          {:ok, device_store} <-
            start_child(
              supervisor,
-             {Zaik.Home.DeviceStore, name: nil, clock: clock_provider}
+             {Zaik.Home.DeviceStore, name: nil, clock: clock_provider, event_bus: false}
            ),
          {:ok, history_store} <-
            start_child(

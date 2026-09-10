@@ -26,7 +26,8 @@ defmodule Zaik.Home.Mirror.Evals do
       %{name: "stale_report_does_not_regress_state", kind: :stale_report},
       %{name: "duplicate_report_is_idempotent", kind: :duplicate_report},
       %{name: "out_of_order_reports_preserve_newest_state", kind: :out_of_order_reports},
-      %{name: "conflicting_pending_action_is_rejected", kind: :conflicting_actions}
+      %{name: "conflicting_pending_action_is_rejected", kind: :conflicting_actions},
+      %{name: "daylight_harvesting_shadow_has_zero_side_effects", kind: :daylight_shadow}
     ]
   end
 
@@ -243,6 +244,69 @@ defmodule Zaik.Home.Mirror.Evals do
       fn run ->
         run.result == 1 and run.report.passed? and run.report.side_effect_count == 0 and
           Enum.map(run.report.reports, & &1.disposition) == ["accepted", "stale"]
+      end
+    )
+  end
+
+  defp run_case(%{kind: :daylight_shadow} = definition) do
+    scenario = Scenarios.lily_with_history_and_telemetry(id: definition.name)
+
+    finish(
+      definition,
+      Runner.run(scenario, fn mirror, context ->
+        now = Zaik.Home.Mirror.now(mirror)
+
+        for device <- ["Lily's bedroom left blind", "Lily's bedroom right blind"] do
+          Zaik.Home.DeviceStore.upsert_device(
+            mirror.device_store,
+            device,
+            %{"position" => 100},
+            %{"observed_at" => now, "source" => "mirror"}
+          )
+        end
+
+        Zaik.Home.DeviceStore.upsert_device(
+          mirror.device_store,
+          "Lily's room multi-sensor",
+          %{"temperature" => 22.0, "illuminance" => 15, "presence" => true},
+          %{"observed_at" => now, "source" => "mirror"}
+        )
+
+        {:ok, decision_store} =
+          DynamicSupervisor.start_child(
+            mirror.supervisor,
+            {Zaik.Home.Autonomy.DecisionStore, name: nil, db_path: ":memory:"}
+          )
+
+        {:ok, engine} =
+          DynamicSupervisor.start_child(
+            mirror.supervisor,
+            {Zaik.Home.Autonomy.Engine, name: nil, enabled: true, mode: :shadow}
+          )
+
+        Zaik.Home.Autonomy.Engine.evaluate(
+          "lily",
+          [
+            clock: context.clock,
+            device_store: context.device_store,
+            history_store: context.history_store,
+            decision_store: decision_store,
+            environment_config: %{utc_offset_minutes: 0},
+            policy_opts: [maximum_temperature_f: 80.0]
+          ],
+          engine
+        )
+      end),
+      fn run ->
+        match?(
+          {:ok,
+           %{
+             mode: :shadow,
+             status: "proposed",
+             reconciliation: %{actions: [_, _]}
+           }},
+          run.result
+        ) and run.report.side_effect_count == 0
       end
     )
   end

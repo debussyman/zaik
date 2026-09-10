@@ -363,7 +363,9 @@ Goal: make the mirror a continuous autonomy simulator and coverage generator,
 not only a collection of hand-written examples.
 
 - [ ] Run the policy engine, arbitration, reconciliation, staged plans, and
-  decision ledger under the existing virtual clock.
+  decision ledger under the existing virtual clock. Daylight policy through
+  inert reconciliation and an isolated decision ledger is now covered with zero
+  side effects; temporal staged plans remain.
 - [ ] Add independent physical-semantics fixtures and adapter calibration
   variants.
 - [ ] Generate scenario matrices across day/night, season, occupancy, light,
