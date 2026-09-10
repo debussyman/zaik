@@ -303,12 +303,15 @@ Acceptance:
 Goal: run observation-to-reconciliation continuously under OTP supervision.
 
 - [ ] Add a supervised autonomy event coordinator rather than polling process
-  lists or spawning untracked model calls.
+  lists or spawning untracked model calls. An initial supervised, explicitly
+  invoked shadow/advisory evaluator is implemented; event subscription remains.
 - [ ] Subscribe it only to accepted canonical changes and explicit user goals.
 - [ ] Coalesce bursts and execute bounded policy evaluations under a task
   supervisor.
 - [ ] Add durable decision IDs and a SQLite decision ledger containing snapshot,
-  candidates, arbitration, plan, outcomes, and feedback.
+  candidates, arbitration, plan, outcomes, and feedback. The initial ledger now
+  stores context, candidates, arbitration, and reconciliation; execution outcomes
+  and feedback remain.
 - [ ] Correlate every physical action with its originating decision, goal,
   policy, and observation snapshot.
 - [ ] Add watchdog recovery for stuck evaluations and staged plans.

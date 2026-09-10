@@ -46,6 +46,25 @@ defmodule Zaik.Home.Policies.Registry do
     end
   end
 
+  def evaluate_all(context, opts \\ []) when is_map(context) do
+    policy_opts = Keyword.get(opts, :policy_opts, [])
+
+    modules(opts)
+    |> Enum.reduce_while({:ok, []}, fn module, {:ok, candidates} ->
+      case descriptor(module) do
+        {:ok, _descriptor} ->
+          case module.evaluate(context, policy_opts) do
+            {:ok, emitted} when is_list(emitted) -> {:cont, {:ok, candidates ++ emitted}}
+            {:error, reason} -> {:halt, {:error, {module, reason}}}
+            other -> {:halt, {:error, {module, {:invalid_policy_result, other}}}}
+          end
+
+        {:error, reason} ->
+          {:halt, {:error, reason}}
+      end
+    end)
+  end
+
   def validate(opts \\ []) do
     results = Enum.map(modules(opts), &descriptor/1)
     errors = for {:error, error} <- results, do: error

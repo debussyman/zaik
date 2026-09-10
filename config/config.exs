@@ -138,6 +138,16 @@ config :zaik, :daylight_harvesting,
   closed_position_min: 90,
   candidate_ttl_seconds: 120
 
+# Disabled until shadow event subscriptions and operator inspection are wired.
+# Even when enabled, the first autonomy engine only supports shadow/advisory
+# decisions and cannot execute canary/active actions.
+config :zaik, :home_autonomy,
+  enabled: false,
+  mode: :shadow,
+  max_state_age_seconds: 120,
+  context_window_minutes: 180,
+  decision_db_path: if(config_env() == :test, do: ":memory:", else: "~/.zaik/home/home.db")
+
 config :zaik, :tool_execution, action_timeout_ms: 30_000
 config :zaik, :home_action_plans, max_actions: 10
 
