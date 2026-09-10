@@ -307,8 +307,8 @@ Goal: run observation-to-reconciliation continuously under OTP supervision.
   lists or spawning untracked model calls. An initial supervised, explicitly
   invoked shadow/advisory evaluator is implemented; event subscription remains.
 - [ ] Subscribe it only to accepted canonical changes and explicit user goals.
-  Accepted device observations are wired behind disabled-by-default shadow
-  configuration; explicit goals and dependency filtering remain.
+  Production shadow observation subscription and explicit operator evaluation
+  are implemented; semantic user-goal ingestion and dependency filtering remain.
 - [ ] Coalesce bursts and execute bounded policy evaluations under a task
   supervisor.
 - [ ] Add durable decision IDs and a SQLite decision ledger containing snapshot,

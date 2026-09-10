@@ -138,15 +138,15 @@ config :zaik, :daylight_harvesting,
   closed_position_min: 90,
   candidate_ttl_seconds: 120
 
-# Explicit shadow evaluation is enabled, but event subscription remains off.
-# The engine rejects canary/active execution regardless of configuration.
+# Shadow observation evaluation is enabled. The engine records inert decisions
+# and rejects canary/active execution regardless of configuration.
 config :zaik, :home_autonomy,
   enabled: true,
   mode: :shadow,
   max_state_age_seconds: 120,
   context_window_minutes: 180,
   event_debounce_ms: 500,
-  subscribe_events: false,
+  subscribe_events: true,
   decision_db_path: if(config_env() == :test, do: ":memory:", else: "~/.zaik/home/home.db")
 
 config :zaik, :tool_execution, action_timeout_ms: 30_000
