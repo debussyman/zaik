@@ -24,6 +24,7 @@ defmodule Zaik.Application do
       domain_child(:operations, Zaik.TaskStore),
       domain_child(:operations, Zaik.SessionStore),
       domain_child(:operations, Zaik.TaskQueue),
+      domain_child(:home, Zaik.Home.EventBus),
       domain_child(:home, Zaik.Home.DeviceStore),
       domain_child(:home, home_history_child()),
       domain_child(:home, device_preset_store_child()),

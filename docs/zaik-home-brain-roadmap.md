@@ -179,9 +179,10 @@ from raw rows.
 - [ ] Add manual-override state with owner, scope, reason, start, and expiry.
 - [x] Expose one generic typed `get_area_context` tool for an area and requested
   historical facts.
-- [ ] Emit accepted canonical state-change events without emitting stale or
-  duplicate observations.
-- [ ] Coalesce noisy observations before policy evaluation.
+- [x] Emit accepted canonical state-change events through a monitored local bus
+  without emitting stale or duplicate observations.
+- [ ] Coalesce noisy observations before policy evaluation. Initial virtual-time
+  per-device debounce is implemented; area/dependency coalescing remains.
 
 Acceptance:
 
@@ -306,6 +307,8 @@ Goal: run observation-to-reconciliation continuously under OTP supervision.
   lists or spawning untracked model calls. An initial supervised, explicitly
   invoked shadow/advisory evaluator is implemented; event subscription remains.
 - [ ] Subscribe it only to accepted canonical changes and explicit user goals.
+  Accepted device observations are wired behind disabled-by-default shadow
+  configuration; explicit goals and dependency filtering remain.
 - [ ] Coalesce bursts and execute bounded policy evaluations under a task
   supervisor.
 - [ ] Add durable decision IDs and a SQLite decision ledger containing snapshot,

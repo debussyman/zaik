@@ -97,6 +97,52 @@ defmodule Zaik.Home.AutonomyEngineTest do
     assert length(stored.reconciliation["actions"]) == 2
   end
 
+  test "accepted relevant events are coalesced through virtual debounce", context do
+    {:ok, bus} = start_supervised({Zaik.Home.EventBus, name: nil}, id: :autonomy_event_bus)
+
+    {:ok, event_engine} =
+      start_supervised(
+        {Zaik.Home.Autonomy.Engine,
+         name: nil,
+         enabled: true,
+         mode: :shadow,
+         subscribe_events: true,
+         event_bus: bus,
+         event_debounce_ms: 100,
+         clock: {Zaik.Home.Mirror.Clock, context.clock},
+         device_store: context.devices,
+         history_store: context.history,
+         decision_store: context.decisions,
+         environment_config: %{utc_offset_minutes: 0},
+         policy_opts: [maximum_temperature_f: 76.0]},
+        id: :event_autonomy_engine
+      )
+
+    event = %{
+      type: :device_observed,
+      device: "lily",
+      changed_keys: ["presence"],
+      observed_at: context.now
+    }
+
+    Zaik.Home.EventBus.publish(event, bus)
+    Zaik.Home.EventBus.publish(event, bus)
+
+    assert_eventually(fn -> Zaik.Home.Autonomy.Engine.status(event_engine).pending_count == 1 end)
+    Zaik.Home.Mirror.Clock.advance(context.clock, 99)
+    assert Zaik.Home.Autonomy.Engine.status(event_engine).last_decision == nil
+    Zaik.Home.Mirror.Clock.advance(context.clock, 1)
+
+    assert_eventually(fn ->
+      case Zaik.Home.Autonomy.Engine.status(event_engine).last_decision do
+        %{status: "proposed", reconciliation: %{actions: actions}} -> length(actions) == 2
+        _ -> false
+      end
+    end)
+
+    assert length(Zaik.Home.Autonomy.DecisionStore.recent(20, context.decisions)) == 1
+  end
+
   test "active execution is impossible in the shadow-only engine", context do
     assert {:error, {:execution_mode_not_enabled, :active}} =
              Zaik.Home.Autonomy.Engine.evaluate(
@@ -130,4 +176,17 @@ defmodule Zaik.Home.AutonomyEngineTest do
     assert decision.candidates == []
     assert decision.reconciliation.actions == []
   end
+
+  defp assert_eventually(fun, attempts \\ 50)
+
+  defp assert_eventually(fun, attempts) when attempts > 0 do
+    if fun.() do
+      :ok
+    else
+      Process.sleep(2)
+      assert_eventually(fun, attempts - 1)
+    end
+  end
+
+  defp assert_eventually(_fun, 0), do: flunk("condition did not become true")
 end

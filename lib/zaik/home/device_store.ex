@@ -48,7 +48,14 @@ defmodule Zaik.Home.DeviceStore do
   end
 
   @impl true
-  def init(opts), do: {:ok, %{devices: %{}, clock: Keyword.get(opts, :clock)}}
+  def init(opts) do
+    {:ok,
+     %{
+       devices: %{},
+       clock: Keyword.get(opts, :clock),
+       event_bus: Keyword.get(opts, :event_bus, Zaik.Home.EventBus)
+     }}
+  end
 
   @impl true
   def handle_call({:upsert_device, friendly_name, payload, metadata}, _from, state) do
@@ -83,6 +90,7 @@ defmodule Zaik.Home.DeviceStore do
         }
 
         state = put_device(state, device)
+        publish_observation(state.event_bus, device, payload, existing_payload)
         {:reply, {:ok, device}, state}
     end
   end
@@ -162,6 +170,40 @@ defmodule Zaik.Home.DeviceStore do
   end
 
   def handle_call(:reset, _from, state), do: {:reply, :ok, %{state | devices: %{}}}
+
+  defp publish_observation(false, _device, _incoming, _existing), do: :ok
+  defp publish_observation(nil, _device, _incoming, _existing), do: :ok
+
+  defp publish_observation(event_bus, device, incoming, existing) do
+    if process_available?(event_bus) do
+      changed_keys =
+        incoming
+        |> Enum.filter(fn {key, value} -> Map.get(existing, key) != value end)
+        |> Enum.map(fn {key, _value} -> to_string(key) end)
+        |> Enum.sort()
+
+      Zaik.Home.EventBus.publish(
+        %{
+          type: :device_observed,
+          device: device.friendly_name,
+          payload: device.payload,
+          metadata: device.metadata,
+          changed_keys: changed_keys,
+          observed_at: device.observed_at,
+          received_at: device.received_at
+        },
+        event_bus
+      )
+    end
+
+    :ok
+  catch
+    :exit, _reason -> :ok
+  end
+
+  defp process_available?(server) when is_pid(server), do: Process.alive?(server)
+  defp process_available?(server) when is_atom(server), do: not is_nil(Process.whereis(server))
+  defp process_available?(_server), do: false
 
   defp put_device(state, device) do
     %{state | devices: Map.put(state.devices, normalize(device.friendly_name), device)}

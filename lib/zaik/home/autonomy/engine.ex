@@ -24,6 +24,8 @@ defmodule Zaik.Home.Autonomy.Engine do
       mode: Keyword.get(configured, :mode, :shadow),
       max_state_age_seconds: Keyword.get(configured, :max_state_age_seconds, 120),
       context_window_minutes: Keyword.get(configured, :context_window_minutes, 180),
+      event_debounce_ms: Keyword.get(configured, :event_debounce_ms, 500),
+      subscribe_events: Keyword.get(configured, :subscribe_events, false),
       decision_db_path:
         Keyword.get(configured, :decision_db_path, Zaik.Home.HistoryStore.config().db_path)
     }
@@ -32,18 +34,72 @@ defmodule Zaik.Home.Autonomy.Engine do
   def evaluate(query, opts \\ [], server \\ __MODULE__) when is_binary(query),
     do: GenServer.call(server, {:evaluate, query, opts}, Keyword.get(opts, :timeout, 30_000))
 
+  def status(server \\ __MODULE__), do: GenServer.call(server, :status)
+
   @impl true
   def init(opts) do
     cfg = Map.merge(config(), Map.new(opts))
-    {:ok, cfg}
+    event_bus = Map.get(cfg, :event_bus, Zaik.Home.EventBus)
+
+    if cfg.subscribe_events and process_available?(event_bus) do
+      :ok = Zaik.Home.EventBus.subscribe(event_bus, self())
+    end
+
+    {:ok, %{config: cfg, event_bus: event_bus, pending: %{}, last_decision: nil}}
   end
 
   @impl true
-  def handle_call({:evaluate, query, request_opts}, _from, cfg) do
-    mode = Keyword.get(request_opts, :mode, cfg.mode)
-    reply = evaluate_request(query, mode, cfg, request_opts)
-    {:reply, reply, cfg}
+  def handle_call({:evaluate, query, request_opts}, _from, state) do
+    mode = Keyword.get(request_opts, :mode, state.config.mode)
+    reply = evaluate_request(query, mode, state.config, request_opts)
+    state = if match?({:ok, _}, reply), do: %{state | last_decision: elem(reply, 1)}, else: state
+    {:reply, reply, state}
   end
+
+  def handle_call(:status, _from, state) do
+    {:reply,
+     %{
+       mode: state.config.mode,
+       subscribe_events: state.config.subscribe_events,
+       pending_count: map_size(state.pending),
+       last_decision: state.last_decision
+     }, state}
+  end
+
+  @impl true
+  def handle_info({:zaik_home_event, %{type: :device_observed} = event}, state) do
+    if relevant_event?(event) do
+      key = event.device
+
+      if Map.has_key?(state.pending, key) do
+        {:noreply, state}
+      else
+        timer =
+          Zaik.Time.send_after(
+            Map.get(state.config, :clock),
+            self(),
+            {:evaluate_event, key, event},
+            state.config.event_debounce_ms
+          )
+
+        {:noreply, put_in(state, [:pending, key], timer)}
+      end
+    else
+      {:noreply, state}
+    end
+  end
+
+  def handle_info({:evaluate_event, key, event}, state) do
+    state = update_in(state.pending, &Map.delete(&1, key))
+    opts = state.config |> Map.to_list() |> Keyword.put(:mode, state.config.mode)
+
+    case evaluate_request(event.device, state.config.mode, state.config, opts) do
+      {:ok, decision} -> {:noreply, %{state | last_decision: decision}}
+      {:error, _reason} -> {:noreply, state}
+    end
+  end
+
+  def handle_info(_message, state), do: {:noreply, state}
 
   defp evaluate_request(_query, :off, _cfg, _opts), do: {:error, :autonomy_disabled}
 
@@ -147,6 +203,12 @@ defmodule Zaik.Home.Autonomy.Engine do
     |> then(&:crypto.hash(:sha256, &1))
     |> Base.encode16(case: :lower)
     |> then(&("decision_" <> String.slice(&1, 0, 24)))
+  end
+
+  defp relevant_event?(event) do
+    Enum.any?(List.wrap(Map.get(event, :changed_keys)), fn key ->
+      key in ["presence", "illuminance", "temperature", "position"]
+    end)
   end
 
   defp process_available?(server) when is_pid(server), do: Process.alive?(server)
