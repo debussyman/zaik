@@ -26,7 +26,10 @@ defmodule Zaik.AgentChat.RoutingEvals do
         kind: :domain,
         prompt: "How's Lily's room?",
         expected_domain: :home_readings,
-        prompt_must_include: ["DOMAIN: home sensor readings and trends"],
+        prompt_must_include: [
+          "DOMAIN: home room summary and environmental context",
+          "Required first tool: get_area_context"
+        ],
         prompt_must_not_include: ["DOMAIN: home control"]
       },
       %{

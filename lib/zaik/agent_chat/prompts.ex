@@ -450,7 +450,7 @@ defmodule Zaik.AgentChat.Prompts do
   end
 
   defp mode_instruction(:home_readings) do
-    "HOME STATE MODE: For current/latest state return get_home_state. For historical, windowed, or trend questions return get_home_history. Copy room/device terms and exact time windows from the request. Do not answer before a tool result."
+    "HOME STATE MODE: For current/latest state return get_home_state. For historical, windowed, or trend questions return get_home_history. For a room summary or overall conditions return get_area_context. Copy room/device terms and exact time windows from the request. Do not answer before a tool result."
   end
 
   defp mode_instruction(_domain) do
@@ -543,6 +543,7 @@ defmodule Zaik.AgentChat.Prompts do
     case home_read_mode(text) do
       "get_home_state" -> current_home_readings_policy(text)
       "get_home_history" -> historical_home_readings_policy(text)
+      "get_area_context" -> area_context_policy(text)
     end
   end
 
@@ -589,24 +590,49 @@ defmodule Zaik.AgentChat.Prompts do
     |> String.trim()
   end
 
+  defp area_context_policy(text) do
+    lookup = home_lookup_hint(text)
+
+    """
+    DOMAIN: home room summary and environmental context.
+    Exact user request: #{text}
+    Requested area lookup text: #{lookup}
+    Required first tool: get_area_context
+
+    Return one deterministic area-context call before answering:
+    {"type":"tool_call","tool":"get_area_context","args":{"query":"#{lookup}","window_minutes":180,"history_capabilities":["temperature_f","humidity","illuminance","presence"]}}
+
+    Report current entities separately from historical summaries. Preserve status, sample_count, window_minutes, freshness_seconds, provenance, season, and solar_phase semantics. Do not invent missing environmental facts or treat configured day/night hours as astronomical sunrise/sunset.
+    """
+    |> String.trim()
+  end
+
   defp home_read_mode(text) do
     normalized = normalize_home_name(text)
 
-    if Regex.match?(
-         ~r/\b(recent|recently|past|last|ago|since|today|tonight|morning|afternoon|evening|yesterday|minute|minutes|hour|hours|day|days|week|weeks|change|changed|changing|trend|trending|getting|warmer|cooler|history|historical|was|were)\b|\bhas been\b|\bhave been\b/,
-         normalized
-       ) do
-      "get_home_history"
-    else
-      "get_home_state"
+    cond do
+      Regex.match?(
+        ~r/\b(recent|recently|past|last|ago|since|today|tonight|morning|afternoon|evening|yesterday|minute|minutes|hour|hours|day|days|week|weeks|change|changed|changing|trend|trending|getting|warmer|cooler|history|historical|was|were)\b|\bhas been\b|\bhave been\b/,
+        normalized
+      ) ->
+        "get_home_history"
+
+      Regex.match?(
+        ~r/\b(summary|summarize|overview|overall|conditions)\b|\bhow is\b|\bhow s\b|\bhows\b/,
+        normalized
+      ) ->
+        "get_area_context"
+
+      true ->
+        "get_home_state"
     end
   end
 
   defp home_lookup_hint(text) do
     stop_words =
       MapSet.new(~w(
-        a an and are as at be been by did do does for from had has have how i in is it its
-        like me my of on or our room rooms sensor sensors the this to was were what whats when
+        a an and are as at be been by conditions did do does for from give had has have how i in is it its
+        like me my of on or our overall overview room rooms sensor sensors summary summarize the this to was were what whats when
         where which who why with you your temperature temp humidity illuminance brightness
         presence motion warm warmer cool cooler changed change changing trend trending current
         currently latest recently recent past last today tonight morning afternoon evening

@@ -986,7 +986,7 @@ defmodule Zaik.AgentChatTest do
 
   test "allows another useful SQL query after a successful SQL result" do
     assert {:ok, "Lily's room is warm with a recent trend."} =
-             Zaik.AgentChat.respond("how's Lily's room", %{},
+             Zaik.AgentChat.respond("what's it like in Lily's room", %{},
                client: MultiQueryClient,
                sql_tool: FakeSQLTool,
                config: %{enabled: true, fallback_enabled: false, max_tool_calls: 3}
@@ -1003,7 +1003,7 @@ defmodule Zaik.AgentChatTest do
 
   test "forces final answer when model keeps requesting SQL after budget is exhausted" do
     assert {:ok, "Lily's room is warm and occupied."} =
-             Zaik.AgentChat.respond("how's Lily's room", %{},
+             Zaik.AgentChat.respond("what's it like in Lily's room", %{},
                client: FinalRetryClient,
                sql_tool: FakeSQLTool,
                config: %{enabled: true, fallback_enabled: false, max_tool_calls: 2}

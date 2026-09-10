@@ -84,6 +84,16 @@ defmodule Zaik.AgentChat.Evals do
         expected_answer_terms: ["back", "model"]
       },
       %{
+        name: "home_lily_room_summary",
+        prompt: "Give me a summary of Lily's room.",
+        context: eval_context(),
+        max_tool_calls: 3,
+        expected_registered_tool: "get_area_context",
+        expected_registered_arg_terms: ["lily", "180", "temperature"],
+        forbidden_query_terms: ["home_readings"],
+        expected_answer_terms: ["lily", "temperature"]
+      },
+      %{
         name: "home_lily_warm_recently",
         prompt: "has Lily's room been warm recently?",
         context: eval_context(),

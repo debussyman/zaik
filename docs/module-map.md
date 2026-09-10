@@ -133,9 +133,14 @@ Home automation is one optional domain, not the whole harness.
 | `Zaik.Home.ActionPlan` | Preflights coordinated actions, shares a bounded verification wait, and reports partial completion. | Keep as the multi-action execution boundary. |
 | `Zaik.Home.HistoryStore` | SQLite home readings/history plus persisted areas, aliases, and provenance. | `Zaik.Domains.Home.HistoryStore` |
 | `Zaik.Home.Trends` | Home sensor trend summaries. | `Zaik.Domains.Home.Trends` |
+| `Zaik.Home.Query` | Shared normalization for model-authored entity and area lookup phrases. | Keep in the home-domain query boundary. |
+| `Zaik.Home.HistorySummary` | Deterministic bounded aggregates, trends, freshness, and provenance over typed history. | `Zaik.Domains.Home.HistorySummary` |
+| `Zaik.Home.Environment` | Deterministic civil-time, season, and configured day/night context. | Evolve behind a location/environment adapter boundary. |
+| `Zaik.Home.RoomContext` | Reproducible area-level current state, occupancy, environment, and history snapshot. | `Zaik.Domains.Home.RoomContext` |
 | `Zaik.Home.DevicePresetStore` | SQLite store for generic named device targets/presets. | `Zaik.Domains.Home.DevicePresetStore` |
 | `Zaik.Home.Tools.GetState` / `ListDevices` | Typed registered read tools over `Zaik.Home.World`. | Keep as primary current-state tools. |
 | `Zaik.Home.Tools.GetHistory` | Bounded typed capability/time-window history. | Keep as primary ordinary history tool. |
+| `Zaik.Home.Tools.GetAreaContext` | Typed room summary combining current entities, deterministic environment, and bounded historical aggregates. | Keep as the goal/policy context read boundary. |
 | `Zaik.Home.Tools.ControlDevice` | Generic entity/capability/target control tool. | Replace device-class-specific model tools over time. |
 | `Zaik.Home.Tools.ExecutePlan` | Registered preflighted multi-action control tool. | Keep as the coordinated-action tool. |
 | `Zaik.Home.Tools.RetryAction` | Policy-gated retry by persistent action ID; reconstructs only unresolved original targets. | Keep as the explicit retry boundary. |

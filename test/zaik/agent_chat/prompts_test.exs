@@ -41,6 +41,15 @@ defmodule Zaik.AgentChat.PromptsTest do
     refute prompt =~ "DOMAIN: general conversation"
   end
 
+  test "room summaries require deterministic area context" do
+    prompt = Zaik.AgentChat.Prompts.planner("Give me a summary of Lily's room", %{})
+
+    assert prompt =~ "DOMAIN: home room summary and environmental context"
+    assert prompt =~ "Required first tool: get_area_context"
+    assert prompt =~ ~s("query":"lily")
+    assert prompt =~ "temperature_f"
+  end
+
   test "temperature questions route to home readings even when a Lily home skill exists" do
     original = Application.get_env(:zaik, :skills)
 

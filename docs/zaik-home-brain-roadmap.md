@@ -163,18 +163,22 @@ Acceptance:
 Goal: provide compact deterministic facts instead of asking the model to infer
 from raw rows.
 
-- [ ] Add a typed `RoomState` projection joining entities by persisted area and
-  capability.
-- [ ] Add rolling typed summaries for temperature, humidity, illuminance,
-  presence, and future energy signals: first/latest/average/min/max/delta,
-  sample count, window, freshness, and provenance.
+- [x] Add an initial typed `RoomContext` projection joining entities by persisted
+  area and capability.
+- [x] Add bounded typed summaries for temperature, humidity, illuminance, and
+  presence: first/latest/average/min/max/delta, sample count, window, freshness,
+  and provenance. Incremental rolling caches and future energy signals remain.
 - [ ] Add debounced occupancy state with confidence and transitions such as
   `entered`, `occupied`, `possibly_absent`, and `vacant`.
-- [ ] Add configured local timezone and location bindings.
+- [ ] Add configured timezone and location bindings. An initial explicit UTC
+  offset/host-local fallback is implemented; named-zone and location support
+  remains.
 - [ ] Derive solar phase from sunrise/sunset and derive a configured season;
-  retain the source and timestamp for each fact.
+  retain the source and timestamp for each fact. Meteorological season and an
+  explicitly labeled configured-hours day/night phase are implemented first.
 - [ ] Add manual-override state with owner, scope, reason, start, and expiry.
-- [ ] Expose one generic typed context tool for an area and requested facts.
+- [x] Expose one generic typed `get_area_context` tool for an area and requested
+  historical facts.
 - [ ] Emit accepted canonical state-change events without emitting stale or
   duplicate observations.
 - [ ] Coalesce noisy observations before policy evaluation.

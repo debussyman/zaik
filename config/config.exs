@@ -156,6 +156,14 @@ config :zaik, :home_history,
   enabled: true,
   db_path: if(config_env() == :test, do: ":memory:", else: "~/.zaik/home/home.db")
 
+# Deterministic civil-time context for home policies. When utc_offset_minutes is
+# nil, production uses the host's current local offset; mirrors should inject it.
+config :zaik, :home_environment,
+  utc_offset_minutes: nil,
+  hemisphere: "north",
+  day_start_hour: 6,
+  night_start_hour: 20
+
 config :zaik, :telemetry_store,
   enabled: true,
   db_path: if(config_env() == :test, do: ":memory:", else: "~/.zaik/zaik.db")
