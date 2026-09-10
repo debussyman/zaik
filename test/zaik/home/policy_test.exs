@@ -77,6 +77,42 @@ defmodule Zaik.Home.PolicyTest do
              )
   end
 
+  test "generated daylight state matrix emits only for the complete eligible context", %{
+    clock: clock
+  } do
+    for occupied? <- [false, true],
+        daytime? <- [false, true],
+        dark? <- [false, true],
+        cool? <- [false, true],
+        closed? <- [false, true] do
+      context =
+        room_context()
+        |> put_in([:occupancy, :status], if(occupied?, do: "occupied", else: "vacant"))
+        |> put_in([:environment, :solar_phase], if(daytime?, do: "day", else: "night"))
+        |> put_in(
+          [:entities, Access.at(0), :state, "illuminance", :value],
+          if(dark?, do: 18, else: 200)
+        )
+        |> put_in([:history, "temperature_f", :average], if(cool?, do: 72.0, else: 82.0))
+        |> put_in(
+          [:entities, Access.at(1), :state, "cover", :position],
+          if(closed?, do: 100, else: 0)
+        )
+        |> put_in(
+          [:entities, Access.at(2), :state, "cover", :position],
+          if(closed?, do: 100, else: 0)
+        )
+
+      assert {:ok, candidates} =
+               Zaik.Home.Policies.DaylightHarvesting.evaluate(context,
+                 clock: {Zaik.Home.Mirror.Clock, clock}
+               )
+
+      expected? = occupied? and daytime? and dark? and cool? and closed?
+      assert candidates != [] == expected?
+    end
+  end
+
   test "policy registry evaluates only changed dependencies", %{clock: clock} do
     assert {:ok, []} =
              Zaik.Home.Policies.Registry.evaluate_all(room_context(),
