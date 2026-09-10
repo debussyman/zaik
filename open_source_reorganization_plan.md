@@ -1,5 +1,10 @@
 # Open Source Reorganization Plan
 
+**Status:** The completed hygiene/boundary foundation and remaining namespace,
+examples, packaging, and public-launch work are folded into
+[`docs/zaik-home-brain-roadmap.md`](docs/zaik-home-brain-roadmap.md). This file
+remains the detailed source for the intended open-source module layout.
+
 Zaik has grown from a personal house-agent project into a reusable local-first Elixir/OTP agent harness. This plan tracks the work needed to make the repository attractive, understandable, and contributor-friendly as an open source project.
 
 ## Goals
@@ -549,14 +554,16 @@ lib/
 ### Phase 2: Clarify Boundaries Without Big Renames
 
 - [x] Add docs that classify modules into runtime, memory, brain, adapters, domains.
-- [ ] Add behaviours for LLM client, messaging adapter, tool, and home bridge.
+- [ ] Complete behaviours for LLM client, messaging adapter, tool, and home bridge.
   - [x] LLM provider behaviour/facade added with Ollama and llama.cpp clients.
+  - [x] Runtime-discovered tool, home capability, and home executor behaviours added.
+  - [ ] Messaging adapter and normalized home observation/bridge behaviours remain.
 - [x] Mark legacy intent parser as deprecated; normal free-form chat uses `Zaik.AgentChat`.
 - [x] Make `TaskResolver` config-driven while preserving defaults.
 - [x] Make MQTT handler modules configurable.
 - [x] Introduce `Zaik.Ingress.Message` and shared ingress flow.
 - [x] Start slimming Telegram/Signal pollers into protocol adapters.
-- [ ] Ensure all tests pass.
+- [x] Ensure all tests pass.
 
 ### Phase 3: Namespace Reorganization
 

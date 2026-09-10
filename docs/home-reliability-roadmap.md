@@ -7,6 +7,8 @@ caches so Elixir hot code loading remains a first-class future option.
 
 **Status:** Phases 0 through 2.5 are complete. Phase 3 remains a deliberately
 pinned future-design boundary rather than permission for recursive deployment.
+Continuous observation, policy, arbitration, and autonomy work now continues in
+[`zaik-home-brain-roadmap.md`](zaik-home-brain-roadmap.md).
 
 ## Phase 0: Stabilize action execution
 

@@ -55,7 +55,7 @@ Home automation is one domain built on the harness, not the whole harness. Futur
 
 Existing `control_blind` and SQL prompts remain as compatibility paths while AgentChat migrates toward `get_home_state` and `control_device`.
 
-See [`home-reliability-roadmap.md`](home-reliability-roadmap.md) for the active stabilization sequence.
+See [`home-reliability-roadmap.md`](home-reliability-roadmap.md) for the completed reliability foundation and [`zaik-home-brain-roadmap.md`](zaik-home-brain-roadmap.md) for the active continuous-observation, policy, and autonomy roadmap.
 
 ## Current status
 
