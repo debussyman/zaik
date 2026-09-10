@@ -91,7 +91,12 @@ defmodule Zaik.Home.Autonomy.Engine do
 
   def handle_info({:evaluate_event, key, event}, state) do
     state = update_in(state.pending, &Map.delete(&1, key))
-    opts = state.config |> Map.to_list() |> Keyword.put(:mode, state.config.mode)
+
+    opts =
+      state.config
+      |> Map.to_list()
+      |> Keyword.put(:mode, state.config.mode)
+      |> Keyword.put(:changed_dependencies, event_dependencies(event))
 
     case evaluate_request(event.query, state.config.mode, state.config, opts) do
       {:ok, decision} -> {:noreply, %{state | last_decision: decision}}
@@ -166,6 +171,7 @@ defmodule Zaik.Home.Autonomy.Engine do
     Zaik.Home.Policies.Registry.evaluate_all(
       context,
       Keyword.merge(registry_opts,
+        changed_dependencies: Keyword.get(opts, :changed_dependencies),
         policy_opts:
           Keyword.merge(Keyword.get(opts, :policy_opts, []),
             clock: clock,
@@ -219,6 +225,18 @@ defmodule Zaik.Home.Autonomy.Engine do
     end
   catch
     :exit, _reason -> {event.device, event.device}
+  end
+
+  defp event_dependencies(event) do
+    event
+    |> Map.get(:changed_keys, [])
+    |> Enum.flat_map(fn
+      "position" -> ["cover"]
+      "state" -> ["cover"]
+      key when key in ["presence", "illuminance", "temperature"] -> [key]
+      _key -> []
+    end)
+    |> Enum.uniq()
   end
 
   defp relevant_event?(event) do

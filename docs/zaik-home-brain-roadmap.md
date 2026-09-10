@@ -251,7 +251,8 @@ states without directly controlling devices.
 - [ ] Policies must depend on area/capability contracts rather than household
   device names.
 - [ ] Add hysteresis and minimum-active/settle periods to policy descriptors.
-- [ ] Evaluate only policies whose declared dependencies changed.
+- [x] Evaluate observation-triggered policies only when their declared capability
+  dependencies changed; explicit evaluations still run the complete registry.
 - [ ] Keep model consultation optional and bounded for ambiguous candidate
   selection; deterministic policies handle established preferences.
 

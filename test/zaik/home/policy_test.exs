@@ -77,6 +77,20 @@ defmodule Zaik.Home.PolicyTest do
              )
   end
 
+  test "policy registry evaluates only changed dependencies", %{clock: clock} do
+    assert {:ok, []} =
+             Zaik.Home.Policies.Registry.evaluate_all(room_context(),
+               changed_dependencies: ["battery"],
+               policy_opts: [clock: {Zaik.Home.Mirror.Clock, clock}]
+             )
+
+    assert {:ok, [_candidate]} =
+             Zaik.Home.Policies.Registry.evaluate_all(room_context(),
+               changed_dependencies: ["presence"],
+               policy_opts: [clock: {Zaik.Home.Mirror.Clock, clock}]
+             )
+  end
+
   test "policy registry is runtime validated and fingerprinted" do
     assert :ok = Zaik.Home.Policies.Registry.validate()
 

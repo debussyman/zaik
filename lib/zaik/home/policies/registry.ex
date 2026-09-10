@@ -48,8 +48,11 @@ defmodule Zaik.Home.Policies.Registry do
 
   def evaluate_all(context, opts \\ []) when is_map(context) do
     policy_opts = Keyword.get(opts, :policy_opts, [])
+    changed_dependencies = Keyword.get(opts, :changed_dependencies)
 
-    modules(opts)
+    opts
+    |> modules()
+    |> Enum.filter(&depends_on?(&1, changed_dependencies))
     |> Enum.reduce_while({:ok, []}, fn module, {:ok, candidates} ->
       case descriptor(module) do
         {:ok, _descriptor} ->
@@ -63,6 +66,22 @@ defmodule Zaik.Home.Policies.Registry do
           {:halt, {:error, reason}}
       end
     end)
+  end
+
+  defp depends_on?(_module, nil), do: true
+  defp depends_on?(_module, []), do: false
+
+  defp depends_on?(module, changed_dependencies) do
+    case descriptor(module) do
+      {:ok, descriptor} ->
+        not MapSet.disjoint?(
+          MapSet.new(descriptor.dependencies),
+          MapSet.new(Enum.map(changed_dependencies, &normalize/1))
+        )
+
+      _ ->
+        false
+    end
   end
 
   def validate(opts \\ []) do
