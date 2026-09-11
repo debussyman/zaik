@@ -28,7 +28,7 @@ defmodule Zaik.Home.Autonomy.DecisionStore do
     unless path == ":memory:", do: path |> Path.dirname() |> File.mkdir_p!()
 
     with {:ok, conn} <- Sqlite3.open(path), :ok <- migrate(conn) do
-      {:ok, %{conn: conn}}
+      {:ok, %{conn: conn, max_rows: Keyword.get(opts, :max_rows, 10_000)}}
     else
       {:error, reason} -> {:stop, reason}
     end
@@ -65,8 +65,14 @@ defmodule Zaik.Home.Autonomy.DecisionStore do
         params
       )
       |> case do
-        :ok -> {:ok, normalized}
-        {:error, reason} -> {:error, reason}
+        :ok ->
+          case prune(state.conn, state.max_rows) do
+            :ok -> {:ok, normalized}
+            {:error, reason} -> {:error, reason}
+          end
+
+        {:error, reason} ->
+          {:error, reason}
       end
 
     {:reply, reply, state}
@@ -186,6 +192,23 @@ defmodule Zaik.Home.Autonomy.DecisionStore do
     after
       Sqlite3.release(conn, statement)
     end
+  end
+
+  defp prune(_conn, max_rows) when not is_integer(max_rows) or max_rows < 1, do: :ok
+
+  defp prune(conn, max_rows) do
+    execute(
+      conn,
+      """
+      DELETE FROM home_autonomy_decisions
+      WHERE id IN (
+        SELECT id FROM home_autonomy_decisions
+        ORDER BY created_at DESC
+        LIMIT -1 OFFSET ?
+      )
+      """,
+      [max_rows]
+    )
   end
 
   defp execute(conn, sql, params) do

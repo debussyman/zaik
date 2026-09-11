@@ -25,6 +25,7 @@ defmodule Zaik.Home.Autonomy.Engine do
       max_state_age_seconds: Keyword.get(configured, :max_state_age_seconds, 120),
       context_window_minutes: Keyword.get(configured, :context_window_minutes, 180),
       event_debounce_ms: Keyword.get(configured, :event_debounce_ms, 500),
+      event_min_interval_ms: Keyword.get(configured, :event_min_interval_ms, 60_000),
       occupancy_absence_debounce_ms:
         Keyword.get(configured, :occupancy_absence_debounce_ms, 5 * 60_000),
       subscribe_events: Keyword.get(configured, :subscribe_events, false),
@@ -47,7 +48,14 @@ defmodule Zaik.Home.Autonomy.Engine do
       :ok = Zaik.Home.EventBus.subscribe(event_bus, self())
     end
 
-    {:ok, %{config: cfg, event_bus: event_bus, pending: %{}, last_decision: nil}}
+    {:ok,
+     %{
+       config: cfg,
+       event_bus: event_bus,
+       pending: %{},
+       last_evaluated_ms: %{},
+       last_decision: nil
+     }}
   end
 
   @impl true
@@ -85,7 +93,11 @@ defmodule Zaik.Home.Autonomy.Engine do
 
   def handle_info({:evaluate_event, key}, state) do
     %{event: event} = Map.fetch!(state.pending, key)
-    state = update_in(state.pending, &Map.delete(&1, key))
+
+    state =
+      state
+      |> update_in([:pending], &Map.delete(&1, key))
+      |> put_in([:last_evaluated_ms, key], Zaik.Time.monotonic_ms(Map.get(state.config, :clock)))
 
     opts =
       state.config
@@ -232,12 +244,19 @@ defmodule Zaik.Home.Autonomy.Engine do
         put_in(state, [:pending, key], %{pending | event: merged_event})
 
       nil ->
+        clock = Map.get(state.config, :clock)
+        now_ms = Zaik.Time.monotonic_ms(clock)
+        last_ms = Map.get(state.last_evaluated_ms, key)
+        minimum = Map.get(state.config, :event_min_interval_ms, 60_000)
+        remaining = if is_integer(last_ms), do: max(0, last_ms + minimum - now_ms), else: 0
+        delay = max(state.config.event_debounce_ms, remaining)
+
         timer =
           Zaik.Time.send_after(
-            Map.get(state.config, :clock),
+            clock,
             self(),
             {:evaluate_event, key},
-            state.config.event_debounce_ms
+            delay
           )
 
         put_in(state, [:pending, key], %{timer: timer, event: event})

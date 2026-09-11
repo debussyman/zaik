@@ -153,6 +153,16 @@ defmodule Zaik.Home.AutonomyEngineTest do
     end)
 
     assert length(Zaik.Home.Autonomy.DecisionStore.recent(20, context.decisions)) == 1
+
+    Zaik.Home.EventBus.publish(event, bus)
+    assert_eventually(fn -> Zaik.Home.Autonomy.Engine.status(event_engine).pending_count == 1 end)
+    Zaik.Home.Mirror.Clock.advance(context.clock, 59_999)
+    assert length(Zaik.Home.Autonomy.DecisionStore.recent(20, context.decisions)) == 1
+    Zaik.Home.Mirror.Clock.advance(context.clock, 1)
+
+    assert_eventually(fn ->
+      length(Zaik.Home.Autonomy.DecisionStore.recent(20, context.decisions)) == 2
+    end)
   end
 
   test "active manual override is included in evidence and suppresses background policy",

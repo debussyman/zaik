@@ -315,11 +315,12 @@ Goal: run observation-to-reconciliation continuously under OTP supervision.
   Production shadow observation subscription, area/dependency filtering, and
   explicit operator evaluation are implemented; semantic user-goal ingestion remains.
 - [ ] Coalesce bursts and execute bounded policy evaluations under a task
-  supervisor.
+  supervisor. Area bursts now union dependencies and enforce a configurable
+  minimum evaluation interval; moving evaluation work off the coordinator remains.
 - [ ] Add durable decision IDs and a SQLite decision ledger containing snapshot,
   candidates, arbitration, plan, outcomes, and feedback. The initial ledger now
-  stores context, candidates, arbitration, and reconciliation; execution outcomes
-  and feedback remain.
+  stores a bounded newest window of context, candidates, arbitration, and
+  reconciliation; execution outcomes and feedback remain.
 - [ ] Correlate every physical action with its originating decision, goal,
   policy, and observation snapshot.
 - [ ] Add watchdog recovery for stuck evaluations and staged plans.
