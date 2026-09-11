@@ -398,7 +398,8 @@ Required initial temporal scenarios:
   arrives.
 - Sparse temperature history: recent window empty, wider window valid.
 - Noisy presence: repeated reports do not create action chatter.
-- Manual override: automation remains suppressed until virtual expiry.
+- [x] Manual override: automation remains suppressed until virtual expiry, with
+  zero mirror side effects and the lease retained as snapshot evidence.
 - Staged daylight/lighting: lights remain off if opening covers raises lux.
 
 Acceptance:
