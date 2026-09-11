@@ -168,8 +168,10 @@ from raw rows.
 - [x] Add bounded typed summaries for temperature, humidity, illuminance, and
   presence: first/latest/average/min/max/delta, sample count, window, freshness,
   and provenance. Incremental rolling caches and future energy signals remain.
-- [ ] Add debounced occupancy state with confidence and transitions such as
-  `entered`, `occupied`, `possibly_absent`, and `vacant`.
+- [x] Add area-scoped debounced occupancy with confidence and `entered`,
+  `occupied`, `possibly_absent`, and `vacant` transitions. Positive evidence is
+  immediate, absence requires an uninterrupted configurable settle window, and
+  multiple sensors are composed conservatively.
 - [ ] Add configured timezone and location bindings. An initial explicit UTC
   offset/host-local fallback is implemented; named-zone and location support
   remains.
@@ -182,8 +184,8 @@ from raw rows.
   historical facts.
 - [x] Emit accepted canonical state-change events through a monitored local bus
   without emitting stale or duplicate observations.
-- [ ] Coalesce noisy observations before policy evaluation. Initial virtual-time
-  area-scoped debounce is implemented; dependency-specific coalescing remains.
+- [x] Coalesce noisy observations by area under injected time, union changed
+  capability dependencies across each burst, and evaluate only affected policies.
 
 Acceptance:
 
@@ -306,12 +308,12 @@ Acceptance:
 
 Goal: run observation-to-reconciliation continuously under OTP supervision.
 
-- [ ] Add a supervised autonomy event coordinator rather than polling process
-  lists or spawning untracked model calls. An initial supervised, explicitly
-  invoked shadow/advisory evaluator is implemented; event subscription remains.
+- [x] Add a supervised shadow/advisory autonomy event coordinator rather than
+  polling process lists or spawning untracked model calls; execution modes remain
+  deliberately unavailable pending rollout gates.
 - [ ] Subscribe it only to accepted canonical changes and explicit user goals.
-  Production shadow observation subscription and explicit operator evaluation
-  are implemented; semantic user-goal ingestion and dependency filtering remain.
+  Production shadow observation subscription, area/dependency filtering, and
+  explicit operator evaluation are implemented; semantic user-goal ingestion remains.
 - [ ] Coalesce bursts and execute bounded policy evaluations under a task
   supervisor.
 - [ ] Add durable decision IDs and a SQLite decision ledger containing snapshot,
@@ -372,7 +374,9 @@ not only a collection of hand-written examples.
 - [ ] Add independent physical-semantics fixtures and adapter calibration
   variants.
 - [ ] Generate scenario matrices across day/night, season, occupancy, light,
-  temperature, current device state, freshness, overrides, and faults.
+  temperature, current device state, freshness, overrides, and faults. The
+  daylight boolean matrix, override-expiry timeline, and debounced occupancy
+  timeline are covered; broader generated combinations remain.
 - [ ] Add metamorphic natural-language and tool-argument generation for aliases,
   possessives, plurals, word order, capability words, and time phrases.
 - [ ] Assert lookup invariance between current and historical tools.

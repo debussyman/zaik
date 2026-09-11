@@ -146,6 +146,7 @@ config :zaik, :home_autonomy,
   max_state_age_seconds: 120,
   context_window_minutes: 180,
   event_debounce_ms: 500,
+  occupancy_absence_debounce_ms: 300_000,
   subscribe_events: true,
   decision_db_path: if(config_env() == :test, do: ":memory:", else: "~/.zaik/home/home.db")
 

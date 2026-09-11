@@ -48,6 +48,8 @@ defmodule Zaik.Home.Tools.GetAreaContext do
         history_capabilities: capabilities,
         device_store: value(context, :device_store),
         history_store: value(context, :history_store),
+        occupancy_tracker: value(context, :occupancy_tracker),
+        manual_override_store: value(context, :manual_override_store),
         capability_opts: value(context, :capability_opts),
         clock: value(context, :clock),
         environment_config: value(context, :environment_config) || %{}
@@ -80,5 +82,11 @@ defmodule Zaik.Home.Tools.GetAreaContext do
   end
 
   defp capabilities(_values), do: {:error, :invalid_history_capabilities}
-  defp value(map, key), do: Map.get(map, key) || Map.get(map, to_string(key))
+
+  defp value(map, key) do
+    case Map.fetch(map, key) do
+      {:ok, value} -> value
+      :error -> Map.get(map, to_string(key))
+    end
+  end
 end

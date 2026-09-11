@@ -64,6 +64,7 @@ defmodule Zaik.Home.RoomContextTest do
     opts = [
       device_store: context.device_store,
       history_store: context.history_store,
+      occupancy_tracker: false,
       clock: {Zaik.Home.Mirror.Clock, context.clock},
       window_minutes: 180,
       environment_config: %{
@@ -113,6 +114,7 @@ defmodule Zaik.Home.RoomContextTest do
              Zaik.Home.RoomContext.build("lily",
                device_store: context.device_store,
                history_store: legacy_history,
+               occupancy_tracker: false,
                clock: {Zaik.Home.Mirror.Clock, context.clock},
                history_capabilities: ["temperature_f"],
                environment_config: %{utc_offset_minutes: -240}
@@ -136,6 +138,7 @@ defmodule Zaik.Home.RoomContextTest do
                %{
                  device_store: context.device_store,
                  history_store: context.history_store,
+                 occupancy_tracker: false,
                  clock: {Zaik.Home.Mirror.Clock, context.clock},
                  environment_config: %{utc_offset_minutes: -240}
                }

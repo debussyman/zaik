@@ -28,7 +28,8 @@ defmodule Zaik.Home.Mirror.Evals do
       %{name: "out_of_order_reports_preserve_newest_state", kind: :out_of_order_reports},
       %{name: "conflicting_pending_action_is_rejected", kind: :conflicting_actions},
       %{name: "daylight_harvesting_shadow_has_zero_side_effects", kind: :daylight_shadow},
-      %{name: "manual_override_suppresses_until_virtual_expiry", kind: :manual_override}
+      %{name: "manual_override_suppresses_until_virtual_expiry", kind: :manual_override},
+      %{name: "occupancy_absence_requires_virtual_settle_window", kind: :occupancy_debounce}
     ]
   end
 
@@ -249,6 +250,55 @@ defmodule Zaik.Home.Mirror.Evals do
     )
   end
 
+  defp run_case(%{kind: :occupancy_debounce} = definition) do
+    scenario = Scenarios.lily_with_history_and_telemetry(id: definition.name)
+
+    finish(
+      definition,
+      Runner.run(scenario, fn mirror, context ->
+        {:ok, bus} =
+          DynamicSupervisor.start_child(
+            mirror.supervisor,
+            {Zaik.Home.EventBus, name: nil}
+          )
+
+        {:ok, tracker} =
+          DynamicSupervisor.start_child(
+            mirror.supervisor,
+            {Zaik.Home.OccupancyTracker,
+             name: nil, event_bus: bus, clock: context.clock, absence_debounce_ms: 60_000}
+          )
+
+        publish_presence(bus, true, Zaik.Home.Mirror.now(mirror))
+        sync_processes(bus, tracker)
+        entered = Zaik.Home.OccupancyTracker.status("lily_bedroom", tracker)
+
+        publish_presence(bus, false, Zaik.Home.Mirror.now(mirror))
+        sync_processes(bus, tracker)
+        possibly_absent = Zaik.Home.OccupancyTracker.status("lily_bedroom", tracker)
+
+        Zaik.Home.Mirror.advance(mirror, 59_999)
+        before_expiry = Zaik.Home.OccupancyTracker.status("lily_bedroom", tracker)
+        Zaik.Home.Mirror.advance(mirror, 1)
+        :sys.get_state(tracker)
+        vacant = Zaik.Home.OccupancyTracker.status("lily_bedroom", tracker)
+
+        %{
+          entered: entered,
+          possibly_absent: possibly_absent,
+          before_expiry: before_expiry,
+          vacant: vacant
+        }
+      end),
+      fn run ->
+        run.result.entered.transition == "entered" and
+          run.result.possibly_absent.status == "possibly_absent" and
+          run.result.before_expiry.status == "possibly_absent" and
+          run.result.vacant.transition == "vacant" and run.report.side_effect_count == 0
+      end
+    )
+  end
+
   defp run_case(%{kind: :manual_override} = definition) do
     scenario = Scenarios.lily_with_history_and_telemetry(id: definition.name)
 
@@ -284,6 +334,7 @@ defmodule Zaik.Home.Mirror.Evals do
         room_opts = [
           clock: context.clock,
           device_store: context.device_store,
+          occupancy_tracker: context.occupancy_tracker,
           history_store: context.history_store,
           manual_override_store: context.manual_override_store,
           environment_config: %{utc_offset_minutes: 0},
@@ -357,6 +408,7 @@ defmodule Zaik.Home.Mirror.Evals do
           [
             clock: context.clock,
             device_store: context.device_store,
+            occupancy_tracker: context.occupancy_tracker,
             history_store: context.history_store,
             decision_store: decision_store,
             manual_override_store: context.manual_override_store,
@@ -439,6 +491,25 @@ defmodule Zaik.Home.Mirror.Evals do
 
   defp action(device, target) do
     %{"device" => device, "capability" => "cover", "target" => target}
+  end
+
+  defp publish_presence(bus, detected, observed_at) do
+    Zaik.Home.EventBus.publish(
+      %{
+        type: :device_observed,
+        device: "mirror-presence",
+        payload: %{"presence" => detected},
+        metadata: %{"area_id" => "lily_bedroom"},
+        changed_keys: ["presence"],
+        observed_at: observed_at
+      },
+      bus
+    )
+  end
+
+  defp sync_processes(bus, tracker) do
+    :sys.get_state(bus)
+    :sys.get_state(tracker)
   end
 
   defp finish(definition, {:ok, run}, predicate) do

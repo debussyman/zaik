@@ -120,6 +120,11 @@ defmodule Zaik do
     do: Zaik.Home.Autonomy.ManualOverrideStore.cancel(id, cancelled_by)
 
   @doc """
+  Return debounced occupancy state and its latest transition for an area.
+  """
+  def home_occupancy(area), do: Zaik.Home.OccupancyTracker.status(area)
+
+  @doc """
   Return latest known devices that expose a presence field.
   """
   def presence_devices, do: Zaik.Home.DeviceStore.presence_devices()

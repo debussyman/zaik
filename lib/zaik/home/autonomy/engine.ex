@@ -25,6 +25,8 @@ defmodule Zaik.Home.Autonomy.Engine do
       max_state_age_seconds: Keyword.get(configured, :max_state_age_seconds, 120),
       context_window_minutes: Keyword.get(configured, :context_window_minutes, 180),
       event_debounce_ms: Keyword.get(configured, :event_debounce_ms, 500),
+      occupancy_absence_debounce_ms:
+        Keyword.get(configured, :occupancy_absence_debounce_ms, 5 * 60_000),
       subscribe_events: Keyword.get(configured, :subscribe_events, false),
       decision_db_path:
         Keyword.get(configured, :decision_db_path, Zaik.Home.HistoryStore.config().db_path)
@@ -71,25 +73,18 @@ defmodule Zaik.Home.Autonomy.Engine do
     if relevant_event?(event) do
       {key, query} = event_scope(event, state.config)
 
-      if Map.has_key?(state.pending, key) do
-        {:noreply, state}
-      else
-        timer =
-          Zaik.Time.send_after(
-            Map.get(state.config, :clock),
-            self(),
-            {:evaluate_event, key, Map.put(event, :query, query)},
-            state.config.event_debounce_ms
-          )
-
-        {:noreply, put_in(state, [:pending, key], timer)}
-      end
+      {:noreply, schedule_event(state, key, query, event)}
     else
       {:noreply, state}
     end
   end
 
-  def handle_info({:evaluate_event, key, event}, state) do
+  def handle_info({:zaik_home_event, %{type: :occupancy_changed, area: area} = event}, state) do
+    {:noreply, schedule_event(state, area, area, Map.put(event, :device, area))}
+  end
+
+  def handle_info({:evaluate_event, key}, state) do
+    %{event: event} = Map.fetch!(state.pending, key)
     state = update_in(state.pending, &Map.delete(&1, key))
 
     opts =
@@ -120,6 +115,12 @@ defmodule Zaik.Home.Autonomy.Engine do
              device_store: Keyword.get(opts, :device_store),
              history_store: Keyword.get(opts, :history_store),
              capability_opts: Keyword.get(opts, :capability_opts),
+             occupancy_tracker:
+               Keyword.get(
+                 opts,
+                 :occupancy_tracker,
+                 Map.get(cfg, :occupancy_tracker, Zaik.Home.OccupancyTracker)
+               ),
              clock: clock,
              window_minutes: Keyword.get(opts, :window_minutes, cfg.context_window_minutes),
              history_capabilities:
@@ -215,6 +216,32 @@ defmodule Zaik.Home.Autonomy.Engine do
     |> then(&:crypto.hash(:sha256, &1))
     |> Base.encode16(case: :lower)
     |> then(&("decision_" <> String.slice(&1, 0, 24)))
+  end
+
+  defp schedule_event(state, key, query, event) do
+    event = Map.put(event, :query, query)
+
+    case Map.get(state.pending, key) do
+      %{event: pending_event} = pending ->
+        changed_keys =
+          (List.wrap(Map.get(pending_event, :changed_keys)) ++
+             List.wrap(Map.get(event, :changed_keys)))
+          |> Enum.uniq()
+
+        merged_event = pending_event |> Map.merge(event) |> Map.put(:changed_keys, changed_keys)
+        put_in(state, [:pending, key], %{pending | event: merged_event})
+
+      nil ->
+        timer =
+          Zaik.Time.send_after(
+            Map.get(state.config, :clock),
+            self(),
+            {:evaluate_event, key},
+            state.config.event_debounce_ms
+          )
+
+        put_in(state, [:pending, key], %{timer: timer, event: event})
+    end
   end
 
   defp event_scope(event, config) do

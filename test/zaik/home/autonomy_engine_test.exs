@@ -16,7 +16,11 @@ defmodule Zaik.Home.AutonomyEngineTest do
     {:ok, engine} =
       start_supervised(
         {Zaik.Home.Autonomy.Engine,
-         name: nil, enabled: true, mode: :shadow, manual_override_store: overrides}
+         name: nil,
+         enabled: true,
+         mode: :shadow,
+         occupancy_tracker: false,
+         manual_override_store: overrides}
       )
 
     sensor_metadata = %{
@@ -118,6 +122,7 @@ defmodule Zaik.Home.AutonomyEngineTest do
          event_debounce_ms: 100,
          clock: {Zaik.Home.Mirror.Clock, context.clock},
          device_store: context.devices,
+         occupancy_tracker: false,
          history_store: context.history,
          decision_store: context.decisions,
          environment_config: %{utc_offset_minutes: 0},

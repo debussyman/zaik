@@ -121,6 +121,7 @@ Home automation is one optional domain, not the whole harness.
 | Current module/file | Role | Future target |
 | --- | --- | --- |
 | `Zaik.Home.EventBus` | Monitored local fanout for accepted canonical observation events. | Keep as the home-domain event boundary. |
+| `Zaik.Home.OccupancyTracker` | Area-scoped multi-sensor occupancy projection with confidence, explicit transitions, and virtual-time absence debounce. | Add persisted restart restoration and sensor-specific confidence calibration. |
 | `Zaik.Home.DeviceStore` | In-memory raw current device state with observed/received timestamps, stale/duplicate report rejection, and accepted-event publication. | `Zaik.Domains.Home.DeviceStore` |
 | `Zaik.Home.Entity` | Adapter-neutral identity and typed current-state struct. | Keep as the home-domain entity contract. |
 | `Zaik.Home.World` | Projects adapter payloads into capability-filtered current state. | Keep as the ordinary home reasoning boundary. |

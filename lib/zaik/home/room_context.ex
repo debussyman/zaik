@@ -65,7 +65,7 @@ defmodule Zaik.Home.RoomContext do
         areas: areas,
         manual_overrides: manual_overrides,
         manual_override: List.first(manual_overrides),
-        occupancy: occupancy(entities),
+        occupancy: occupancy(entities, areas, opts),
         environment: environment,
         entities: entities,
         history: history
@@ -84,7 +84,24 @@ defmodule Zaik.Home.RoomContext do
 
   defp expand_area_entities(matched, _areas, _world_opts), do: matched
 
-  defp occupancy(entities) do
+  defp occupancy(entities, [area], opts) do
+    tracker = Keyword.get(opts, :occupancy_tracker, Zaik.Home.OccupancyTracker)
+
+    if process_available?(tracker) do
+      case Zaik.Home.OccupancyTracker.status(area, tracker) do
+        %{status: status} = occupancy when status != "unknown" -> occupancy
+        _ -> raw_occupancy(entities)
+      end
+    else
+      raw_occupancy(entities)
+    end
+  catch
+    :exit, _reason -> raw_occupancy(entities)
+  end
+
+  defp occupancy(entities, _areas, _opts), do: raw_occupancy(entities)
+
+  defp raw_occupancy(entities) do
     observations =
       Enum.flat_map(entities, fn entity ->
         case get_in(entity, [:state, "presence", :detected]) do

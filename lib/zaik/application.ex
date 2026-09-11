@@ -27,6 +27,7 @@ defmodule Zaik.Application do
       domain_child(:home, Zaik.Home.EventBus),
       domain_child(:home, Zaik.Home.DeviceStore),
       domain_child(:home, home_history_child()),
+      domain_child(:home, occupancy_tracker_child()),
       domain_child(:home, device_preset_store_child()),
       domain_child(:home, home_action_ledger_child()),
       domain_child(:home, home_action_verifier_child()),
@@ -76,6 +77,14 @@ defmodule Zaik.Application do
 
     if config.enabled do
       {Zaik.Home.HistoryStore, Map.to_list(config)}
+    end
+  end
+
+  defp occupancy_tracker_child do
+    config = Zaik.Home.Autonomy.Engine.config()
+
+    if config.enabled do
+      {Zaik.Home.OccupancyTracker, absence_debounce_ms: config.occupancy_absence_debounce_ms}
     end
   end
 

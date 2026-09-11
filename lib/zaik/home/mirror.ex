@@ -15,6 +15,7 @@ defmodule Zaik.Home.Mirror do
     :temp_dir,
     :clock,
     :device_store,
+    :occupancy_tracker,
     :history_store,
     :telemetry_store,
     :home_db_path,
@@ -67,6 +68,12 @@ defmodule Zaik.Home.Mirror do
            start_child(
              supervisor,
              {Zaik.Home.DeviceStore, name: nil, clock: clock_provider, event_bus: false}
+           ),
+         {:ok, occupancy_tracker} <-
+           start_child(
+             supervisor,
+             {Zaik.Home.OccupancyTracker,
+              name: nil, event_bus: false, clock: clock_provider, absence_debounce_ms: 300_000}
            ),
          {:ok, history_store} <-
            start_child(
@@ -132,6 +139,7 @@ defmodule Zaik.Home.Mirror do
          temp_dir: temp_dir,
          clock: clock,
          device_store: device_store,
+         occupancy_tracker: occupancy_tracker,
          history_store: history_store,
          telemetry_store: telemetry_store,
          home_db_path: paths.home,
@@ -151,6 +159,7 @@ defmodule Zaik.Home.Mirror do
       %{
         clock: {Zaik.Home.Mirror.Clock, mirror.clock},
         device_store: mirror.device_store,
+        occupancy_tracker: mirror.occupancy_tracker,
         preset_store: mirror.preset_store,
         manual_override_store: mirror.manual_override_store,
         history_store: mirror.history_store,
