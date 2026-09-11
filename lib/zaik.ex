@@ -101,6 +101,25 @@ defmodule Zaik do
     do: Zaik.Home.Autonomy.DecisionStore.recent(limit)
 
   @doc """
+  Create an expiring manual-override lease that suppresses background autonomy
+  for an area (or `home`).
+  """
+  def create_home_manual_override(scope, attrs \\ %{}),
+    do: Zaik.Home.Autonomy.ManualOverrideStore.create(scope, attrs)
+
+  @doc """
+  Return active manual overrides for an area at the current time.
+  """
+  def home_manual_overrides(scope, opts \\ []),
+    do: Zaik.Home.Autonomy.ManualOverrideStore.active(scope, opts)
+
+  @doc """
+  Cancel an active manual override while retaining its audit record.
+  """
+  def cancel_home_manual_override(id, cancelled_by \\ "operator"),
+    do: Zaik.Home.Autonomy.ManualOverrideStore.cancel(id, cancelled_by)
+
+  @doc """
   Return latest known devices that expose a presence field.
   """
   def presence_devices, do: Zaik.Home.DeviceStore.presence_devices()

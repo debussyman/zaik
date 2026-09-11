@@ -10,8 +10,14 @@ defmodule Zaik.Home.AutonomyEngineTest do
     {:ok, decisions} =
       start_supervised({Zaik.Home.Autonomy.DecisionStore, name: nil, db_path: ":memory:"})
 
+    {:ok, overrides} =
+      start_supervised({Zaik.Home.Autonomy.ManualOverrideStore, name: nil, db_path: ":memory:"})
+
     {:ok, engine} =
-      start_supervised({Zaik.Home.Autonomy.Engine, name: nil, enabled: true, mode: :shadow})
+      start_supervised(
+        {Zaik.Home.Autonomy.Engine,
+         name: nil, enabled: true, mode: :shadow, manual_override_store: overrides}
+      )
 
     sensor_metadata = %{
       "ieee_address" => "sensor",
@@ -59,6 +65,7 @@ defmodule Zaik.Home.AutonomyEngineTest do
       devices: devices,
       history: history,
       decisions: decisions,
+      overrides: overrides,
       engine: engine
     }
   end
@@ -141,6 +148,38 @@ defmodule Zaik.Home.AutonomyEngineTest do
     end)
 
     assert length(Zaik.Home.Autonomy.DecisionStore.recent(20, context.decisions)) == 1
+  end
+
+  test "active manual override is included in evidence and suppresses background policy",
+       context do
+    clock = {Zaik.Home.Mirror.Clock, context.clock}
+
+    assert {:ok, lease} =
+             Zaik.Home.Autonomy.ManualOverrideStore.create(
+               "lily_bedroom",
+               %{owner: "parent", reason: "keep blinds closed", ttl_seconds: 600},
+               [clock: clock],
+               context.overrides
+             )
+
+    assert {:ok, decision} =
+             Zaik.Home.Autonomy.Engine.evaluate(
+               "lily",
+               [
+                 clock: clock,
+                 device_store: context.devices,
+                 history_store: context.history,
+                 decision_store: context.decisions,
+                 manual_override_store: context.overrides,
+                 environment_config: %{utc_offset_minutes: 0}
+               ],
+               context.engine
+             )
+
+    assert decision.status == "no_candidates"
+    assert decision.candidates == []
+    assert [%{id: id, owner: "parent"}] = decision.context.manual_overrides
+    assert id == lease.id
   end
 
   test "active execution is impossible in the shadow-only engine", context do

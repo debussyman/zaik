@@ -176,7 +176,8 @@ from raw rows.
 - [ ] Derive solar phase from sunrise/sunset and derive a configured season;
   retain the source and timestamp for each fact. Meteorological season and an
   explicitly labeled configured-hours day/night phase are implemented first.
-- [ ] Add manual-override state with owner, scope, reason, start, and expiry.
+- [x] Add durable manual-override leases with owner, area/home scope, optional
+  capability, reason, start, expiry, cancellation audit, and context evidence.
 - [x] Expose one generic typed `get_area_context` tool for an area and requested
   historical facts.
 - [x] Emit accepted canonical state-change events through a monitored local bus
@@ -281,7 +282,8 @@ Goal: choose one explainable desired state when policies and people disagree.
 - [x] Record selected and suppressed candidates with expired, equivalent, or
   conflicting reasons.
 - [ ] Add a desired-state store with source, priority, lease/expiry, and policy
-  fingerprint.
+  fingerprint. Durable manual-override leases and policy suppression are in
+  place; selected policy desired states are not yet persisted separately.
 - [x] Diff selected desired state against fresh canonical observations, blocking
   missing or stale state.
 - [x] Skip converged targets and emit inert action arguments only for unresolved

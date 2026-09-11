@@ -31,6 +31,7 @@ defmodule Zaik.Application do
       domain_child(:home, home_action_ledger_child()),
       domain_child(:home, home_action_verifier_child()),
       domain_child(:home, autonomy_decision_store_child()),
+      domain_child(:home, autonomy_manual_override_store_child()),
       domain_child(:home, autonomy_engine_child()),
       domain_child(:home, alerts_rule_store_child()),
       domain_child(:home, alerts_engine_child()),
@@ -107,6 +108,14 @@ defmodule Zaik.Application do
 
     if config.enabled do
       {Zaik.Home.Autonomy.DecisionStore, db_path: config.decision_db_path}
+    end
+  end
+
+  defp autonomy_manual_override_store_child do
+    config = Zaik.Home.Autonomy.Engine.config()
+
+    if config.enabled do
+      {Zaik.Home.Autonomy.ManualOverrideStore, db_path: config.decision_db_path}
     end
   end
 

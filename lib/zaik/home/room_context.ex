@@ -57,10 +57,14 @@ defmodule Zaik.Home.RoomContext do
           config: Keyword.get(opts, :environment_config, %{})
         )
 
+      manual_overrides = active_manual_overrides(areas, clock, opts)
+
       context = %{
         query: query,
         generated_at: DateTime.to_iso8601(now),
         areas: areas,
+        manual_overrides: manual_overrides,
+        manual_override: List.first(manual_overrides),
         occupancy: occupancy(entities),
         environment: environment,
         entities: entities,
@@ -103,6 +107,20 @@ defmodule Zaik.Home.RoomContext do
     }
   end
 
+  defp active_manual_overrides(areas, clock, opts) do
+    store = Keyword.get(opts, :manual_override_store, Zaik.Home.Autonomy.ManualOverrideStore)
+
+    if process_available?(store) do
+      areas
+      |> Enum.flat_map(&Zaik.Home.Autonomy.ManualOverrideStore.active(&1, [clock: clock], store))
+      |> Enum.uniq_by(& &1.id)
+    else
+      []
+    end
+  catch
+    :exit, _reason -> []
+  end
+
   defp history_summary(primary_query, fallback_query, capability, opts) do
     case Zaik.Home.HistorySummary.summarize(primary_query, capability, opts) do
       {:ok, %{status: "no_data"}} when primary_query != fallback_query ->
@@ -122,6 +140,10 @@ defmodule Zaik.Home.RoomContext do
     |> then(&:crypto.hash(:sha256, &1))
     |> Base.encode16(case: :lower)
   end
+
+  defp process_available?(server) when is_pid(server), do: Process.alive?(server)
+  defp process_available?(server) when is_atom(server), do: not is_nil(Process.whereis(server))
+  defp process_available?(_server), do: false
 
   defp put_if(opts, _key, nil), do: opts
   defp put_if(opts, key, value), do: Keyword.put(opts, key, value)

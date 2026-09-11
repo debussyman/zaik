@@ -128,7 +128,13 @@ defmodule Zaik.Home.Autonomy.Engine do
                  "illuminance",
                  "presence"
                ]),
-             environment_config: Keyword.get(opts, :environment_config, %{})
+             environment_config: Keyword.get(opts, :environment_config, %{}),
+             manual_override_store:
+               Keyword.get(
+                 opts,
+                 :manual_override_store,
+                 Map.get(cfg, :manual_override_store, Zaik.Home.Autonomy.ManualOverrideStore)
+               )
            ),
          {:ok, candidates} <- evaluate_policies(context, opts, clock) do
       arbitration =

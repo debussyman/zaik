@@ -291,6 +291,7 @@ defmodule Zaik.Home.Mirror.Evals do
             device_store: context.device_store,
             history_store: context.history_store,
             decision_store: decision_store,
+            manual_override_store: context.manual_override_store,
             environment_config: %{utc_offset_minutes: 0},
             policy_opts: [maximum_temperature_f: 80.0]
           ],

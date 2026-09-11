@@ -159,6 +159,8 @@ defmodule Zaik.Home.Policies.DaylightHarvesting do
     case value(context, :manual_override) do
       nil -> false
       false -> false
+      [] -> false
+      [_ | _] -> true
       %{} = override -> value(override, :active) != false
       _ -> true
     end
