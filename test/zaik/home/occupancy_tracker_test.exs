@@ -18,6 +18,54 @@ defmodule Zaik.Home.OccupancyTrackerTest do
     %{now: now, clock: clock, bus: bus, tracker: tracker}
   end
 
+  test "resolves persisted area when adapter metadata omits it", context do
+    {:ok, devices} = start_supervised({Zaik.Home.DeviceStore, name: nil, event_bus: false})
+    {:ok, history} = start_supervised({Zaik.Home.HistoryStore, name: nil, db_path: ":memory:"})
+
+    Zaik.Home.DeviceStore.upsert_device(
+      devices,
+      "Room sensor",
+      %{"presence" => true},
+      %{"ieee_address" => "area-sensor", "observed_at" => context.now}
+    )
+
+    :ok =
+      Zaik.Home.HistoryStore.record_device(
+        history,
+        "Room sensor",
+        %{"presence" => true},
+        %{"ieee_address" => "area-sensor", "area_id" => "resolved_room"},
+        observed_at: context.now
+      )
+
+    {:ok, tracker} =
+      start_supervised(
+        {Zaik.Home.OccupancyTracker,
+         name: nil,
+         event_bus: context.bus,
+         clock: {Zaik.Home.Mirror.Clock, context.clock},
+         device_store: devices,
+         identity_store: history},
+        id: :resolved_area_tracker
+      )
+
+    Zaik.Home.EventBus.publish(
+      %{
+        type: :device_observed,
+        device: "Room sensor",
+        payload: %{"presence" => true},
+        metadata: %{},
+        changed_keys: ["presence"],
+        observed_at: context.now
+      },
+      context.bus
+    )
+
+    assert_eventually(fn ->
+      Zaik.Home.OccupancyTracker.status("resolved_room", tracker).status == "occupied"
+    end)
+  end
+
   test "presence transitions through entered, possibly absent, and debounced vacant", context do
     publish(context, "sensor-1", true)
 

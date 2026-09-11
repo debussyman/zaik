@@ -33,6 +33,8 @@ defmodule Zaik.Home.OccupancyTracker do
        event_bus: bus,
        clock: Keyword.get(opts, :clock),
        absence_debounce_ms: Keyword.get(opts, :absence_debounce_ms, 5 * 60_000),
+       device_store: Keyword.get(opts, :device_store, Zaik.Home.DeviceStore),
+       identity_store: Keyword.get(opts, :identity_store, Zaik.Home.HistoryStore),
        areas: %{},
        sensors: %{},
        generations: %{}
@@ -80,7 +82,7 @@ defmodule Zaik.Home.OccupancyTracker do
   def handle_info(_message, state), do: {:noreply, state}
 
   defp observe(state, event, detected) do
-    area = event_area(event)
+    area = event_area(event, state)
     device = normalize(event.device)
     observed_at = format_time(Map.get(event, :observed_at), state.clock)
 
@@ -169,13 +171,24 @@ defmodule Zaik.Home.OccupancyTracker do
     end
   end
 
-  defp event_area(event) do
+  defp event_area(event, state) do
     metadata = Map.get(event, :metadata, %{})
 
     case Map.get(metadata, "area_id") || Map.get(metadata, :area_id) do
-      area when is_binary(area) and area != "" -> normalize(area)
-      _ -> normalize(event.device)
+      area when is_binary(area) and area != "" ->
+        normalize(area)
+
+      _ ->
+        case Zaik.Home.World.get(event.device,
+               device_store: state.device_store,
+               identity_store: state.identity_store
+             ) do
+          {:ok, %{area_id: area}} when is_binary(area) and area != "" -> normalize(area)
+          _ -> normalize(event.device)
+        end
     end
+  catch
+    :exit, _reason -> normalize(event.device)
   end
 
   defp area_detected?(state, area),

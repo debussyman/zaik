@@ -69,16 +69,21 @@ defmodule Zaik.Home.Mirror do
              supervisor,
              {Zaik.Home.DeviceStore, name: nil, clock: clock_provider, event_bus: false}
            ),
-         {:ok, occupancy_tracker} <-
-           start_child(
-             supervisor,
-             {Zaik.Home.OccupancyTracker,
-              name: nil, event_bus: false, clock: clock_provider, absence_debounce_ms: 300_000}
-           ),
          {:ok, history_store} <-
            start_child(
              supervisor,
              {Zaik.Home.HistoryStore, name: nil, db_path: paths.home}
+           ),
+         {:ok, occupancy_tracker} <-
+           start_child(
+             supervisor,
+             {Zaik.Home.OccupancyTracker,
+              name: nil,
+              event_bus: false,
+              clock: clock_provider,
+              absence_debounce_ms: 300_000,
+              device_store: device_store,
+              identity_store: history_store}
            ),
          {:ok, telemetry_store} <-
            start_child(
