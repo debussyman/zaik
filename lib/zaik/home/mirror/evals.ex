@@ -517,6 +517,7 @@ defmodule Zaik.Home.Mirror.Evals do
            %{
              mode: :shadow,
              status: "proposed",
+             candidates: [%{confidence: 0.7}],
              reconciliation: %{actions: [_, _]}
            }},
           run.result

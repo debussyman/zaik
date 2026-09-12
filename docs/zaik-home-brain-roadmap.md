@@ -246,10 +246,10 @@ states without directly controlling devices.
 - [x] Introduce a hot-load-friendly `Zaik.Home.Policy` behaviour with descriptors,
   dependencies, candidate-goal output, and validation contracts.
 - [x] Add an uncached runtime policy registry and fingerprints.
-- [ ] Define a candidate-goal schema containing scope, desired state, priority,
-  evidence, confidence, expiry, reason, and policy version. The initial typed
-  schema, capability validation, stable IDs, and fingerprints are implemented;
-  confidence calibration remains.
+- [x] Define a candidate-goal schema containing scope, desired state, priority,
+  evidence, calibrated confidence, expiry, reason, and policy version, with
+  capability validation, stable IDs, and fingerprints. Confidence deterministically
+  breaks ties only within the same household priority.
 - [ ] Implement initial generic policies:
   - [x] shadow-first daylight harvesting;
   - [ ] bedtime/privacy comfort;

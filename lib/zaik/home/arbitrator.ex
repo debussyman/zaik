@@ -54,10 +54,10 @@ defmodule Zaik.Home.Arbitrator do
     end)
   end
 
-  # Descending priority, then deterministic policy/candidate identity.
+  # Descending priority and confidence, then deterministic policy/candidate identity.
   defp rank(entry) do
-    {-entry.candidate.priority, entry.candidate.policy_id, entry.candidate.id,
-     inspect(entry.action.target)}
+    {-entry.candidate.priority, -entry.candidate.confidence, entry.candidate.policy_id,
+     entry.candidate.id, inspect(entry.action.target)}
   end
 
   defp selected_entry(entry) do
@@ -66,6 +66,7 @@ defmodule Zaik.Home.Arbitrator do
       policy_id: entry.candidate.policy_id,
       policy_version: entry.candidate.policy_version,
       priority: entry.candidate.priority,
+      confidence: entry.candidate.confidence,
       evidence: entry.candidate.evidence,
       reason: entry.candidate.reason,
       expires_at: entry.candidate.expires_at

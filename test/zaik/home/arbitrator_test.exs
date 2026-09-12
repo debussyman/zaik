@@ -31,6 +31,17 @@ defmodule Zaik.Home.ArbitratorTest do
     assert byte_size(result.fingerprint) == 64
   end
 
+  test "confidence breaks ties within the same household priority", %{clock: clock} do
+    low = candidate("policy_a", 40, %{"state" => "OPEN"}, clock, 120, 0.4)
+    high = candidate("policy_b", 40, %{"state" => "CLOSE"}, clock, 120, 0.9)
+
+    result = Zaik.Home.Arbitrator.arbitrate([low, high], clock: {Zaik.Home.Mirror.Clock, clock})
+
+    assert [%{policy_id: "policy_b", confidence: 0.9}] = result.selected
+    assert [%{candidate_id: low_id, reason: "conflicting_lower_priority"}] = result.suppressed
+    assert low_id == low.id
+  end
+
   test "equivalent targets coalesce and expired candidates cannot win", %{clock: clock} do
     first = candidate("policy_a", 40, %{"state" => "OPEN"}, clock)
     equivalent = candidate("policy_b", 30, %{"position" => 0}, clock)
@@ -46,7 +57,7 @@ defmodule Zaik.Home.ArbitratorTest do
     assert Enum.any?(result.suppressed, &(&1.reason == "expired"))
   end
 
-  defp candidate(policy_id, priority, target, clock, ttl \\ 120) do
+  defp candidate(policy_id, priority, target, clock, ttl \\ 120, confidence \\ 0.9) do
     now = Zaik.Home.Mirror.Clock.now(clock)
 
     Zaik.Home.GoalCandidate.new!(%{
@@ -54,6 +65,7 @@ defmodule Zaik.Home.ArbitratorTest do
       policy_version: "1",
       scope: "lily_bedroom",
       priority: priority,
+      confidence: confidence,
       desired_state: [
         %{
           entity_id: "left",

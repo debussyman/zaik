@@ -34,6 +34,7 @@ defmodule Zaik.Home.Policies.DaylightHarvesting do
     if eligible? do
       now = Zaik.Time.now(Keyword.get(opts, :clock))
       policy = descriptor()
+      confidence = confidence(context)
 
       desired_state =
         Enum.map(covers, fn entity ->
@@ -51,6 +52,7 @@ defmodule Zaik.Home.Policies.DaylightHarvesting do
           policy_version: policy.version,
           scope: scope(context),
           priority: Keyword.get(opts, :priority, policy.priority),
+          confidence: confidence,
           desired_state: desired_state,
           evidence: %{
             snapshot_id: value(context, :snapshot_id),
@@ -58,6 +60,8 @@ defmodule Zaik.Home.Policies.DaylightHarvesting do
             solar_phase: solar_phase(context),
             illuminance_lux: illuminance,
             temperature_f: temperature_f,
+            confidence: confidence,
+            confidence_source: "minimum_of_occupancy_and_temperature_history_quality",
             closed_cover_ids: Enum.map(covers, &value(&1, :id)),
             thresholds: %{
               low_light_lux: cfg.low_light_lux,
@@ -78,6 +82,26 @@ defmodule Zaik.Home.Policies.DaylightHarvesting do
     else
       {:ok, []}
     end
+  end
+
+  defp confidence(context) do
+    occupancy = value(context, :occupancy) || %{}
+    occupancy_confidence = value(occupancy, :confidence) || 0.7
+    history = value(context, :history) || %{}
+    temperature = Map.get(history, "temperature_f") || Map.get(history, :temperature_f) || %{}
+    samples = value(temperature, :sample_count) || 0
+    freshness = value(temperature, :freshness_seconds)
+
+    history_confidence =
+      cond do
+        not is_integer(freshness) -> 0.4
+        freshness > 900 -> 0.5
+        samples < 2 -> 0.6
+        samples < 4 -> 0.8
+        true -> 0.95
+      end
+
+    min(occupancy_confidence, history_confidence) |> Float.round(3)
   end
 
   defp config(opts) do

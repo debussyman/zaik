@@ -11,6 +11,7 @@ defmodule Zaik.Home.GoalCandidate do
     :policy_version,
     :scope,
     :priority,
+    :confidence,
     :desired_state,
     :evidence,
     :reason,
@@ -26,6 +27,7 @@ defmodule Zaik.Home.GoalCandidate do
           policy_version: String.t(),
           scope: String.t(),
           priority: non_neg_integer(),
+          confidence: float(),
           desired_state: [map()],
           evidence: map(),
           reason: String.t(),
@@ -44,6 +46,7 @@ defmodule Zaik.Home.GoalCandidate do
          {:ok, scope} <- required_string(attrs, :scope),
          {:ok, reason} <- required_string(attrs, :reason),
          {:ok, priority} <- priority(value(attrs, :priority)),
+         {:ok, confidence} <- confidence(value(attrs, :confidence)),
          {:ok, desired_state} <- desired_state(value(attrs, :desired_state), capability_opts),
          evidence when is_map(evidence) <- value(attrs, :evidence),
          {:ok, created_at} <- datetime(value(attrs, :created_at), :invalid_created_at),
@@ -54,6 +57,7 @@ defmodule Zaik.Home.GoalCandidate do
         policy_version: policy_version,
         scope: scope,
         priority: priority,
+        confidence: confidence,
         desired_state: desired_state,
         evidence: evidence,
         reason: reason,
@@ -125,6 +129,11 @@ defmodule Zaik.Home.GoalCandidate do
 
   defp priority(value) when is_integer(value) and value in 0..100, do: {:ok, value}
   defp priority(_value), do: {:error, :invalid_priority}
+
+  defp confidence(value) when is_number(value) and value >= 0 and value <= 1,
+    do: {:ok, Float.round(value / 1, 3)}
+
+  defp confidence(_value), do: {:error, :invalid_confidence}
 
   defp required_string(map, key) do
     case value(map, key) do

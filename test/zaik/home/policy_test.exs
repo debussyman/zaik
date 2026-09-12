@@ -28,6 +28,7 @@ defmodule Zaik.Home.PolicyTest do
     assert candidate.policy_id == "daylight_harvesting"
     assert candidate.scope == "lily_bedroom"
     assert candidate.priority == 40
+    assert candidate.confidence == 0.8
     assert candidate.evidence.snapshot_id == "snapshot-1"
     assert candidate.evidence.illuminance_lux == 18
     assert candidate.evidence.temperature_f == 72.0
@@ -149,6 +150,30 @@ defmodule Zaik.Home.PolicyTest do
              Zaik.Home.Policies.Registry.validate(modules: [InvalidPolicy])
   end
 
+  test "candidate validation requires calibrated confidence", %{clock: clock} do
+    now = Zaik.Home.Mirror.Clock.now(clock)
+
+    attrs = %{
+      policy_id: "test",
+      policy_version: "1",
+      scope: "room",
+      priority: 1,
+      confidence: 1.1,
+      desired_state: [
+        %{entity_id: "blind", device: "Blind", capability: "cover", target: %{"position" => 0}}
+      ],
+      evidence: %{},
+      reason: "test",
+      created_at: now,
+      expires_at: DateTime.add(now, 60, :second)
+    }
+
+    assert {:error, :invalid_confidence} = Zaik.Home.GoalCandidate.new(attrs)
+
+    assert {:error, :invalid_confidence} =
+             Zaik.Home.GoalCandidate.new(Map.delete(attrs, :confidence))
+  end
+
   test "candidate validation rejects unknown capabilities", %{clock: clock} do
     now = Zaik.Home.Mirror.Clock.now(clock)
 
@@ -158,6 +183,7 @@ defmodule Zaik.Home.PolicyTest do
                policy_version: "1",
                scope: "room",
                priority: 1,
+               confidence: 0.9,
                desired_state: [
                  %{
                    entity_id: "device",
@@ -178,9 +204,16 @@ defmodule Zaik.Home.PolicyTest do
       snapshot_id: "snapshot-1",
       query: "Lily's room",
       areas: ["lily_bedroom"],
-      occupancy: %{status: "occupied"},
+      occupancy: %{status: "occupied", confidence: 0.85},
       environment: %{solar_phase: "day", season: "summer"},
-      history: %{"temperature_f" => %{status: "ok", average: 72.0}},
+      history: %{
+        "temperature_f" => %{
+          status: "ok",
+          average: 72.0,
+          sample_count: 3,
+          freshness_seconds: 60
+        }
+      },
       entities: [
         %{
           id: "sensor",
