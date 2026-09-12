@@ -102,6 +102,24 @@ defmodule Zaik do
   def home_autonomy_status, do: Zaik.Home.Autonomy.Engine.status()
 
   @doc """
+  Pause event and explicit home-autonomy evaluation until resumed.
+  """
+  def pause_home_autonomy(reason \\ "operator pause", paused_by \\ "operator"),
+    do: Zaik.Home.Autonomy.Engine.pause(reason, paused_by)
+
+  @doc """
+  Resume home-autonomy evaluation after an operator pause.
+  """
+  def resume_home_autonomy(resumed_by \\ "operator"),
+    do: Zaik.Home.Autonomy.Engine.resume(resumed_by)
+
+  @doc """
+  Change the runtime autonomy mode. Only off, shadow, and advisory are accepted.
+  """
+  def set_home_autonomy_mode(mode, changed_by \\ "operator"),
+    do: Zaik.Home.Autonomy.Engine.set_mode(mode, changed_by)
+
+  @doc """
   Return recent durable home-autonomy decisions.
   """
   def home_autonomy_decisions(limit \\ 20),

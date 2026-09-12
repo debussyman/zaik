@@ -41,6 +41,15 @@ defmodule Zaik.Home.Autonomy.Engine do
 
   def status(server \\ __MODULE__), do: GenServer.call(server, :status)
 
+  def pause(reason, paused_by \\ "operator", server \\ __MODULE__),
+    do: GenServer.call(server, {:pause, to_string(reason), to_string(paused_by)})
+
+  def resume(resumed_by \\ "operator", server \\ __MODULE__),
+    do: GenServer.call(server, {:resume, to_string(resumed_by)})
+
+  def set_mode(mode, changed_by \\ "operator", server \\ __MODULE__),
+    do: GenServer.call(server, {:set_mode, mode, to_string(changed_by)})
+
   @impl true
   def init(opts) do
     cfg = Map.merge(config(), Map.new(opts))
@@ -57,11 +66,18 @@ defmodule Zaik.Home.Autonomy.Engine do
        pending: %{},
        running: %{},
        last_evaluated_ms: %{},
-       last_decision: nil
+       last_decision: nil,
+       pause: nil,
+       mode_changed_by: "configuration"
      }}
   end
 
   @impl true
+  def handle_call({:evaluate, _query, _request_opts}, _from, %{pause: pause} = state)
+      when not is_nil(pause) do
+    {:reply, {:error, {:autonomy_paused, pause}}, state}
+  end
+
   def handle_call({:evaluate, query, request_opts}, _from, state) do
     mode = Keyword.get(request_opts, :mode, state.config.mode)
     reply = evaluate_request(query, mode, state.config, request_opts)
@@ -73,6 +89,9 @@ defmodule Zaik.Home.Autonomy.Engine do
     {:reply,
      %{
        mode: state.config.mode,
+       mode_changed_by: state.mode_changed_by,
+       paused: not is_nil(state.pause),
+       pause: state.pause,
        subscribe_events: state.config.subscribe_events,
        pending_count: map_size(state.pending),
        running_count: map_size(state.running),
@@ -80,8 +99,36 @@ defmodule Zaik.Home.Autonomy.Engine do
      }, state}
   end
 
+  def handle_call({:pause, reason, paused_by}, _from, state) do
+    pause = %{
+      reason: if(String.trim(reason) == "", do: "operator pause", else: String.trim(reason)),
+      paused_by: paused_by,
+      paused_at: state.config |> Map.get(:clock) |> Zaik.Time.now() |> DateTime.to_iso8601()
+    }
+
+    {:reply, {:ok, pause}, %{state | pause: pause}}
+  end
+
+  def handle_call({:resume, resumed_by}, _from, state) do
+    result = %{
+      resumed_by: resumed_by,
+      resumed_at: state.config |> Map.get(:clock) |> Zaik.Time.now() |> DateTime.to_iso8601()
+    }
+
+    {:reply, {:ok, result}, %{state | pause: nil}}
+  end
+
+  def handle_call({:set_mode, mode, changed_by}, _from, state)
+      when mode in @safe_modes or mode == :off do
+    {:reply, {:ok, mode},
+     %{state | config: Map.put(state.config, :mode, mode), mode_changed_by: changed_by}}
+  end
+
+  def handle_call({:set_mode, mode, _changed_by}, _from, state),
+    do: {:reply, {:error, {:execution_mode_not_enabled, mode}}, state}
+
   @impl true
-  def handle_info({:zaik_home_event, %{type: :device_observed} = event}, state) do
+  def handle_info({:zaik_home_event, %{type: :device_observed} = event}, %{pause: nil} = state) do
     if relevant_event?(event) do
       {key, query} = event_scope(event, state.config)
 
@@ -91,8 +138,18 @@ defmodule Zaik.Home.Autonomy.Engine do
     end
   end
 
+  def handle_info({:zaik_home_event, %{type: :device_observed}}, state), do: {:noreply, state}
+
+  def handle_info({:zaik_home_event, %{type: :occupancy_changed}}, %{pause: pause} = state)
+      when not is_nil(pause),
+      do: {:noreply, state}
+
   def handle_info({:zaik_home_event, %{type: :occupancy_changed, area: area} = event}, state) do
     {:noreply, schedule_event(state, area, area, Map.put(event, :device, area))}
+  end
+
+  def handle_info({:evaluate_event, key}, %{pause: pause} = state) when not is_nil(pause) do
+    {:noreply, update_in(state.pending, &Map.delete(&1, key))}
   end
 
   def handle_info({:evaluate_event, key}, state) do

@@ -282,6 +282,33 @@ defmodule Zaik.Home.AutonomyEngineTest do
     assert Zaik.Home.Autonomy.Engine.status(event_engine).last_decision.status == "no_candidates"
   end
 
+  test "operator pause, resume, and safe runtime modes are explicit", context do
+    assert {:ok, pause} = Zaik.Home.Autonomy.Engine.pause("maintenance", "ryan", context.engine)
+    assert pause.reason == "maintenance"
+    assert pause.paused_by == "ryan"
+
+    status = Zaik.Home.Autonomy.Engine.status(context.engine)
+    assert status.paused == true
+    assert status.pause == pause
+
+    assert {:error, {:autonomy_paused, ^pause}} =
+             Zaik.Home.Autonomy.Engine.evaluate("lily", [], context.engine)
+
+    assert {:ok, :advisory} =
+             Zaik.Home.Autonomy.Engine.set_mode(:advisory, "ryan", context.engine)
+
+    assert {:error, {:execution_mode_not_enabled, :active}} =
+             Zaik.Home.Autonomy.Engine.set_mode(:active, "ryan", context.engine)
+
+    assert {:ok, %{resumed_by: "ryan"}} =
+             Zaik.Home.Autonomy.Engine.resume("ryan", context.engine)
+
+    status = Zaik.Home.Autonomy.Engine.status(context.engine)
+    assert status.paused == false
+    assert status.mode == :advisory
+    assert status.mode_changed_by == "ryan"
+  end
+
   test "active execution is impossible in the shadow-only engine", context do
     assert {:error, {:execution_mode_not_enabled, :active}} =
              Zaik.Home.Autonomy.Engine.evaluate(

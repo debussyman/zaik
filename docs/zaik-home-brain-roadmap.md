@@ -334,7 +334,9 @@ Goal: run observation-to-reconciliation continuously under OTP supervision.
 - [ ] Correlate every physical action with its originating decision, goal,
   policy, and observation snapshot.
 - [ ] Add watchdog recovery for stuck evaluations and staged plans.
-- [ ] Expose operator status, pause/resume, suppression, and decision inspection.
+- [x] Expose operator status, global pause/resume, safe runtime mode changes,
+  manual suppression leases, desired-state inspection, and recent decisions;
+  canary/active modes remain impossible.
 - [ ] Add alerts for repeated non-convergence, oscillation prevention, stale
   critical inputs, and telemetry failures, with cooldown/debounce.
 

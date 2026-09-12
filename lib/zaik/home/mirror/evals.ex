@@ -32,7 +32,8 @@ defmodule Zaik.Home.Mirror.Evals do
       %{name: "occupancy_absence_requires_virtual_settle_window", kind: :occupancy_debounce},
       %{name: "goal_context_gathers_fresh_independent_evidence", kind: :goal_context},
       %{name: "generic_preset_capture_and_apply_use_mirror_executor", kind: :preset_tools},
-      %{name: "explicit_action_creates_temporary_override", kind: :explicit_override}
+      %{name: "explicit_action_creates_temporary_override", kind: :explicit_override},
+      %{name: "operator_pause_blocks_autonomy_evaluation", kind: :operator_pause}
     ]
   end
 
@@ -249,6 +250,52 @@ defmodule Zaik.Home.Mirror.Evals do
       fn run ->
         run.result == 1 and run.report.passed? and run.report.side_effect_count == 0 and
           Enum.map(run.report.reports, & &1.disposition) == ["accepted", "stale"]
+      end
+    )
+  end
+
+  defp run_case(%{kind: :operator_pause} = definition) do
+    scenario = Scenarios.lily_with_history_and_telemetry(id: definition.name)
+
+    finish(
+      definition,
+      Runner.run(scenario, fn mirror, context ->
+        {:ok, engine} =
+          DynamicSupervisor.start_child(
+            mirror.supervisor,
+            {Zaik.Home.Autonomy.Engine,
+             name: nil,
+             enabled: true,
+             mode: :shadow,
+             subscribe_events: false,
+             event_bus: false,
+             task_supervisor: context.task_supervisor,
+             clock: context.clock,
+             desired_state_store: context.desired_state_store,
+             manual_override_store: context.manual_override_store}
+          )
+
+        pause = Zaik.Home.Autonomy.Engine.pause("mirror maintenance", "operator", engine)
+        blocked = Zaik.Home.Autonomy.Engine.evaluate("lily", [], engine)
+        active = Zaik.Home.Autonomy.Engine.set_mode(:active, "operator", engine)
+        advisory = Zaik.Home.Autonomy.Engine.set_mode(:advisory, "operator", engine)
+        resumed = Zaik.Home.Autonomy.Engine.resume("operator", engine)
+
+        %{
+          pause: pause,
+          blocked: blocked,
+          active: active,
+          advisory: advisory,
+          resumed: resumed,
+          status: Zaik.Home.Autonomy.Engine.status(engine)
+        }
+      end),
+      fn run ->
+        match?({:ok, %{reason: "mirror maintenance"}}, run.result.pause) and
+          match?({:error, {:autonomy_paused, _}}, run.result.blocked) and
+          run.result.active == {:error, {:execution_mode_not_enabled, :active}} and
+          run.result.advisory == {:ok, :advisory} and run.result.status.paused == false and
+          run.result.status.mode == :advisory and run.report.side_effect_count == 0
       end
     )
   end
