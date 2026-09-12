@@ -177,8 +177,18 @@ defmodule Zaik.Home.Autonomy.Engine do
         created_at: now
       }
 
-      case record_decision(decision, Keyword.get(opts, :decision_store)) do
-        :ok -> {:ok, decision}
+      desired_store =
+        Keyword.get(
+          opts,
+          :desired_state_store,
+          Map.get(cfg, :desired_state_store, Zaik.Home.Autonomy.DesiredStateStore)
+        )
+
+      with :ok <- record_desired_states(decision, desired_store),
+           :ok <- record_decision(decision, Keyword.get(opts, :decision_store)) do
+        {:ok, decision}
+      else
+        {:error, {:desired_state_not_recorded, _} = reason} -> {:error, reason}
         {:error, reason} -> {:error, {:decision_not_recorded, reason}}
       end
     end
@@ -198,6 +208,22 @@ defmodule Zaik.Home.Autonomy.Engine do
           )
       )
     )
+  end
+
+  defp record_desired_states(_decision, nil), do: :ok
+  defp record_desired_states(_decision, false), do: :ok
+
+  defp record_desired_states(decision, store) do
+    if process_available?(store) do
+      case Zaik.Home.Autonomy.DesiredStateStore.record(decision, store) do
+        {:ok, _rows} -> :ok
+        {:error, reason} -> {:error, {:desired_state_not_recorded, reason}}
+      end
+    else
+      :ok
+    end
+  catch
+    :exit, reason -> {:error, {:desired_state_not_recorded, reason}}
   end
 
   defp record_decision(decision, nil) do

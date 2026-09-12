@@ -496,20 +496,31 @@ defmodule Zaik.Home.Mirror.Evals do
             {Zaik.Home.Autonomy.Engine, name: nil, enabled: true, mode: :shadow}
           )
 
-        Zaik.Home.Autonomy.Engine.evaluate(
-          "lily",
-          [
-            clock: context.clock,
-            device_store: context.device_store,
-            occupancy_tracker: context.occupancy_tracker,
-            history_store: context.history_store,
-            decision_store: decision_store,
-            manual_override_store: context.manual_override_store,
-            environment_config: %{utc_offset_minutes: 0},
-            policy_opts: [maximum_temperature_f: 80.0]
-          ],
-          engine
-        )
+        decision =
+          Zaik.Home.Autonomy.Engine.evaluate(
+            "lily",
+            [
+              clock: context.clock,
+              device_store: context.device_store,
+              occupancy_tracker: context.occupancy_tracker,
+              history_store: context.history_store,
+              decision_store: decision_store,
+              desired_state_store: context.desired_state_store,
+              manual_override_store: context.manual_override_store,
+              environment_config: %{utc_offset_minutes: 0},
+              policy_opts: [maximum_temperature_f: 80.0]
+            ],
+            engine
+          )
+
+        desired =
+          Zaik.Home.Autonomy.DesiredStateStore.active(
+            "lily_bedroom",
+            [clock: context.clock],
+            context.desired_state_store
+          )
+
+        %{decision: decision, desired: desired}
       end),
       fn run ->
         match?(
@@ -520,8 +531,8 @@ defmodule Zaik.Home.Mirror.Evals do
              candidates: [%{confidence: 0.7}],
              reconciliation: %{actions: [_, _]}
            }},
-          run.result
-        ) and run.report.side_effect_count == 0
+          run.result.decision
+        ) and length(run.result.desired) == 2 and run.report.side_effect_count == 0
       end
     )
   end

@@ -13,6 +13,9 @@ defmodule Zaik.Home.AutonomyEngineTest do
     {:ok, overrides} =
       start_supervised({Zaik.Home.Autonomy.ManualOverrideStore, name: nil, db_path: ":memory:"})
 
+    {:ok, desired_states} =
+      start_supervised({Zaik.Home.Autonomy.DesiredStateStore, name: nil, db_path: ":memory:"})
+
     {:ok, engine} =
       start_supervised(
         {Zaik.Home.Autonomy.Engine,
@@ -20,7 +23,8 @@ defmodule Zaik.Home.AutonomyEngineTest do
          enabled: true,
          mode: :shadow,
          occupancy_tracker: false,
-         manual_override_store: overrides}
+         manual_override_store: overrides,
+         desired_state_store: desired_states}
       )
 
     sensor_metadata = %{
@@ -70,6 +74,7 @@ defmodule Zaik.Home.AutonomyEngineTest do
       history: history,
       decisions: decisions,
       overrides: overrides,
+      desired_states: desired_states,
       engine: engine
     }
   end
@@ -106,6 +111,17 @@ defmodule Zaik.Home.AutonomyEngineTest do
     assert stored.snapshot_id == decision.snapshot_id
     assert length(stored.candidates) == 1
     assert length(stored.reconciliation["actions"]) == 2
+
+    assert desired =
+             Zaik.Home.Autonomy.DesiredStateStore.active(
+               "lily_bedroom",
+               [clock: {Zaik.Home.Mirror.Clock, context.clock}],
+               context.desired_states
+             )
+
+    assert length(desired) == 2
+    assert Enum.all?(desired, &(&1.priority_class == "daylight_energy"))
+    assert Enum.all?(desired, &(&1.decision_id == decision.id))
   end
 
   test "accepted relevant events are coalesced through virtual debounce", context do
@@ -125,6 +141,7 @@ defmodule Zaik.Home.AutonomyEngineTest do
          occupancy_tracker: false,
          history_store: context.history,
          decision_store: context.decisions,
+         desired_state_store: context.desired_states,
          environment_config: %{utc_offset_minutes: 0},
          policy_opts: [maximum_temperature_f: 76.0]},
         id: :event_autonomy_engine

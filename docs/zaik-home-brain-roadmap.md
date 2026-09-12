@@ -288,9 +288,9 @@ Goal: choose one explainable desired state when policies and people disagree.
 - [x] Add deterministic priority arbitration per entity capability.
 - [x] Record selected and suppressed candidates with expired, equivalent, or
   conflicting reasons.
-- [ ] Add a desired-state store with source, priority, lease/expiry, and policy
-  fingerprint. Durable manual-override leases and policy suppression are in
-  place; selected policy desired states are not yet persisted separately.
+- [x] Add a bounded durable desired-state lease store with source/version,
+  priority class, confidence, target, evidence, snapshot, expiry, decision ID,
+  and policy-registry fingerprint; conflicting active leases are superseded.
 - [x] Diff selected desired state against fresh canonical observations, blocking
   missing or stale state.
 - [x] Skip converged targets and emit inert action arguments only for unresolved

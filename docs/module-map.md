@@ -138,6 +138,7 @@ Home automation is one optional domain, not the whole harness.
 | `Zaik.Home.Autonomy.Engine` | Supervised shadow/advisory context-policy-arbitration-reconciliation pipeline; active execution is deliberately rejected. | Evolve into the event-driven home autonomy coordinator. |
 | `Zaik.Home.Autonomy.DecisionStore` | SQLite ledger for context snapshots, candidates, arbitration, and reconciliation decisions. | Extend with outcomes, feedback, and operator controls. |
 | `Zaik.Home.Autonomy.ManualOverrideStore` | Durable expiring area/home override leases with ownership, reasons, capability scope, and cancellation audit. | Feed explicit manual actions into leases automatically. |
+| `Zaik.Home.Autonomy.DesiredStateStore` | Bounded durable ledger of selected semantic target leases and supersession history. | Drive restart-safe reconciliation once execution rollout gates exist. |
 | `Zaik.Home.Executor` | Behaviour for adapter execution of validated capability targets. | Keep as the capability executor contract. |
 | `Zaik.Home.Executors.Registry` | Uncached runtime executor discovery. | Keep as the hot-load-friendly executor registry. |
 | `Zaik.Home.ActionLedger` | SQLite request-scoped action idempotency ledger, including later verified-result reconciliation. | Keep in the home execution/policy layer. |

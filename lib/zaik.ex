@@ -108,6 +108,12 @@ defmodule Zaik do
     do: Zaik.Home.Autonomy.DecisionStore.recent(limit)
 
   @doc """
+  Return active durable desired-state leases selected by home arbitration.
+  """
+  def home_desired_states(scope \\ nil, opts \\ []),
+    do: Zaik.Home.Autonomy.DesiredStateStore.active(scope, opts)
+
+  @doc """
   Create an expiring manual-override lease that suppresses background autonomy
   for an area (or `home`).
   """
