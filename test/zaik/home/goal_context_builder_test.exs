@@ -201,6 +201,7 @@ defmodule Zaik.Home.GoalContextBuilderTest do
       history_store: context.history,
       occupancy_tracker: false,
       manual_override_store: false,
+      desired_state_store: false,
       preset_store: context.presets,
       environment_config: %{utc_offset_minutes: 0},
       max_state_age_seconds: 120

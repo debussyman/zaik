@@ -49,6 +49,45 @@ defmodule Zaik.Home.PolicyTest do
            ]
   end
 
+  test "active daylight lease uses release hysteresis and a minimum hold", %{clock: clock} do
+    now = Zaik.Home.Mirror.Clock.now(clock)
+
+    context =
+      room_context()
+      |> put_in([:entities, Access.at(0), :state, "illuminance", :value], 200)
+      |> put_in([:entities, Access.at(1), :state, "cover", :position], 0)
+      |> put_in([:entities, Access.at(2), :state, "cover", :position], 0)
+      |> Map.put(:desired_state_leases, [
+        %{
+          source_id: "daylight_harvesting",
+          capability: "cover",
+          status: "active",
+          created_at: DateTime.to_iso8601(now)
+        }
+      ])
+
+    opts = [clock: {Zaik.Home.Mirror.Clock, clock}]
+
+    assert {:ok, [holding]} = Zaik.Home.Policies.DaylightHarvesting.evaluate(context, opts)
+    assert holding.evidence.phase == "holding"
+    assert holding.evidence.minimum_hold == true
+    assert Enum.all?(holding.desired_state, &(&1.target == %{"position" => 0}))
+
+    Zaik.Home.Mirror.Clock.advance(clock, 61_000)
+    assert {:ok, []} = Zaik.Home.Policies.DaylightHarvesting.evaluate(context, opts)
+
+    within_release_band =
+      put_in(context, [:entities, Access.at(0), :state, "illuminance", :value], 70)
+
+    assert {:ok, [_]} = Zaik.Home.Policies.DaylightHarvesting.evaluate(within_release_band, opts)
+
+    assert {:ok, []} =
+             Zaik.Home.Policies.DaylightHarvesting.evaluate(
+               Map.put(within_release_band, :manual_override, %{active: true}),
+               opts
+             )
+  end
+
   test "daylight harvesting is suppressed by night, heat, vacancy, or override", %{clock: clock} do
     base = room_context()
     opts = [clock: {Zaik.Home.Mirror.Clock, clock}]

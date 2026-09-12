@@ -131,11 +131,17 @@ defmodule Zaik.Home.Policies.Registry do
       match?({:ok, {_class, ^priority}}, Zaik.Home.Priority.validate(priority_class, priority))
 
     dependencies = List.wrap(value(descriptor, :dependencies)) |> Enum.map(&normalize/1)
+    hysteresis = value(descriptor, :hysteresis)
+    minimum_active_seconds = value(descriptor, :minimum_active_seconds)
+    settle_seconds = value(descriptor, :settle_seconds)
+    cooldown_seconds = value(descriptor, :cooldown_seconds)
     mode = value(descriptor, :default_mode)
 
     if id != "" and is_binary(version) and version != "" and is_binary(description) and
          description != "" and is_integer(priority) and priority in 0..100 and priority_valid? and
-         dependencies != [] and Enum.all?(dependencies, &(&1 != "")) and mode in @modes do
+         dependencies != [] and Enum.all?(dependencies, &(&1 != "")) and is_map(hysteresis) and
+         non_negative_integer?(minimum_active_seconds) and non_negative_integer?(settle_seconds) and
+         non_negative_integer?(cooldown_seconds) and mode in @modes do
       {:ok,
        %{
          id: id,
@@ -145,12 +151,18 @@ defmodule Zaik.Home.Policies.Registry do
            elem(Zaik.Home.Priority.validate(priority_class, priority), 1) |> elem(0),
          priority: priority,
          dependencies: dependencies,
+         hysteresis: hysteresis,
+         minimum_active_seconds: minimum_active_seconds,
+         settle_seconds: settle_seconds,
+         cooldown_seconds: cooldown_seconds,
          default_mode: mode
        }}
     else
       {:error, :invalid_descriptor}
     end
   end
+
+  defp non_negative_integer?(value), do: is_integer(value) and value >= 0
 
   defp value(map, key), do: Map.get(map, key) || Map.get(map, to_string(key))
   defp normalize(nil), do: ""

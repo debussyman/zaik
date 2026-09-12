@@ -29,7 +29,14 @@ defmodule Zaik.Home.GoalContextBuilder do
         missing: missing,
         status: if(missing == [], do: "ready", else: "missing_data"),
         built_at: DateTime.to_iso8601(now),
-        fingerprint: fingerprint(contract, evidence, room.occupancy, room.manual_overrides)
+        fingerprint:
+          fingerprint(
+            contract,
+            evidence,
+            room.occupancy,
+            room.manual_overrides,
+            room.desired_state_leases
+          )
       }
 
       missing_result(result, contract.missing_data_policy)
@@ -70,6 +77,7 @@ defmodule Zaik.Home.GoalContextBuilder do
       history_store: Keyword.get(opts, :history_store),
       occupancy_tracker: Keyword.get(opts, :occupancy_tracker),
       manual_override_store: Keyword.get(opts, :manual_override_store),
+      desired_state_store: Keyword.get(opts, :desired_state_store),
       capability_opts: Keyword.get(opts, :capability_opts),
       clock: Keyword.get(opts, :clock),
       window_minutes: Keyword.get(opts, :window_minutes, 180),
@@ -153,13 +161,13 @@ defmodule Zaik.Home.GoalContextBuilder do
     {:error, {:missing_required_observations, Enum.map(result.missing, & &1.requirement), result}}
   end
 
-  defp fingerprint(contract, evidence, occupancy, manual_overrides) do
+  defp fingerprint(contract, evidence, occupancy, manual_overrides, desired_state_leases) do
     stable_evidence =
       Enum.map(evidence, fn item ->
         Map.update(item, :value, nil, &drop_derived_age/1)
       end)
 
-    {contract, stable_evidence, occupancy, manual_overrides}
+    {contract, stable_evidence, occupancy, manual_overrides, desired_state_leases}
     |> :erlang.term_to_binary()
     |> then(&:crypto.hash(:sha256, &1))
     |> Base.encode16(case: :lower)

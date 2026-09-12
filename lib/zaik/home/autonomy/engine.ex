@@ -276,6 +276,12 @@ defmodule Zaik.Home.Autonomy.Engine do
                  opts,
                  :manual_override_store,
                  Map.get(cfg, :manual_override_store, Zaik.Home.Autonomy.ManualOverrideStore)
+               ),
+             desired_state_store:
+               Keyword.get(
+                 opts,
+                 :desired_state_store,
+                 Map.get(cfg, :desired_state_store, Zaik.Home.Autonomy.DesiredStateStore)
                )
            ),
          {:ok, candidates} <- evaluate_policies(context, opts, clock) do

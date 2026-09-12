@@ -12,6 +12,10 @@ defmodule Zaik.Home.AutonomyEngineTest do
         priority_class: :daylight_energy,
         priority: 40,
         dependencies: ["cover"],
+        hysteresis: %{},
+        minimum_active_seconds: 0,
+        settle_seconds: 0,
+        cooldown_seconds: 0,
         default_mode: :shadow
       }
     end

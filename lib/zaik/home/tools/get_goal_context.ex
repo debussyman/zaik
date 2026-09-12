@@ -34,6 +34,7 @@ defmodule Zaik.Home.Tools.GetGoalContext do
         history_store: value(context, :history_store),
         occupancy_tracker: value(context, :occupancy_tracker),
         manual_override_store: value(context, :manual_override_store),
+        desired_state_store: value(context, :desired_state_store),
         preset_store: value(context, :preset_store),
         capability_opts: value(context, :capability_opts),
         clock: value(context, :clock),

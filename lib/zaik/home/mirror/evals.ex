@@ -33,7 +33,8 @@ defmodule Zaik.Home.Mirror.Evals do
       %{name: "goal_context_gathers_fresh_independent_evidence", kind: :goal_context},
       %{name: "generic_preset_capture_and_apply_use_mirror_executor", kind: :preset_tools},
       %{name: "explicit_action_creates_temporary_override", kind: :explicit_override},
-      %{name: "operator_pause_blocks_autonomy_evaluation", kind: :operator_pause}
+      %{name: "operator_pause_blocks_autonomy_evaluation", kind: :operator_pause},
+      %{name: "daylight_hysteresis_survives_sensor_noise", kind: :daylight_hysteresis}
     ]
   end
 
@@ -254,6 +255,102 @@ defmodule Zaik.Home.Mirror.Evals do
     )
   end
 
+  defp run_case(%{kind: :daylight_hysteresis} = definition) do
+    scenario = Scenarios.lily_with_history_and_telemetry(id: definition.name)
+
+    finish(
+      definition,
+      Runner.run(scenario, fn mirror, context ->
+        now = Zaik.Home.Mirror.now(mirror)
+
+        for device <- ["Lily's bedroom left blind", "Lily's bedroom right blind"] do
+          Zaik.Home.DeviceStore.upsert_device(
+            mirror.device_store,
+            device,
+            %{"position" => 100},
+            %{"observed_at" => now, "source" => "mirror"}
+          )
+        end
+
+        Zaik.Home.DeviceStore.upsert_device(
+          mirror.device_store,
+          "Lily's room multi-sensor",
+          %{"temperature" => 22.0, "illuminance" => 15, "presence" => true},
+          %{"observed_at" => now, "source" => "mirror"}
+        )
+
+        {:ok, decisions} =
+          DynamicSupervisor.start_child(
+            mirror.supervisor,
+            {Zaik.Home.Autonomy.DecisionStore, name: nil, db_path: ":memory:"}
+          )
+
+        {:ok, engine} =
+          DynamicSupervisor.start_child(
+            mirror.supervisor,
+            {Zaik.Home.Autonomy.Engine,
+             name: nil, enabled: true, mode: :shadow, subscribe_events: false}
+          )
+
+        opts = [
+          clock: context.clock,
+          device_store: context.device_store,
+          occupancy_tracker: context.occupancy_tracker,
+          history_store: context.history_store,
+          decision_store: decisions,
+          desired_state_store: context.desired_state_store,
+          manual_override_store: context.manual_override_store,
+          environment_config: %{utc_offset_minutes: 0},
+          policy_opts: [maximum_temperature_f: 80.0, release_maximum_temperature_f: 82.0]
+        ]
+
+        {:ok, activated} = Zaik.Home.Autonomy.Engine.evaluate("lily", opts, engine)
+
+        for device <- ["Lily's bedroom left blind", "Lily's bedroom right blind"] do
+          Zaik.Home.DeviceStore.upsert_device(
+            mirror.device_store,
+            device,
+            %{"position" => 0},
+            %{"observed_at" => now, "source" => "mirror"}
+          )
+        end
+
+        Zaik.Home.DeviceStore.upsert_device(
+          mirror.device_store,
+          "Lily's room multi-sensor",
+          %{"illuminance" => 200},
+          %{"observed_at" => now, "source" => "mirror"}
+        )
+
+        {:ok, minimum_hold} = Zaik.Home.Autonomy.Engine.evaluate("lily", opts, engine)
+        Zaik.Home.Mirror.advance(mirror, 61_000)
+        {:ok, released} = Zaik.Home.Autonomy.Engine.evaluate("lily", opts, engine)
+
+        Zaik.Home.DeviceStore.upsert_device(
+          mirror.device_store,
+          "Lily's room multi-sensor",
+          %{"illuminance" => 70},
+          %{"observed_at" => Zaik.Home.Mirror.now(mirror), "source" => "mirror"}
+        )
+
+        {:ok, release_band} = Zaik.Home.Autonomy.Engine.evaluate("lily", opts, engine)
+
+        %{
+          activated: activated,
+          minimum_hold: minimum_hold,
+          released: released,
+          release_band: release_band
+        }
+      end),
+      fn run ->
+        run.result.activated.status == "proposed" and
+          hd(run.result.minimum_hold.candidates).evidence.minimum_hold == true and
+          run.result.released.status == "no_candidates" and
+          run.result.release_band.status == "satisfied" and run.report.side_effect_count == 0
+      end
+    )
+  end
+
   defp run_case(%{kind: :operator_pause} = definition) do
     scenario = Scenarios.lily_with_history_and_telemetry(id: definition.name)
 
@@ -413,6 +510,7 @@ defmodule Zaik.Home.Mirror.Evals do
           occupancy_tracker: context.occupancy_tracker,
           history_store: context.history_store,
           manual_override_store: context.manual_override_store,
+          desired_state_store: context.desired_state_store,
           preset_store: context.preset_store,
           environment_config: %{utc_offset_minutes: 0}
         )

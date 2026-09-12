@@ -13,6 +13,10 @@ defmodule Zaik.Home.Policy do
           required(:priority_class) => atom(),
           required(:priority) => non_neg_integer(),
           required(:dependencies) => [String.t()],
+          required(:hysteresis) => map(),
+          required(:minimum_active_seconds) => non_neg_integer(),
+          required(:settle_seconds) => non_neg_integer(),
+          required(:cooldown_seconds) => non_neg_integer(),
           required(:default_mode) => :off | :shadow | :advisory | :canary | :active
         }
 

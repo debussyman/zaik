@@ -134,8 +134,13 @@ config :zaik, :home_policies, additional_modules: []
 
 config :zaik, :daylight_harvesting,
   low_light_lux: 50,
+  release_light_lux: 80,
   maximum_temperature_f: 76.0,
+  release_maximum_temperature_f: 78.0,
   closed_position_min: 90,
+  minimum_active_seconds: 60,
+  settle_seconds: 30,
+  cooldown_seconds: 120,
   candidate_ttl_seconds: 120
 
 # Shadow observation evaluation is enabled. The engine records inert decisions

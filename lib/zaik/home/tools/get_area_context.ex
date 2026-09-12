@@ -50,6 +50,7 @@ defmodule Zaik.Home.Tools.GetAreaContext do
         history_store: value(context, :history_store),
         occupancy_tracker: value(context, :occupancy_tracker),
         manual_override_store: value(context, :manual_override_store),
+        desired_state_store: value(context, :desired_state_store),
         capability_opts: value(context, :capability_opts),
         clock: value(context, :clock),
         environment_config: value(context, :environment_config) || %{}

@@ -261,6 +261,9 @@ states without directly controlling devices.
 - [ ] Policies must depend on area/capability contracts rather than household
   device names.
 - [ ] Add hysteresis and minimum-active/settle periods to policy descriptors.
+  Descriptors now require hysteresis, minimum-active, settle, and cooldown
+  declarations; daylight release hysteresis and minimum-active enforcement are
+  implemented, while generic settle/cooldown enforcement remains.
 - [x] Evaluate observation-triggered policies only when their declared capability
   dependencies changed; explicit evaluations still run the complete registry.
 - [ ] Keep model consultation optional and bounded for ambiguous candidate
@@ -278,7 +281,8 @@ Acceptance:
 
 - A policy emits a candidate and evidence but cannot invoke an executor.
 - Adding a compatible room automatically makes a generic policy evaluable.
-- Sensor noise cannot repeatedly activate and deactivate a candidate.
+- [x] Sensor noise within the daylight release band cannot repeatedly activate
+  and deactivate a candidate; virtual time covers minimum-hold expiry.
 
 ## Milestone 4: Arbitration and desired-state reconciliation
 

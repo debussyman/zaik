@@ -15,6 +15,15 @@ defmodule Zaik.Home.Policies.DaylightHarvesting do
       priority_class: :daylight_energy,
       priority: 40,
       dependencies: ["presence", "illuminance", "temperature", "cover", "environment"],
+      hysteresis: %{
+        activation_lux: 50,
+        release_lux: 80,
+        activation_max_temperature_f: 76.0,
+        release_max_temperature_f: 78.0
+      },
+      minimum_active_seconds: 60,
+      settle_seconds: 30,
+      cooldown_seconds: 120,
       default_mode: :shadow
     }
   end
@@ -22,15 +31,31 @@ defmodule Zaik.Home.Policies.DaylightHarvesting do
   @impl true
   def evaluate(context, opts \\ []) when is_map(context) do
     cfg = config(opts)
-    covers = closed_covers(context, cfg.closed_position_min)
+    closed_covers = closed_covers(context, cfg.closed_position_min)
+    all_covers = cover_entities(context)
     illuminance = current_numeric(context, "illuminance", :value, &Enum.max/1)
     temperature_f = room_temperature_f(context)
+    active_lease = active_lease(context)
+    holding? = not is_nil(active_lease)
+
+    minimum_hold? =
+      holding? and lease_age_seconds(active_lease, opts) < cfg.minimum_active_seconds
+
+    base? =
+      occupancy_status(context) == "occupied" and solar_phase(context) == "day" and
+        is_number(illuminance) and is_number(temperature_f) and not manual_override?(context)
 
     eligible? =
-      occupancy_status(context) == "occupied" and solar_phase(context) == "day" and
-        is_number(illuminance) and illuminance <= cfg.low_light_lux and
-        is_number(temperature_f) and temperature_f <= cfg.maximum_temperature_f and
-        covers != [] and not manual_override?(context)
+      if holding? do
+        base? and all_covers != [] and
+          (illuminance <= cfg.release_light_lux or minimum_hold?) and
+          temperature_f <= cfg.release_maximum_temperature_f
+      else
+        base? and closed_covers != [] and illuminance <= cfg.low_light_lux and
+          temperature_f <= cfg.maximum_temperature_f
+      end
+
+    covers = if holding?, do: all_covers, else: closed_covers
 
     if eligible? do
       now = Zaik.Time.now(Keyword.get(opts, :clock))
@@ -64,11 +89,18 @@ defmodule Zaik.Home.Policies.DaylightHarvesting do
             temperature_f: temperature_f,
             confidence: confidence,
             confidence_source: "minimum_of_occupancy_and_temperature_history_quality",
-            closed_cover_ids: Enum.map(covers, &value(&1, :id)),
+            phase: if(holding?, do: "holding", else: "activation"),
+            minimum_hold: minimum_hold?,
+            cover_ids: Enum.map(covers, &value(&1, :id)),
             thresholds: %{
-              low_light_lux: cfg.low_light_lux,
-              maximum_temperature_f: cfg.maximum_temperature_f,
-              closed_position_min: cfg.closed_position_min
+              activation_lux: cfg.low_light_lux,
+              release_lux: cfg.release_light_lux,
+              activation_maximum_temperature_f: cfg.maximum_temperature_f,
+              release_maximum_temperature_f: cfg.release_maximum_temperature_f,
+              closed_position_min: cfg.closed_position_min,
+              minimum_active_seconds: cfg.minimum_active_seconds,
+              settle_seconds: cfg.settle_seconds,
+              cooldown_seconds: cfg.cooldown_seconds
             }
           },
           reason: "Increase natural light before considering electric lighting.",
@@ -118,6 +150,24 @@ defmodule Zaik.Home.Policies.DaylightHarvesting do
           :maximum_temperature_f,
           Keyword.get(configured, :maximum_temperature_f, 76.0)
         ),
+      release_light_lux:
+        Keyword.get(opts, :release_light_lux, Keyword.get(configured, :release_light_lux, 80)),
+      release_maximum_temperature_f:
+        Keyword.get(
+          opts,
+          :release_maximum_temperature_f,
+          Keyword.get(configured, :release_maximum_temperature_f, 78.0)
+        ),
+      minimum_active_seconds:
+        Keyword.get(
+          opts,
+          :minimum_active_seconds,
+          Keyword.get(configured, :minimum_active_seconds, 60)
+        ),
+      settle_seconds:
+        Keyword.get(opts, :settle_seconds, Keyword.get(configured, :settle_seconds, 30)),
+      cooldown_seconds:
+        Keyword.get(opts, :cooldown_seconds, Keyword.get(configured, :cooldown_seconds, 120)),
       closed_position_min:
         Keyword.get(opts, :closed_position_min, Keyword.get(configured, :closed_position_min, 90)),
       candidate_ttl_seconds:
@@ -127,6 +177,38 @@ defmodule Zaik.Home.Policies.DaylightHarvesting do
           Keyword.get(configured, :candidate_ttl_seconds, 120)
         )
     }
+  end
+
+  defp active_lease(context) do
+    context
+    |> value(:desired_state_leases)
+    |> List.wrap()
+    |> Enum.find(fn lease ->
+      value(lease, :source_id) == descriptor().id and value(lease, :capability) == "cover" and
+        value(lease, :status) == "active"
+    end)
+  end
+
+  defp lease_age_seconds(nil, _opts), do: 0
+
+  defp lease_age_seconds(lease, opts) do
+    with created when is_binary(created) <- value(lease, :created_at),
+         {:ok, created_at, _offset} <- DateTime.from_iso8601(created) do
+      max(0, DateTime.diff(Zaik.Time.now(Keyword.get(opts, :clock)), created_at, :second))
+    else
+      _ -> 0
+    end
+  end
+
+  defp cover_entities(context) do
+    context
+    |> entities()
+    |> Enum.filter(fn entity ->
+      state = value(entity, :state) || %{}
+
+      "cover" in List.wrap(value(entity, :capabilities)) or Map.has_key?(state, "cover") or
+        Map.has_key?(state, :cover)
+    end)
   end
 
   defp closed_covers(context, minimum) do
