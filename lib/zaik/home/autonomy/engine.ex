@@ -26,6 +26,8 @@ defmodule Zaik.Home.Autonomy.Engine do
       context_window_minutes: Keyword.get(configured, :context_window_minutes, 180),
       event_debounce_ms: Keyword.get(configured, :event_debounce_ms, 500),
       event_min_interval_ms: Keyword.get(configured, :event_min_interval_ms, 60_000),
+      evaluation_timeout_ms: Keyword.get(configured, :evaluation_timeout_ms, 30_000),
+      max_concurrent_evaluations: Keyword.get(configured, :max_concurrent_evaluations, 2),
       occupancy_absence_debounce_ms:
         Keyword.get(configured, :occupancy_absence_debounce_ms, 5 * 60_000),
       subscribe_events: Keyword.get(configured, :subscribe_events, false),
@@ -53,6 +55,7 @@ defmodule Zaik.Home.Autonomy.Engine do
        config: cfg,
        event_bus: event_bus,
        pending: %{},
+       running: %{},
        last_evaluated_ms: %{},
        last_decision: nil
      }}
@@ -72,6 +75,7 @@ defmodule Zaik.Home.Autonomy.Engine do
        mode: state.config.mode,
        subscribe_events: state.config.subscribe_events,
        pending_count: map_size(state.pending),
+       running_count: map_size(state.running),
        last_decision: state.last_decision
      }, state}
   end
@@ -105,13 +109,81 @@ defmodule Zaik.Home.Autonomy.Engine do
       |> Keyword.put(:mode, state.config.mode)
       |> Keyword.put(:changed_dependencies, event_dependencies(event))
 
-    case evaluate_request(event.query, state.config.mode, state.config, opts) do
-      {:ok, decision} -> {:noreply, %{state | last_decision: decision}}
-      {:error, _reason} -> {:noreply, state}
+    {:noreply, start_event_evaluation(state, key, event.query, opts)}
+  end
+
+  def handle_info({ref, result}, state) when is_reference(ref) do
+    case Map.pop(state.running, ref) do
+      {nil, _running} ->
+        {:noreply, state}
+
+      {_entry, running} ->
+        Process.demonitor(ref, [:flush])
+        state = %{state | running: running}
+
+        state =
+          if match?({:ok, _}, result), do: %{state | last_decision: elem(result, 1)}, else: state
+
+        {:noreply, state}
     end
   end
 
+  def handle_info({:evaluation_timeout, ref}, state) do
+    case Map.pop(state.running, ref) do
+      {nil, _running} ->
+        {:noreply, state}
+
+      {%{task: task}, running} ->
+        Task.shutdown(task, :brutal_kill)
+        {:noreply, %{state | running: running}}
+    end
+  end
+
+  def handle_info({:DOWN, ref, :process, _pid, _reason}, state) do
+    {:noreply, %{state | running: Map.delete(state.running, ref)}}
+  end
+
   def handle_info(_message, state), do: {:noreply, state}
+
+  defp start_event_evaluation(state, key, query, opts) do
+    supervisor = Map.get(state.config, :task_supervisor, Zaik.Tools.TaskSupervisor)
+    maximum = Map.get(state.config, :max_concurrent_evaluations, 2)
+
+    cond do
+      not process_available?(supervisor) ->
+        case evaluate_request(query, state.config.mode, state.config, opts) do
+          {:ok, decision} -> %{state | last_decision: decision}
+          {:error, _reason} -> state
+        end
+
+      map_size(state.running) >= maximum ->
+        changed_keys =
+          opts
+          |> Keyword.get(:changed_dependencies, [])
+          |> Enum.map(fn
+            "cover" -> "position"
+            dependency -> dependency
+          end)
+
+        schedule_event(state, key, query, %{device: query, changed_keys: changed_keys})
+
+      true ->
+        task =
+          Task.Supervisor.async_nolink(supervisor, fn ->
+            evaluate_request(query, state.config.mode, state.config, opts)
+          end)
+
+        timer =
+          Zaik.Time.send_after(
+            Map.get(state.config, :clock),
+            self(),
+            {:evaluation_timeout, task.ref},
+            Map.get(state.config, :evaluation_timeout_ms, 30_000)
+          )
+
+        put_in(state, [:running, task.ref], %{task: task, timer: timer, key: key, query: query})
+    end
+  end
 
   defp evaluate_request(_query, :off, _cfg, _opts), do: {:error, :autonomy_disabled}
 

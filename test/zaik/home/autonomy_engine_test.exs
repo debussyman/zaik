@@ -1,6 +1,27 @@
 defmodule Zaik.Home.AutonomyEngineTest do
   use ExUnit.Case, async: false
 
+  defmodule SlowReadOnlyPolicy do
+    @behaviour Zaik.Home.Policy
+
+    def descriptor do
+      %{
+        id: "slow_read_only",
+        version: "1",
+        description: "Test supervised evaluation",
+        priority_class: :daylight_energy,
+        priority: 40,
+        dependencies: ["cover"],
+        default_mode: :shadow
+      }
+    end
+
+    def evaluate(_context, _opts) do
+      Process.sleep(50)
+      {:ok, []}
+    end
+  end
+
   setup do
     now = ~U[2026-07-15 14:00:00Z]
     {:ok, clock} = start_supervised({Zaik.Home.Mirror.Clock, name: nil, now: now})
@@ -212,6 +233,53 @@ defmodule Zaik.Home.AutonomyEngineTest do
     assert decision.candidates == []
     assert [%{id: id, owner: "parent"}] = decision.context.manual_overrides
     assert id == lease.id
+  end
+
+  test "event policy work runs in a bounded supervised task", context do
+    {:ok, bus} = start_supervised({Zaik.Home.EventBus, name: nil}, id: :task_event_bus)
+    {:ok, tasks} = start_supervised({Task.Supervisor, name: nil}, id: :evaluation_tasks)
+
+    {:ok, event_engine} =
+      start_supervised(
+        {Zaik.Home.Autonomy.Engine,
+         name: nil,
+         enabled: true,
+         mode: :shadow,
+         subscribe_events: true,
+         event_bus: bus,
+         event_debounce_ms: 1,
+         event_min_interval_ms: 1,
+         evaluation_timeout_ms: 1_000,
+         max_concurrent_evaluations: 1,
+         task_supervisor: tasks,
+         clock: {Zaik.Home.Mirror.Clock, context.clock},
+         device_store: context.devices,
+         occupancy_tracker: false,
+         history_store: context.history,
+         decision_store: context.decisions,
+         desired_state_store: context.desired_states,
+         manual_override_store: context.overrides,
+         environment_config: %{utc_offset_minutes: 0},
+         policy_registry_opts: [modules: [SlowReadOnlyPolicy]]},
+        id: :task_event_engine
+      )
+
+    Zaik.Home.EventBus.publish(
+      %{
+        type: :device_observed,
+        device: "Lily's bedroom left blind",
+        changed_keys: ["position"],
+        observed_at: context.now
+      },
+      bus
+    )
+
+    assert_eventually(fn -> Zaik.Home.Autonomy.Engine.status(event_engine).pending_count == 1 end)
+    Zaik.Home.Mirror.Clock.advance(context.clock, 1)
+    assert_eventually(fn -> Zaik.Home.Autonomy.Engine.status(event_engine).running_count == 1 end)
+    assert Zaik.Home.Autonomy.Engine.status(event_engine).pending_count == 0
+    assert_eventually(fn -> Zaik.Home.Autonomy.Engine.status(event_engine).running_count == 0 end)
+    assert Zaik.Home.Autonomy.Engine.status(event_engine).last_decision.status == "no_candidates"
   end
 
   test "active execution is impossible in the shadow-only engine", context do
