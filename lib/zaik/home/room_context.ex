@@ -59,6 +59,7 @@ defmodule Zaik.Home.RoomContext do
 
       manual_overrides = active_manual_overrides(areas, clock, opts)
       desired_state_leases = active_desired_states(areas, clock, opts)
+      desired_state_history = desired_state_history(areas, opts)
 
       context = %{
         query: query,
@@ -67,6 +68,7 @@ defmodule Zaik.Home.RoomContext do
         manual_overrides: manual_overrides,
         manual_override: List.first(manual_overrides),
         desired_state_leases: desired_state_leases,
+        desired_state_history: desired_state_history,
         occupancy: occupancy(entities, areas, opts),
         environment: environment,
         entities: entities,
@@ -124,6 +126,21 @@ defmodule Zaik.Home.RoomContext do
         end,
       observations: observations
     }
+  end
+
+  defp desired_state_history(areas, opts) do
+    store = Keyword.get(opts, :desired_state_store, Zaik.Home.Autonomy.DesiredStateStore)
+    limit = Keyword.get(opts, :desired_state_history_limit, 100)
+
+    if process_available?(store) do
+      areas
+      |> Enum.flat_map(&Zaik.Home.Autonomy.DesiredStateStore.history(&1, limit, store))
+      |> Enum.uniq_by(& &1.id)
+    else
+      []
+    end
+  catch
+    :exit, _reason -> []
   end
 
   defp active_desired_states(areas, clock, opts) do

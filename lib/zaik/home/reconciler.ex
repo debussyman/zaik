@@ -19,7 +19,7 @@ defmodule Zaik.Home.Reconciler do
 
     result =
       Enum.reduce(selected, %{actions: [], satisfied: [], blocked: []}, fn desired, acc ->
-        reconcile_one(desired, entities, now, max_state_age_seconds, opts, acc)
+        reconcile_one(desired, entities, room_context, now, max_state_age_seconds, opts, acc)
       end)
 
     result = %{
@@ -32,7 +32,7 @@ defmodule Zaik.Home.Reconciler do
     Map.put(result, :fingerprint, fingerprint(result))
   end
 
-  defp reconcile_one(desired, entities, now, max_age, opts, acc) do
+  defp reconcile_one(desired, entities, room_context, now, max_age, opts, acc) do
     entity_id = to_string(value(desired, :entity_id))
 
     case Map.get(entities, entity_id) do
@@ -63,21 +63,113 @@ defmodule Zaik.Home.Reconciler do
             %{acc | satisfied: [desired | acc.satisfied]}
 
           true ->
-            action = %{
-              device: value(desired, :device),
-              capability: capability,
-              target: value(desired, :target),
-              candidate_id: value(desired, :candidate_id),
-              policy_id: value(desired, :policy_id)
-            }
+            case stability_block(desired, room_context, now, opts) do
+              nil ->
+                action = %{
+                  device: value(desired, :device),
+                  capability: capability,
+                  target: value(desired, :target),
+                  candidate_id: value(desired, :candidate_id),
+                  policy_id: value(desired, :policy_id)
+                }
 
-            %{acc | actions: [action | acc.actions]}
+                %{acc | actions: [action | acc.actions]}
+
+              block ->
+                block(acc, desired, block.reason, Map.delete(block, :reason))
+            end
         end
     end
   end
 
-  defp block(acc, desired, reason),
-    do: %{acc | blocked: [%{desired: desired, reason: reason} | acc.blocked]}
+  defp stability_block(desired, context, now, opts) do
+    stability =
+      opts
+      |> Keyword.get(:policy_stability, %{})
+      |> Map.get(to_string(value(desired, :policy_id)), %{})
+
+    settle_seconds = non_negative(value(stability, :settle_seconds))
+    cooldown_seconds = non_negative(value(stability, :cooldown_seconds))
+
+    active =
+      Enum.find(List.wrap(value(context, :desired_state_leases)), &same_desired?(&1, desired))
+
+    cond do
+      active && settle_seconds > 0 ->
+        remaining = settle_seconds - elapsed_seconds(value(active, :created_at), now)
+
+        if remaining > 0,
+          do: %{reason: "policy_settling", retry_after_seconds: remaining},
+          else: nil
+
+      is_nil(active) ->
+        cooldown_block(desired, context, now, cooldown_seconds) ||
+          if(settle_seconds > 0,
+            do: %{reason: "policy_settling", retry_after_seconds: settle_seconds}
+          )
+
+      true ->
+        nil
+    end
+  end
+
+  defp cooldown_block(desired, context, now, cooldown_seconds) do
+    previous =
+      context
+      |> value(:desired_state_history)
+      |> List.wrap()
+      |> Enum.filter(&same_desired?(&1, desired))
+      |> Enum.map(fn lease -> {lease, ended_at(lease, now)} end)
+      |> Enum.reject(fn {_lease, ended_at} ->
+        is_nil(ended_at) or DateTime.after?(ended_at, now)
+      end)
+      |> Enum.max_by(fn {_lease, ended_at} -> DateTime.to_unix(ended_at, :microsecond) end, fn ->
+        nil
+      end)
+
+    case previous do
+      nil ->
+        nil
+
+      {_lease, ended_at} ->
+        remaining = cooldown_seconds - DateTime.diff(now, ended_at, :second)
+
+        if remaining > 0,
+          do: %{reason: "policy_cooldown", retry_after_seconds: remaining},
+          else: nil
+    end
+  end
+
+  defp ended_at(lease, now) do
+    case value(lease, :status) do
+      "superseded" ->
+        parse_datetime(value(lease, :superseded_at))
+
+      _ ->
+        expires_at = parse_datetime(value(lease, :expires_at))
+        if expires_at && not DateTime.after?(expires_at, now), do: expires_at
+    end
+  end
+
+  defp same_desired?(lease, desired) do
+    value(lease, :source_id) == value(desired, :policy_id) and
+      to_string(value(lease, :entity_id)) == to_string(value(desired, :entity_id)) and
+      to_string(value(lease, :capability)) == to_string(value(desired, :capability)) and
+      value(lease, :target) == value(desired, :target)
+  end
+
+  defp elapsed_seconds(value, now) do
+    case parse_datetime(value) do
+      nil -> 0
+      datetime -> max(0, DateTime.diff(now, datetime, :second))
+    end
+  end
+
+  defp non_negative(value) when is_integer(value) and value >= 0, do: value
+  defp non_negative(_value), do: 0
+
+  defp block(acc, desired, reason, details \\ %{}),
+    do: %{acc | blocked: [Map.merge(%{desired: desired, reason: reason}, details) | acc.blocked]}
 
   defp capability_state(nil, _capability), do: nil
 

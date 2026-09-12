@@ -58,6 +58,50 @@ defmodule Zaik.Home.DesiredStateStoreTest do
            ) == []
   end
 
+  test "cooldown-blocked targets are not renewed and later activation resets their epoch",
+       context do
+    original = decision("stable", 0, context.now)
+    assert {:ok, [first]} = Zaik.Home.Autonomy.DesiredStateStore.record(original, context.store)
+
+    Zaik.Home.Mirror.Clock.advance(context.clock, 60_000)
+    selected = hd(original.arbitration.selected)
+
+    cooldown =
+      original
+      |> Map.put(:created_at, Zaik.Home.Mirror.Clock.now(context.clock))
+      |> put_in([:reconciliation], %{
+        blocked: [%{reason: "policy_cooldown", desired: selected}]
+      })
+
+    assert {:ok, []} = Zaik.Home.Autonomy.DesiredStateStore.record(cooldown, context.store)
+
+    assert Zaik.Home.Autonomy.DesiredStateStore.active(
+             "room",
+             [clock: {Zaik.Home.Mirror.Clock, context.clock}],
+             context.store
+           ) == []
+
+    Zaik.Home.Mirror.Clock.advance(context.clock, 121_000)
+    restarted_at = Zaik.Home.Mirror.Clock.now(context.clock)
+
+    restarting =
+      original
+      |> Map.put(:created_at, restarted_at)
+      |> put_in([:reconciliation], %{
+        blocked: [%{reason: "policy_settling", desired: selected}]
+      })
+      |> put_in(
+        [:arbitration, :selected, Access.at(0), :expires_at],
+        DateTime.add(restarted_at, 60, :second) |> DateTime.to_iso8601()
+      )
+
+    assert {:ok, [restarted]} =
+             Zaik.Home.Autonomy.DesiredStateStore.record(restarting, context.store)
+
+    assert restarted.id == first.id
+    assert restarted.created_at == DateTime.to_iso8601(restarted_at)
+  end
+
   defp decision(id, position, now) do
     %{
       id: "decision-#{id}",

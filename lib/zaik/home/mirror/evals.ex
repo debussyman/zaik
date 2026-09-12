@@ -301,17 +301,21 @@ defmodule Zaik.Home.Mirror.Evals do
           desired_state_store: context.desired_state_store,
           manual_override_store: context.manual_override_store,
           environment_config: %{utc_offset_minutes: 0},
+          max_state_age_seconds: 600,
           policy_opts: [maximum_temperature_f: 80.0, release_maximum_temperature_f: 82.0]
         ]
 
+        {:ok, settling} = Zaik.Home.Autonomy.Engine.evaluate("lily", opts, engine)
+        Zaik.Home.Mirror.advance(mirror, 30_000)
         {:ok, activated} = Zaik.Home.Autonomy.Engine.evaluate("lily", opts, engine)
+        converged_at = Zaik.Home.Mirror.now(mirror)
 
         for device <- ["Lily's bedroom left blind", "Lily's bedroom right blind"] do
           Zaik.Home.DeviceStore.upsert_device(
             mirror.device_store,
             device,
             %{"position" => 0},
-            %{"observed_at" => now, "source" => "mirror"}
+            %{"observed_at" => converged_at, "source" => "mirror"}
           )
         end
 
@@ -319,34 +323,58 @@ defmodule Zaik.Home.Mirror.Evals do
           mirror.device_store,
           "Lily's room multi-sensor",
           %{"illuminance" => 200},
-          %{"observed_at" => now, "source" => "mirror"}
+          %{"observed_at" => converged_at, "source" => "mirror"}
         )
 
         {:ok, minimum_hold} = Zaik.Home.Autonomy.Engine.evaluate("lily", opts, engine)
         Zaik.Home.Mirror.advance(mirror, 61_000)
         {:ok, released} = Zaik.Home.Autonomy.Engine.evaluate("lily", opts, engine)
 
+        Zaik.Home.Mirror.advance(mirror, 59_000)
+        cooldown_at = Zaik.Home.Mirror.now(mirror)
+
+        for device <- ["Lily's bedroom left blind", "Lily's bedroom right blind"] do
+          Zaik.Home.DeviceStore.upsert_device(
+            mirror.device_store,
+            device,
+            %{"position" => 100},
+            %{"observed_at" => cooldown_at, "source" => "mirror"}
+          )
+        end
+
         Zaik.Home.DeviceStore.upsert_device(
           mirror.device_store,
           "Lily's room multi-sensor",
-          %{"illuminance" => 70},
-          %{"observed_at" => Zaik.Home.Mirror.now(mirror), "source" => "mirror"}
+          %{"illuminance" => 15},
+          %{"observed_at" => cooldown_at, "source" => "mirror"}
         )
 
-        {:ok, release_band} = Zaik.Home.Autonomy.Engine.evaluate("lily", opts, engine)
+        {:ok, cooldown} = Zaik.Home.Autonomy.Engine.evaluate("lily", opts, engine)
+        Zaik.Home.Mirror.advance(mirror, 120_000)
+        {:ok, resettling} = Zaik.Home.Autonomy.Engine.evaluate("lily", opts, engine)
+        Zaik.Home.Mirror.advance(mirror, 30_000)
+        {:ok, reactivated} = Zaik.Home.Autonomy.Engine.evaluate("lily", opts, engine)
 
         %{
+          settling: settling,
           activated: activated,
           minimum_hold: minimum_hold,
           released: released,
-          release_band: release_band
+          cooldown: cooldown,
+          resettling: resettling,
+          reactivated: reactivated
         }
       end),
       fn run ->
-        run.result.activated.status == "proposed" and
+        run.result.settling.status == "blocked" and run.result.activated.status == "proposed" and
           hd(run.result.minimum_hold.candidates).evidence.minimum_hold == true and
           run.result.released.status == "no_candidates" and
-          run.result.release_band.status == "satisfied" and run.report.side_effect_count == 0
+          Enum.all?(run.result.cooldown.reconciliation.blocked, &(&1.reason == "policy_cooldown")) and
+          Enum.all?(
+            run.result.resettling.reconciliation.blocked,
+            &(&1.reason == "policy_settling")
+          ) and
+          run.result.reactivated.status == "proposed" and run.report.side_effect_count == 0
       end
     )
   end
@@ -683,22 +711,21 @@ defmodule Zaik.Home.Mirror.Evals do
             {Zaik.Home.Autonomy.Engine, name: nil, enabled: true, mode: :shadow}
           )
 
-        decision =
-          Zaik.Home.Autonomy.Engine.evaluate(
-            "lily",
-            [
-              clock: context.clock,
-              device_store: context.device_store,
-              occupancy_tracker: context.occupancy_tracker,
-              history_store: context.history_store,
-              decision_store: decision_store,
-              desired_state_store: context.desired_state_store,
-              manual_override_store: context.manual_override_store,
-              environment_config: %{utc_offset_minutes: 0},
-              policy_opts: [maximum_temperature_f: 80.0]
-            ],
-            engine
-          )
+        evaluation_opts = [
+          clock: context.clock,
+          device_store: context.device_store,
+          occupancy_tracker: context.occupancy_tracker,
+          history_store: context.history_store,
+          decision_store: decision_store,
+          desired_state_store: context.desired_state_store,
+          manual_override_store: context.manual_override_store,
+          environment_config: %{utc_offset_minutes: 0},
+          policy_opts: [maximum_temperature_f: 80.0]
+        ]
+
+        settling = Zaik.Home.Autonomy.Engine.evaluate("lily", evaluation_opts, engine)
+        Zaik.Home.Mirror.advance(mirror, 30_000)
+        decision = Zaik.Home.Autonomy.Engine.evaluate("lily", evaluation_opts, engine)
 
         desired =
           Zaik.Home.Autonomy.DesiredStateStore.active(
@@ -707,19 +734,23 @@ defmodule Zaik.Home.Mirror.Evals do
             context.desired_state_store
           )
 
-        %{decision: decision, desired: desired}
+        %{settling: settling, decision: decision, desired: desired}
       end),
       fn run ->
         match?(
-          {:ok,
-           %{
-             mode: :shadow,
-             status: "proposed",
-             candidates: [%{confidence: 0.7}],
-             reconciliation: %{actions: [_, _]}
-           }},
-          run.result.decision
-        ) and length(run.result.desired) == 2 and run.report.side_effect_count == 0
+          {:ok, %{status: "blocked", reconciliation: %{blocked: [_, _]}}},
+          run.result.settling
+        ) and
+          match?(
+            {:ok,
+             %{
+               mode: :shadow,
+               status: "proposed",
+               candidates: [%{confidence: 0.7}],
+               reconciliation: %{actions: [_, _]}
+             }},
+            run.result.decision
+          ) and length(run.result.desired) == 2 and run.report.side_effect_count == 0
       end
     )
   end

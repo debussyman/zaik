@@ -124,16 +124,35 @@ defmodule Zaik.Home.AutonomyEngineTest do
              )
 
     assert decision.mode == :shadow
-    assert decision.status == "proposed"
+    assert decision.status == "blocked"
     assert length(decision.candidates) == 1
-    assert length(decision.reconciliation.actions) == 2
-    assert decision.reconciliation.satisfied == []
+    assert decision.reconciliation.actions == []
+    assert Enum.all?(decision.reconciliation.blocked, &(&1.reason == "policy_settling"))
+
+    Zaik.Home.Mirror.Clock.advance(context.clock, 30_000)
+
+    assert {:ok, ready} =
+             Zaik.Home.Autonomy.Engine.evaluate(
+               "lily",
+               [
+                 clock: {Zaik.Home.Mirror.Clock, context.clock},
+                 device_store: context.devices,
+                 history_store: context.history,
+                 decision_store: context.decisions,
+                 environment_config: %{utc_offset_minutes: 0},
+                 policy_opts: [maximum_temperature_f: 76.0]
+               ],
+               context.engine
+             )
+
+    assert ready.status == "proposed"
+    assert length(ready.reconciliation.actions) == 2
 
     assert {:ok, stored} =
-             Zaik.Home.Autonomy.DecisionStore.lookup(decision.id, context.decisions)
+             Zaik.Home.Autonomy.DecisionStore.lookup(ready.id, context.decisions)
 
     assert stored.mode == "shadow"
-    assert stored.snapshot_id == decision.snapshot_id
+    assert stored.snapshot_id == ready.snapshot_id
     assert length(stored.candidates) == 1
     assert length(stored.reconciliation["actions"]) == 2
 
@@ -146,7 +165,7 @@ defmodule Zaik.Home.AutonomyEngineTest do
 
     assert length(desired) == 2
     assert Enum.all?(desired, &(&1.priority_class == "daylight_energy"))
-    assert Enum.all?(desired, &(&1.decision_id == decision.id))
+    assert Enum.all?(desired, &(&1.decision_id == ready.id))
   end
 
   test "accepted relevant events are coalesced through virtual debounce", context do
@@ -168,7 +187,7 @@ defmodule Zaik.Home.AutonomyEngineTest do
          decision_store: context.decisions,
          desired_state_store: context.desired_states,
          environment_config: %{utc_offset_minutes: 0},
-         policy_opts: [maximum_temperature_f: 76.0]},
+         policy_opts: [maximum_temperature_f: 76.0, settle_seconds: 0]},
         id: :event_autonomy_engine
       )
 
@@ -204,6 +223,97 @@ defmodule Zaik.Home.AutonomyEngineTest do
 
     assert_eventually(fn ->
       length(Zaik.Home.Autonomy.DecisionStore.recent(20, context.decisions)) == 2
+    end)
+  end
+
+  test "a restarted engine restores durable settle wakeups", context do
+    opts = [
+      clock: {Zaik.Home.Mirror.Clock, context.clock},
+      device_store: context.devices,
+      history_store: context.history,
+      decision_store: context.decisions,
+      desired_state_store: context.desired_states,
+      environment_config: %{utc_offset_minutes: 0},
+      policy_opts: [maximum_temperature_f: 76.0]
+    ]
+
+    assert {:ok, %{status: "blocked"}} =
+             Zaik.Home.Autonomy.Engine.evaluate("lily", opts, context.engine)
+
+    {:ok, restarted} =
+      start_supervised(
+        {Zaik.Home.Autonomy.Engine,
+         name: nil,
+         enabled: true,
+         mode: :shadow,
+         subscribe_events: false,
+         clock: {Zaik.Home.Mirror.Clock, context.clock},
+         device_store: context.devices,
+         occupancy_tracker: false,
+         history_store: context.history,
+         decision_store: context.decisions,
+         desired_state_store: context.desired_states,
+         environment_config: %{utc_offset_minutes: 0},
+         policy_opts: [maximum_temperature_f: 76.0]},
+        id: :restored_settle_engine
+      )
+
+    assert Zaik.Home.Autonomy.Engine.status(restarted).stability_wakeup_count == 1
+    Zaik.Home.Mirror.Clock.advance(context.clock, 30_000)
+
+    assert_eventually(fn ->
+      match?(%{status: "proposed"}, Zaik.Home.Autonomy.Engine.status(restarted).last_decision)
+    end)
+  end
+
+  test "event evaluation wakes itself after a policy settle window", context do
+    {:ok, bus} = start_supervised({Zaik.Home.EventBus, name: nil}, id: :settle_event_bus)
+
+    {:ok, event_engine} =
+      start_supervised(
+        {Zaik.Home.Autonomy.Engine,
+         name: nil,
+         enabled: true,
+         mode: :shadow,
+         subscribe_events: true,
+         event_bus: bus,
+         event_debounce_ms: 100,
+         clock: {Zaik.Home.Mirror.Clock, context.clock},
+         device_store: context.devices,
+         occupancy_tracker: false,
+         history_store: context.history,
+         decision_store: context.decisions,
+         desired_state_store: context.desired_states,
+         environment_config: %{utc_offset_minutes: 0},
+         policy_opts: [maximum_temperature_f: 76.0, settle_seconds: 2]},
+        id: :settle_event_engine
+      )
+
+    Zaik.Home.EventBus.publish(
+      %{
+        type: :device_observed,
+        device: "Lily's bedroom left blind",
+        changed_keys: ["position"],
+        observed_at: context.now
+      },
+      bus
+    )
+
+    assert_eventually(fn -> Zaik.Home.Autonomy.Engine.status(event_engine).pending_count == 1 end)
+    Zaik.Home.Mirror.Clock.advance(context.clock, 100)
+
+    assert_eventually(fn ->
+      status = Zaik.Home.Autonomy.Engine.status(event_engine)
+      match?(%{status: "blocked"}, status.last_decision) and status.stability_wakeup_count == 1
+    end)
+
+    Zaik.Home.Mirror.Clock.advance(context.clock, 2_000)
+
+    assert_eventually(fn ->
+      status = Zaik.Home.Autonomy.Engine.status(event_engine)
+
+      match?(%{status: "proposed", reconciliation: %{actions: [_, _]}}, status.last_decision) and
+        status.stability_wakeup_count == 0
     end)
   end
 

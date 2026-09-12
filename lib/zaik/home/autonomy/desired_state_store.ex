@@ -20,6 +20,10 @@ defmodule Zaik.Home.Autonomy.DesiredStateStore do
     do: GenServer.call(server, {:active, scope, opts})
 
   def recent(limit \\ 50, server \\ __MODULE__), do: GenServer.call(server, {:recent, limit})
+
+  def history(scope, limit \\ 50, server \\ __MODULE__) when is_binary(scope),
+    do: GenServer.call(server, {:history, scope, limit})
+
   def reset(server \\ __MODULE__), do: GenServer.call(server, :reset)
 
   @impl true
@@ -41,7 +45,19 @@ defmodule Zaik.Home.Autonomy.DesiredStateStore do
 
   @impl true
   def handle_call({:record, decision}, _from, state) do
-    selected = get_in(decision, [:arbitration, :selected]) || []
+    cooldown_blocked =
+      decision
+      |> get_in([:reconciliation, :blocked])
+      |> List.wrap()
+      |> Enum.filter(&(value(&1, :reason) == "policy_cooldown"))
+      |> MapSet.new(fn blocked -> desired_key(value(blocked, :desired)) end)
+
+    selected =
+      decision
+      |> get_in([:arbitration, :selected])
+      |> List.wrap()
+      |> Enum.reject(&(desired_key(&1) in cooldown_blocked))
+
     now = value(decision, :created_at) || Zaik.Time.now(state.clock)
     decision_id = to_string(value(decision, :id))
 
@@ -81,10 +97,21 @@ defmodule Zaik.Home.Autonomy.DesiredStateStore do
   end
 
   def handle_call({:recent, limit}, _from, state) do
-    limit = max(1, min(limit, 200))
+    limit = bounded_limit(limit)
 
     {:reply,
      query(state.conn, select_sql("ORDER BY created_at DESC LIMIT ?"), [limit])
+     |> Enum.map(&decode/1), state}
+  end
+
+  def handle_call({:history, scope, limit}, _from, state) do
+    limit = bounded_limit(limit)
+
+    {:reply,
+     query(state.conn, select_sql("WHERE scope = ? ORDER BY created_at DESC LIMIT ?"), [
+       scope,
+       limit
+     ])
      |> Enum.map(&decode/1), state}
   end
 
@@ -157,6 +184,12 @@ defmodule Zaik.Home.Autonomy.DesiredStateStore do
                evidence_json = excluded.evidence_json,
                policy_fingerprint = excluded.policy_fingerprint,
                status = 'active',
+               created_at = CASE
+                 WHEN home_desired_states.status = 'active'
+                   AND julianday(home_desired_states.expires_at) > julianday(excluded.created_at)
+                 THEN home_desired_states.created_at
+                 ELSE excluded.created_at
+               END,
                expires_at = excluded.expires_at,
                superseded_at = NULL
              """,
@@ -196,9 +229,13 @@ defmodule Zaik.Home.Autonomy.DesiredStateStore do
     value(desired, :scope) || area || "home"
   end
 
+  defp desired_key(desired) do
+    {value(desired, :policy_id), to_string(value(desired, :entity_id)),
+     to_string(value(desired, :capability)), value(desired, :target)}
+  end
+
   defp desired_id(desired, _decision_id) do
-    {value(desired, :policy_id), value(desired, :entity_id), value(desired, :capability),
-     value(desired, :target)}
+    desired_key(desired)
     |> :erlang.term_to_binary()
     |> then(&:crypto.hash(:sha256, &1))
     |> Base.encode16(case: :lower)
@@ -297,6 +334,9 @@ defmodule Zaik.Home.Autonomy.DesiredStateStore do
       end
     end
   end
+
+  defp bounded_limit(limit) when is_integer(limit), do: max(1, min(limit, 200))
+  defp bounded_limit(_limit), do: 50
 
   defp format_time(%DateTime{} = value), do: DateTime.to_iso8601(value)
   defp format_time(value) when is_binary(value), do: value

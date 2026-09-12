@@ -59,17 +59,19 @@ defmodule Zaik.Home.Autonomy.Engine do
       :ok = Zaik.Home.EventBus.subscribe(event_bus, self())
     end
 
-    {:ok,
-     %{
-       config: cfg,
-       event_bus: event_bus,
-       pending: %{},
-       running: %{},
-       last_evaluated_ms: %{},
-       last_decision: nil,
-       pause: nil,
-       mode_changed_by: "configuration"
-     }}
+    state = %{
+      config: cfg,
+      event_bus: event_bus,
+      pending: %{},
+      running: %{},
+      stability_wakeups: %{},
+      last_evaluated_ms: %{},
+      last_decision: nil,
+      pause: nil,
+      mode_changed_by: "configuration"
+    }
+
+    {:ok, restore_settle_wakeups(state)}
   end
 
   @impl true
@@ -95,6 +97,7 @@ defmodule Zaik.Home.Autonomy.Engine do
        subscribe_events: state.config.subscribe_events,
        pending_count: map_size(state.pending),
        running_count: map_size(state.running),
+       stability_wakeup_count: map_size(state.stability_wakeups),
        last_decision: state.last_decision
      }, state}
   end
@@ -174,13 +177,42 @@ defmodule Zaik.Home.Autonomy.Engine do
       {nil, _running} ->
         {:noreply, state}
 
-      {_entry, running} ->
+      {entry, running} ->
         Process.demonitor(ref, [:flush])
         state = %{state | running: running}
 
         state =
-          if match?({:ok, _}, result), do: %{state | last_decision: elem(result, 1)}, else: state
+          case result do
+            {:ok, decision} ->
+              state
+              |> Map.put(:last_decision, decision)
+              |> schedule_stability_wakeup(entry.key, entry.query, decision)
 
+            _ ->
+              state
+          end
+
+        {:noreply, state}
+    end
+  end
+
+  def handle_info({:stability_wakeup, key, query, token}, state) do
+    case Map.get(state.stability_wakeups, key) do
+      ^token when is_nil(state.pause) ->
+        state = update_in(state.stability_wakeups, &Map.delete(&1, key))
+
+        opts =
+          state.config
+          |> Map.to_list()
+          |> Keyword.put(:mode, state.config.mode)
+          |> Keyword.put(:changed_dependencies, nil)
+
+        {:noreply, start_event_evaluation(state, key, query, opts)}
+
+      ^token ->
+        {:noreply, update_in(state.stability_wakeups, &Map.delete(&1, key))}
+
+      _ ->
         {:noreply, state}
     end
   end
@@ -209,8 +241,13 @@ defmodule Zaik.Home.Autonomy.Engine do
     cond do
       not process_available?(supervisor) ->
         case evaluate_request(query, state.config.mode, state.config, opts) do
-          {:ok, decision} -> %{state | last_decision: decision}
-          {:error, _reason} -> state
+          {:ok, decision} ->
+            state
+            |> Map.put(:last_decision, decision)
+            |> schedule_stability_wakeup(key, query, decision)
+
+          {:error, _reason} ->
+            state
         end
 
       map_size(state.running) >= maximum ->
@@ -239,6 +276,74 @@ defmodule Zaik.Home.Autonomy.Engine do
           )
 
         put_in(state, [:running, task.ref], %{task: task, timer: timer, key: key, query: query})
+    end
+  end
+
+  defp restore_settle_wakeups(state) do
+    store = Map.get(state.config, :desired_state_store, Zaik.Home.Autonomy.DesiredStateStore)
+    clock = Map.get(state.config, :clock)
+
+    if process_available?(store) do
+      stability = policy_stability(Map.to_list(state.config))
+      now = Zaik.Time.now(clock)
+
+      Zaik.Home.Autonomy.DesiredStateStore.active(nil, [clock: clock], store)
+      |> Enum.group_by(& &1.scope)
+      |> Enum.reduce(state, fn {scope, leases}, acc ->
+        remaining =
+          leases
+          |> Enum.map(fn lease ->
+            settle = get_in(stability, [lease.source_id, :settle_seconds]) || 0
+            settle - elapsed_seconds(lease.created_at, now)
+          end)
+          |> Enum.filter(&(&1 > 0))
+          |> Enum.min(fn -> nil end)
+
+        if remaining, do: put_stability_wakeup(acc, scope, scope, remaining), else: acc
+      end)
+    else
+      state
+    end
+  catch
+    :exit, _reason -> state
+  end
+
+  defp schedule_stability_wakeup(state, key, query, decision) do
+    retry_after =
+      decision
+      |> get_in([:reconciliation, :blocked])
+      |> List.wrap()
+      |> Enum.filter(&(Map.get(&1, :reason) in ["policy_settling", "policy_cooldown"]))
+      |> Enum.map(&Map.get(&1, :retry_after_seconds))
+      |> Enum.filter(&(is_integer(&1) and &1 > 0))
+      |> Enum.min(fn -> nil end)
+
+    if retry_after do
+      put_stability_wakeup(state, key, query, retry_after)
+    else
+      update_in(state.stability_wakeups, &Map.delete(&1, key))
+    end
+  end
+
+  defp put_stability_wakeup(state, key, query, retry_after) do
+    token = make_ref()
+
+    Zaik.Time.send_after(
+      Map.get(state.config, :clock),
+      self(),
+      {:stability_wakeup, key, query, token},
+      retry_after * 1_000
+    )
+
+    put_in(state, [:stability_wakeups, key], token)
+  end
+
+  defp elapsed_seconds(value, now) do
+    with value when is_binary(value) <- value,
+         {:ok, datetime, _offset} <- DateTime.from_iso8601(value) do
+      max(0, DateTime.diff(now, datetime, :second))
+    else
+      _ -> 0
     end
   end
 
@@ -294,7 +399,8 @@ defmodule Zaik.Home.Autonomy.Engine do
         Zaik.Home.Reconciler.diff(arbitration, context,
           clock: clock,
           max_state_age_seconds:
-            Keyword.get(opts, :max_state_age_seconds, cfg.max_state_age_seconds)
+            Keyword.get(opts, :max_state_age_seconds, cfg.max_state_age_seconds),
+          policy_stability: policy_stability(opts)
         )
 
       decision = %{
@@ -327,6 +433,22 @@ defmodule Zaik.Home.Autonomy.Engine do
         {:error, reason} -> {:error, {:decision_not_recorded, reason}}
       end
     end
+  end
+
+  defp policy_stability(opts) do
+    policy_opts = Keyword.get(opts, :policy_opts, [])
+
+    opts
+    |> Keyword.get(:policy_registry_opts, [])
+    |> Zaik.Home.Policies.Registry.descriptors()
+    |> Map.new(fn descriptor ->
+      {descriptor.id,
+       %{
+         settle_seconds: Keyword.get(policy_opts, :settle_seconds, descriptor.settle_seconds),
+         cooldown_seconds:
+           Keyword.get(policy_opts, :cooldown_seconds, descriptor.cooldown_seconds)
+       }}
+    end)
   end
 
   defp evaluate_policies(context, opts, clock) do

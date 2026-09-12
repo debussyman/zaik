@@ -8,6 +8,8 @@ defmodule Zaik.Home.Policies.DaylightHarvesting do
 
   @impl true
   def descriptor do
+    cfg = config([])
+
     %{
       id: "daylight_harvesting",
       version: "1",
@@ -16,14 +18,14 @@ defmodule Zaik.Home.Policies.DaylightHarvesting do
       priority: 40,
       dependencies: ["presence", "illuminance", "temperature", "cover", "environment"],
       hysteresis: %{
-        activation_lux: 50,
-        release_lux: 80,
-        activation_max_temperature_f: 76.0,
-        release_max_temperature_f: 78.0
+        activation_lux: cfg.low_light_lux,
+        release_lux: cfg.release_light_lux,
+        activation_max_temperature_f: cfg.maximum_temperature_f,
+        release_max_temperature_f: cfg.release_maximum_temperature_f
       },
-      minimum_active_seconds: 60,
-      settle_seconds: 30,
-      cooldown_seconds: 120,
+      minimum_active_seconds: cfg.minimum_active_seconds,
+      settle_seconds: cfg.settle_seconds,
+      cooldown_seconds: cfg.cooldown_seconds,
       default_mode: :shadow
     }
   end

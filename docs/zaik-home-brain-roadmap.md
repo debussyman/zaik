@@ -260,10 +260,11 @@ states without directly controlling devices.
   - absence-based lighting shutdown.
 - [ ] Policies must depend on area/capability contracts rather than household
   device names.
-- [ ] Add hysteresis and minimum-active/settle periods to policy descriptors.
-  Descriptors now require hysteresis, minimum-active, settle, and cooldown
-  declarations; daylight release hysteresis and minimum-active enforcement are
-  implemented, while generic settle/cooldown enforcement remains.
+- [x] Require policy hysteresis, minimum-active, settle, and cooldown contracts.
+  Daylight enforces release hysteresis and minimum-active duration; the generic
+  reconciler enforces code-owned settle/cooldown windows from durable desired-
+  state history and the engine schedules bounded wakeups when those windows end;
+  active settle wakeups are reconstructed after coordinator restart.
 - [x] Evaluate observation-triggered policies only when their declared capability
   dependencies changed; explicit evaluations still run the complete registry.
 - [ ] Keep model consultation optional and bounded for ambiguous candidate
@@ -303,7 +304,8 @@ Goal: choose one explainable desired state when policies and people disagree.
   differences.
 - [ ] Enforce per-device, per-room, and global action-rate budgets.
 - [ ] Prevent oscillation through hysteresis, settle windows, cooldowns, and
-  conflict locks.
+  conflict locks. Per-policy stability windows are enforced; cross-policy/device
+  conflict locks remain.
 - [x] Preserve explicit action-plan preflight, idempotency ledger, physical
   verifier, and policy-gated retry boundary; successful explicit actions also
   create area/capability override leases so background goals cannot undo them.
