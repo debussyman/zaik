@@ -114,6 +114,21 @@ defmodule Zaik.Tools.ExecutorTest do
                registry_opts: [modules: [SkillAction]]
              )
 
+    versioned_goal =
+      Map.put(base_context, :active_skills, [
+        %{
+          name: "versioned goal",
+          risk: "medium",
+          allowed_tools: ["skill_action"],
+          contract: %{goal_id: "bedtime"}
+        }
+      ])
+
+    assert {:error, {:versioned_goal_requires_evidence_plan, ["bedtime"], "skill_action"}} =
+             Zaik.Tools.Executor.run("skill_action", %{}, versioned_goal,
+               registry_opts: [modules: [SkillAction]]
+             )
+
     allowed =
       Map.put(base_context, :active_skills, [
         %{name: "medium skill", risk: "medium", allowed_tools: ["skill_action"]}

@@ -13,7 +13,8 @@ defmodule Zaik.Tools.Executor do
     registry_opts = Keyword.get(opts, :registry_opts, [])
 
     with {:ok, %{descriptor: descriptor}} <- Zaik.Tools.Registry.fetch(tool, registry_opts),
-         :ok <- authorize_active_skills(descriptor, context) do
+         :ok <- authorize_active_skills(descriptor, context),
+         :ok <- authorize_versioned_goal(descriptor, context) do
       if descriptor.kind == :action do
         run_action(
           descriptor.name,
@@ -58,6 +59,31 @@ defmodule Zaik.Tools.Executor do
 
       {:error, reason} ->
         {:error, {:action_claim_failed, reason}}
+    end
+  end
+
+  defp authorize_versioned_goal(%{kind: kind}, _context) when kind != :action, do: :ok
+
+  defp authorize_versioned_goal(%{name: "execute_home_plan"}, _context), do: :ok
+
+  defp authorize_versioned_goal(descriptor, context) do
+    goal_ids =
+      context
+      |> context_value(:active_skills)
+      |> List.wrap()
+      |> Enum.flat_map(fn skill ->
+        contract = Map.get(skill, :contract) || Map.get(skill, "contract")
+
+        goal_id =
+          if is_map(contract), do: Map.get(contract, :goal_id) || Map.get(contract, "goal_id")
+
+        if is_binary(goal_id) and goal_id != "", do: [goal_id], else: []
+      end)
+
+    if goal_ids == [] do
+      :ok
+    else
+      {:error, {:versioned_goal_requires_evidence_plan, goal_ids, descriptor.name}}
     end
   end
 

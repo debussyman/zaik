@@ -251,7 +251,7 @@ defmodule Zaik.AgentChat.Prompts do
     - get_home_state and sql_query are read tools when state is genuinely needed before planning.
 
     Valid multi-action shape:
-    {"type":"tool_call","tool":"execute_home_plan","args":{"goal":"Set up Lily's room for bedtime with AC","actions":[{"device":"Lily's bedroom left blind","capability":"cover","target":{"state":"CLOSE"}},{"device":"Lily's bedroom right blind","capability":"cover","target":{"preset":"above AC"}}]}}
+    {"type":"tool_call","tool":"execute_home_plan","args":{"goal":"Set up Lily's room for bedtime with AC","goal_id":"lily_bedtime","goal_context_fingerprint":"COPY_EXACT_VALUE_FROM_GOAL_CONTEXT_RESULT","actions":[{"device":"Lily's bedroom left blind","capability":"cover","target":{"state":"CLOSE"}},{"device":"Lily's bedroom right blind","capability":"cover","target":{"preset":"above AC"}}]}}
 
     Valid single-action shape:
     {"type":"tool_call","tool":"control_device","args":{"device":"Lily's bedroom left blind","capability":"cover","target":{"state":"CLOSE"}}}
@@ -260,7 +260,7 @@ defmodule Zaik.AgentChat.Prompts do
     {"type":"tool_call","tool":"retry_home_action","args":{"action_id":"exact ID supplied by the user"}}
 
     Rules:
-    - For a relevant skill containing goal_id, call get_home_goal_context with that exact semantic goal ID before proposing actions. If required evidence is missing or stale, ask for clarification and do not execute.
+    - For a relevant skill containing goal_id, call get_home_goal_context with that exact semantic goal ID before proposing actions. If required evidence is missing or stale, ask for clarification and do not execute. Otherwise copy the exact returned goal_id and fingerprint into execute_home_plan as goal_id and goal_context_fingerprint; invented, omitted, or changed evidence is rejected.
     - Choose actions only from the validated goal context, relevant skills, current devices, and presets below.
     - Do not invent devices, capabilities, presets, MQTT topics, or MQTT payloads.
     - Use exact device names when calling tools.

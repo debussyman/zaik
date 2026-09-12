@@ -209,9 +209,9 @@ natural-language invocation.
   scoped presets before planning.
 - [ ] Require planners to return typed goals/actions and evidence references,
   without exposing hidden chain-of-thought.
-- [ ] Validate evidence freshness and required observations before execution.
-  `GoalContextBuilder` now blocks, clarifies, or explicitly degrades before
-  planning; binding evidence references to the eventual action plan remains.
+- [x] Validate evidence freshness and required observations before execution:
+  versioned-goal actions must use one coordinated plan carrying the exact stable
+  goal-context fingerprint, which is rebuilt and compared before preflight.
 - [x] Add generic `apply_device_preset` and `capture_device_preset` tools;
   captured targets come only from fresh canonical capability state and applying
   a preset re-enters normal target validation and supervised execution.

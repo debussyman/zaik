@@ -85,6 +85,13 @@ defmodule Zaik.Home.GoalContextBuilderTest do
 
     assert Enum.all?(result.evidence, &(&1.status == "ok"))
     assert [%{"preset_name" => "above AC", "target" => %{"position" => 71}}] = result.presets
+
+    Zaik.Home.Mirror.Clock.advance(context.clock, 1_000)
+
+    assert {:ok, one_second_later} =
+             Zaik.Home.GoalContextBuilder.build(skill(), bindings(context))
+
+    assert one_second_later.fingerprint == result.fingerprint
   end
 
   test "registered read tool resolves a semantic goal ID without phrase routing", context do
@@ -103,6 +110,55 @@ defmodule Zaik.Home.GoalContextBuilderTest do
 
     assert result.status == "ready"
     assert result.goal_id == "lily_bedtime"
+  end
+
+  test "versioned skill plans require a current evidence fingerprint", context do
+    [active_skill] = Zaik.SkillStore.list(paths: [context.skill_path])
+
+    tool_context =
+      context
+      |> bindings()
+      |> Map.new()
+      |> Map.put(:skill_opts, paths: [context.skill_path])
+      |> Map.put(:active_skills, [active_skill])
+
+    args = %{
+      "goal" => "bedtime",
+      "goal_id" => "lily_bedtime",
+      "actions" => [
+        %{
+          "device" => "Lily's bedroom left blind",
+          "capability" => "cover",
+          "target" => %{"position" => 100}
+        }
+      ]
+    }
+
+    assert {:error, :goal_evidence_required} =
+             Zaik.Home.Tools.ExecutePlan.run(Map.delete(args, "goal_id"), tool_context)
+
+    assert {:error, :goal_context_fingerprint_required} =
+             Zaik.Home.Tools.ExecutePlan.run(args, tool_context)
+
+    assert {:error, :goal_context_changed} =
+             Zaik.Home.Tools.ExecutePlan.run(
+               Map.put(args, "goal_context_fingerprint", String.duplicate("0", 64)),
+               tool_context
+             )
+
+    assert {:ok, gathered} =
+             Zaik.Home.GoalContextBuilder.build(
+               "lily_bedtime",
+               bindings(context) ++ [skill_opts: [paths: [context.skill_path]]]
+             )
+
+    invalid_after_evidence =
+      args
+      |> Map.put("goal_context_fingerprint", gathered.fingerprint)
+      |> put_in(["actions", Access.at(0), "device"], "Unknown blind")
+
+    assert {:error, {:invalid_action_plan, [%{reason: :not_found}]}} =
+             Zaik.Home.Tools.ExecutePlan.run(invalid_after_evidence, tool_context)
   end
 
   test "blocks when required canonical cover evidence is stale", context do

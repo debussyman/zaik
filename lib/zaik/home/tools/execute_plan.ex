@@ -19,6 +19,8 @@ defmodule Zaik.Home.Tools.ExecutePlan do
         "required" => ["actions"],
         "properties" => %{
           "goal" => %{"type" => "string"},
+          "goal_id" => %{"type" => "string"},
+          "goal_context_fingerprint" => %{"type" => "string"},
           "actions" => %{
             "type" => "array",
             "minItems" => 1,
@@ -44,9 +46,61 @@ defmodule Zaik.Home.Tools.ExecutePlan do
     actions = value(args, :actions) || value(args, :plan)
     plan_opts = value(context, :plan_opts) || []
 
-    with {:ok, actions} <- normalize_actions(actions) do
+    with {:ok, actions} <- normalize_actions(actions),
+         {:ok, context} <- validate_goal_evidence(args, context) do
       Zaik.Home.ActionPlan.run(goal, actions, context, plan_opts)
     end
+  end
+
+  defp validate_goal_evidence(args, context) do
+    goal_id = value(args, :goal_id)
+    supplied_fingerprint = value(args, :goal_context_fingerprint)
+
+    versioned_skill? =
+      Enum.any?(List.wrap(value(context, :active_skills)), fn skill ->
+        is_map(skill) and is_map(value(skill, :contract))
+      end)
+
+    cond do
+      is_nil(goal_id) and versioned_skill? ->
+        {:error, :goal_evidence_required}
+
+      is_nil(goal_id) ->
+        {:ok, context}
+
+      not is_binary(supplied_fingerprint) or supplied_fingerprint == "" ->
+        {:error, :goal_context_fingerprint_required}
+
+      true ->
+        case Zaik.Home.GoalContextBuilder.build(goal_id, goal_builder_opts(context)) do
+          {:ok, %{fingerprint: ^supplied_fingerprint} = goal_context} ->
+            {:ok,
+             context
+             |> Map.put(:goal_id, goal_id)
+             |> Map.put(:goal_context_fingerprint, supplied_fingerprint)
+             |> Map.put(:goal_evidence, goal_context.evidence)}
+
+          {:ok, _current} ->
+            {:error, :goal_context_changed}
+
+          {:error, reason} ->
+            {:error, {:goal_context_invalid, reason}}
+        end
+    end
+  end
+
+  defp goal_builder_opts(context) do
+    [
+      skill_opts: value(context, :skill_opts) || [],
+      device_store: value(context, :device_store),
+      history_store: value(context, :history_store),
+      occupancy_tracker: value(context, :occupancy_tracker),
+      manual_override_store: value(context, :manual_override_store),
+      preset_store: value(context, :preset_store),
+      capability_opts: value(context, :capability_opts),
+      clock: value(context, :clock),
+      environment_config: value(context, :environment_config) || %{}
+    ]
   end
 
   defp normalize_actions(actions) when is_list(actions) do

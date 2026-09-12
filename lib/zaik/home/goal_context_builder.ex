@@ -29,7 +29,7 @@ defmodule Zaik.Home.GoalContextBuilder do
         missing: missing,
         status: if(missing == [], do: "ready", else: "missing_data"),
         built_at: DateTime.to_iso8601(now),
-        fingerprint: fingerprint(contract, room.snapshot_id, presets, evidence)
+        fingerprint: fingerprint(contract, evidence, room.occupancy, room.manual_overrides)
       }
 
       missing_result(result, contract.missing_data_policy)
@@ -153,12 +153,26 @@ defmodule Zaik.Home.GoalContextBuilder do
     {:error, {:missing_required_observations, Enum.map(result.missing, & &1.requirement), result}}
   end
 
-  defp fingerprint(contract, snapshot_id, presets, evidence) do
-    {contract, snapshot_id, presets, evidence}
+  defp fingerprint(contract, evidence, occupancy, manual_overrides) do
+    stable_evidence =
+      Enum.map(evidence, fn item ->
+        Map.update(item, :value, nil, &drop_derived_age/1)
+      end)
+
+    {contract, stable_evidence, occupancy, manual_overrides}
     |> :erlang.term_to_binary()
     |> then(&:crypto.hash(:sha256, &1))
     |> Base.encode16(case: :lower)
   end
+
+  defp drop_derived_age(value) when is_map(value) do
+    value
+    |> Map.drop([:freshness_seconds, "freshness_seconds"])
+    |> Map.new(fn {key, nested} -> {key, drop_derived_age(nested)} end)
+  end
+
+  defp drop_derived_age(value) when is_list(value), do: Enum.map(value, &drop_derived_age/1)
+  defp drop_derived_age(value), do: value
 
   defp parse_time(%DateTime{} = value), do: {:ok, value}
 
