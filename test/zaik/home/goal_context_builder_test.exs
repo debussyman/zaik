@@ -171,6 +171,20 @@ defmodule Zaik.Home.GoalContextBuilderTest do
     assert result.fingerprint
   end
 
+  test "validated missing-data policy can request clarification or explicitly degrade", context do
+    Zaik.Home.Mirror.Clock.advance(context.clock, 121_000)
+
+    ask_skill = put_in(skill(), [:contract, :missing_data_policy], "ask")
+
+    assert {:ok, %{status: "needs_clarification", missing: [_ | _]}} =
+             Zaik.Home.GoalContextBuilder.build(ask_skill, bindings(context))
+
+    degraded_skill = put_in(skill(), [:contract, :missing_data_policy], "proceed_without")
+
+    assert {:ok, %{status: "degraded", missing: [_ | _]}} =
+             Zaik.Home.GoalContextBuilder.build(degraded_skill, bindings(context))
+  end
+
   test "rejects incomplete or unsupported skill contracts" do
     assert {:error, {:invalid_goal_contract, errors}} =
              Zaik.Home.GoalContract.new(%{contract: %{schema_version: 2, goal_id: "", scope: ""}})

@@ -73,12 +73,15 @@ defmodule Zaik.Home.Tools.ExecutePlan do
 
       true ->
         case Zaik.Home.GoalContextBuilder.build(goal_id, goal_builder_opts(context)) do
-          {:ok, %{fingerprint: ^supplied_fingerprint} = goal_context} ->
+          {:ok, %{status: "ready", fingerprint: ^supplied_fingerprint} = goal_context} ->
             {:ok,
              context
              |> Map.put(:goal_id, goal_id)
              |> Map.put(:goal_context_fingerprint, supplied_fingerprint)
              |> Map.put(:goal_evidence, goal_context.evidence)}
+
+          {:ok, %{status: status}} when status != "ready" ->
+            {:error, {:goal_context_not_ready, status}}
 
           {:ok, _current} ->
             {:error, :goal_context_changed}

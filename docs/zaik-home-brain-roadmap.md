@@ -207,8 +207,9 @@ natural-language invocation.
 - [x] Add a deterministic `GoalContextBuilder` that loads a matched semantic
   goal skill and gathers environment, history, capabilities, occupancy, and
   scoped presets before planning.
-- [ ] Require planners to return typed goals/actions and evidence references,
-  without exposing hidden chain-of-thought.
+- [x] Require planners to return typed semantic goal IDs, capability actions,
+  and stable evidence fingerprints without exposing hidden chain-of-thought;
+  Elixir rebuilds evidence and rejects omitted, invented, or changed references.
 - [x] Validate evidence freshness and required observations before execution:
   versioned-goal actions must use one coordinated plan carrying the exact stable
   goal-context fingerprint, which is rebuilt and compared before preflight.
@@ -217,7 +218,8 @@ natural-language invocation.
   a preset re-enters normal target validation and supervised execution.
 - [ ] Add proposal/confirmation-based natural-language skill authoring and
   reject unvalidated direct skill writes.
-- [ ] Define conservative behavior when observations or presets are missing.
+- [x] Define validated missing-data behavior: block by default, optionally ask
+  for clarification, or explicitly return a degraded non-executing context.
 
 Initial Lily bedtime contract:
 
