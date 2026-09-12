@@ -29,7 +29,8 @@ defmodule Zaik.Home.Mirror.Evals do
       %{name: "conflicting_pending_action_is_rejected", kind: :conflicting_actions},
       %{name: "daylight_harvesting_shadow_has_zero_side_effects", kind: :daylight_shadow},
       %{name: "manual_override_suppresses_until_virtual_expiry", kind: :manual_override},
-      %{name: "occupancy_absence_requires_virtual_settle_window", kind: :occupancy_debounce}
+      %{name: "occupancy_absence_requires_virtual_settle_window", kind: :occupancy_debounce},
+      %{name: "goal_context_gathers_fresh_independent_evidence", kind: :goal_context}
     ]
   end
 
@@ -246,6 +247,59 @@ defmodule Zaik.Home.Mirror.Evals do
       fn run ->
         run.result == 1 and run.report.passed? and run.report.side_effect_count == 0 and
           Enum.map(run.report.reports, & &1.disposition) == ["accepted", "stale"]
+      end
+    )
+  end
+
+  defp run_case(%{kind: :goal_context} = definition) do
+    scenario = Scenarios.lily_with_history_and_telemetry(id: definition.name)
+
+    finish(
+      definition,
+      Runner.run(scenario, fn _mirror, context ->
+        skill = %{
+          risk: "low",
+          allowed_tools: ["execute_home_plan"],
+          contract: %{
+            schema_version: 1,
+            goal_id: "lily_bedtime",
+            scope: "lily_bedroom",
+            required_observations: [
+              "environment.solar_phase",
+              "environment.season",
+              "history.temperature_f",
+              "capability.cover",
+              "presets.cover"
+            ],
+            preferences: ["preserve cooling airflow"],
+            constraints: ["right blind uses above AC"],
+            allowed_tools: ["execute_home_plan"],
+            risk_ceiling: "low",
+            missing_data_policy: "block"
+          }
+        }
+
+        Zaik.Home.GoalContextBuilder.build(skill,
+          clock: context.clock,
+          device_store: context.device_store,
+          occupancy_tracker: context.occupancy_tracker,
+          history_store: context.history_store,
+          manual_override_store: context.manual_override_store,
+          preset_store: context.preset_store,
+          environment_config: %{utc_offset_minutes: 0}
+        )
+      end),
+      fn run ->
+        match?(
+          {:ok,
+           %{
+             goal_id: "lily_bedtime",
+             status: "ready",
+             missing: [],
+             presets: [_ | _]
+           }},
+          run.result
+        ) and run.report.side_effect_count == 0
       end
     )
   end

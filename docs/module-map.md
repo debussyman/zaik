@@ -127,6 +127,8 @@ Home automation is one optional domain, not the whole harness.
 | `Zaik.Home.World` | Projects adapter payloads into capability-filtered current state. | Keep as the ordinary home reasoning boundary. |
 | `Zaik.Home.Capability` | Behaviour for typed state detection and target validation. | Keep as the semantic capability contract. |
 | `Zaik.Home.Capabilities.Registry` / `Capabilities.Contract` | Uncached discovery, fingerprints, and executable baseline composability validation. | Keep as the hot-load-friendly capability acceptance boundary. |
+| `Zaik.Home.GoalContract` | Validated versioned skill contract for semantic goals, required evidence, constraints, tools, risk, and missing-data policy. | Keep as the declarative goal boundary. |
+| `Zaik.Home.GoalContextBuilder` | Deterministically gathers and freshness-validates room, history, environment, and preset evidence before planning. | Add planner evidence-reference validation. |
 | `Zaik.Home.GoalCandidate` | Validated inert desired-state proposal with evidence, priority, expiry, and fingerprint. | Keep in the home policy/arbitration layer. |
 | `Zaik.Home.Policy` / `Zaik.Home.Policies.Registry` | Hot-load-friendly policy contract and uncached descriptor/fingerprint registry. | Keep in the home policy layer. |
 | `Zaik.Home.Policies.DaylightHarvesting` | Shadow-first generic candidate policy for occupied, dark, daytime, cool rooms. | Keep as a built-in policy example/default. |

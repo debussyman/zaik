@@ -83,6 +83,13 @@ defmodule Zaik do
   def home_room_context(query, opts \\ []), do: Zaik.Home.RoomContext.build(query, opts)
 
   @doc """
+  Build and validate the independently gathered evidence required by a
+  versioned household goal skill without planning or execution.
+  """
+  def home_goal_context(skill_or_goal, opts \\ []),
+    do: Zaik.Home.GoalContextBuilder.build(skill_or_goal, opts)
+
+  @doc """
   Evaluate configured home policies in the inert shadow/advisory pipeline.
   Canary and active execution are not enabled by this API.
   """

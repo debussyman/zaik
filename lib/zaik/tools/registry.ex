@@ -13,6 +13,7 @@ defmodule Zaik.Tools.Registry do
     Zaik.Home.Tools.GetState,
     Zaik.Home.Tools.GetHistory,
     Zaik.Home.Tools.GetAreaContext,
+    Zaik.Home.Tools.GetGoalContext,
     Zaik.Home.Tools.GetActionStatus,
     Zaik.Home.Tools.RetryAction,
     Zaik.Home.Tools.ExecutePlan,

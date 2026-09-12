@@ -75,7 +75,7 @@ defmodule Zaik.SkillStore do
     with {:ok, contents} <- File.read(path) do
       {metadata, body} = parse_frontmatter(contents)
 
-      %{
+      skill = %{
         path: path,
         name: metadata["name"] || path |> Path.basename(".md") |> String.replace("_", " "),
         domain: metadata["domain"],
@@ -85,6 +85,8 @@ defmodule Zaik.SkillStore do
         body: String.trim(body),
         text: String.trim(contents)
       }
+
+      Map.put(skill, :contract, goal_contract_metadata(metadata, skill))
     else
       _ -> nil
     end
@@ -126,6 +128,33 @@ defmodule Zaik.SkillStore do
     |> elem(0)
   end
 
+  defp goal_contract_metadata(metadata, skill) do
+    if metadata["goal_id"] do
+      %{
+        schema_version: parse_integer(metadata["schema_version"]),
+        goal_id: metadata["goal_id"],
+        scope: metadata["scope"],
+        required_observations: parse_list(metadata["required_observations"]),
+        preferences: parse_list(metadata["preferences"]),
+        constraints: parse_list(metadata["constraints"]),
+        allowed_tools: skill.allowed_tools,
+        risk_ceiling: metadata["risk_ceiling"] || skill.risk,
+        missing_data_policy: metadata["missing_data_policy"] || "block"
+      }
+    end
+  end
+
+  defp parse_integer(value) when is_integer(value), do: value
+
+  defp parse_integer(value) when is_binary(value) do
+    case Integer.parse(value) do
+      {integer, ""} -> integer
+      _ -> nil
+    end
+  end
+
+  defp parse_integer(_), do: nil
+
   defp parse_list(nil), do: []
 
   defp parse_list(value) when is_list(value) do
@@ -144,12 +173,30 @@ defmodule Zaik.SkillStore do
   end
 
   defp format_skill(skill) do
+    contract =
+      case skill.contract do
+        nil ->
+          ""
+
+        value ->
+          """
+          goal_schema_version: #{value.schema_version}
+          goal_id: #{value.goal_id}
+          scope: #{value.scope}
+          required_observations: #{Enum.join(value.required_observations, ", ")}
+          preferences: #{Enum.join(value.preferences, " | ")}
+          constraints: #{Enum.join(value.constraints, " | ")}
+          risk_ceiling: #{value.risk_ceiling}
+          missing_data_policy: #{value.missing_data_policy}
+          """
+      end
+
     """
     SKILL: #{skill.name}
     domain: #{skill.domain || "unknown"}
     risk: #{skill.risk || "unknown"}
     allowed_tools: #{Enum.join(skill.allowed_tools, ", ")}
-
+    #{contract}
     #{skill.body}
     """
     |> String.trim()

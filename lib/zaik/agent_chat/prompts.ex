@@ -245,6 +245,7 @@ defmodule Zaik.AgentChat.Prompts do
     - control_device for one low-risk entity/capability target.
     - retry_home_action only when the user explicitly asks to retry and supplies an existing action ID. Deterministic policy checks live state, timeout, cooldown, and retry budget.
     - control_blind is a temporary compatibility tool for one blind action.
+    - get_home_goal_context gathers required evidence for a relevant versioned goal skill before planning.
     - get_home_state and sql_query are read tools when state is genuinely needed before planning.
 
     Valid multi-action shape:
@@ -257,7 +258,8 @@ defmodule Zaik.AgentChat.Prompts do
     {"type":"tool_call","tool":"retry_home_action","args":{"action_id":"exact ID supplied by the user"}}
 
     Rules:
-    - Choose actions from relevant skills, current devices, and presets below.
+    - For a relevant skill containing goal_id, call get_home_goal_context with that exact semantic goal ID before proposing actions. If required evidence is missing or stale, ask for clarification and do not execute.
+    - Choose actions only from the validated goal context, relevant skills, current devices, and presets below.
     - Do not invent devices, capabilities, presets, MQTT topics, or MQTT payloads.
     - Use exact device names when calling tools.
     - Put every required change into one execute_home_plan call. Elixir preflights every action and preset before the first command is sent.

@@ -200,15 +200,18 @@ Acceptance:
 Goal: turn prose skills into validated goal contracts while preserving flexible
 natural-language invocation.
 
-- [ ] Version the skill schema with goal ID, scope, required observations,
+- [x] Version the skill schema with goal ID, scope, required observations,
   preferences, constraints, allowed tools, risk ceiling, and missing-data policy.
 - [ ] Keep semantic goal recognition model-driven; do not add phrase-specific
   command branches for expressions such as "It's Lily's bedtime."
-- [ ] Add a deterministic `GoalContextBuilder` that loads a matched skill and
-  gathers all required observations before planning.
+- [x] Add a deterministic `GoalContextBuilder` that loads a matched semantic
+  goal skill and gathers environment, history, capabilities, occupancy, and
+  scoped presets before planning.
 - [ ] Require planners to return typed goals/actions and evidence references,
   without exposing hidden chain-of-thought.
 - [ ] Validate evidence freshness and required observations before execution.
+  `GoalContextBuilder` now blocks, clarifies, or explicitly degrades before
+  planning; binding evidence references to the eventual action plan remains.
 - [ ] Add generic `apply_device_preset` and `capture_device_preset` tools.
 - [ ] Add proposal/confirmation-based natural-language skill authoring and
   reject unvalidated direct skill writes.
@@ -376,8 +379,9 @@ not only a collection of hand-written examples.
   variants.
 - [ ] Generate scenario matrices across day/night, season, occupancy, light,
   temperature, current device state, freshness, overrides, and faults. The
-  daylight boolean matrix, override-expiry timeline, and debounced occupancy
-  timeline are covered; broader generated combinations remain.
+  daylight boolean matrix, override-expiry timeline, debounced occupancy
+  timeline, and independently gathered goal evidence are covered; broader
+  generated combinations remain.
 - [ ] Add metamorphic natural-language and tool-argument generation for aliases,
   possessives, plurals, word order, capability words, and time phrases.
 - [ ] Assert lookup invariance between current and historical tools.

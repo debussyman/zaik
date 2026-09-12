@@ -193,7 +193,7 @@ defmodule Zaik.Home.Mirror.Scenarios do
       %{
         device: "Lily's bedroom right blind",
         payload: %{"position" => 0, "state" => "OPEN"},
-        metadata: %{"source" => "mirror"},
+        metadata: %{"source" => "mirror", "area_id" => "lily_bedroom"},
         observed_at: DateTime.add(now, -30, :second)
       }
     ]
@@ -203,7 +203,11 @@ defmodule Zaik.Home.Mirror.Scenarios do
     %{
       device: "Lily's room multi-sensor",
       payload: payload,
-      metadata: %{"source" => "mirror", "ieee_address" => "eval-sensor"},
+      metadata: %{
+        "source" => "mirror",
+        "ieee_address" => "eval-sensor",
+        "area_id" => "lily_bedroom"
+      },
       observed_at: DateTime.add(now, offset_seconds, :second)
     }
   end
