@@ -10,6 +10,7 @@ defmodule Zaik.Home.Policy do
           required(:id) => String.t(),
           required(:version) => String.t(),
           required(:description) => String.t(),
+          required(:priority_class) => atom(),
           required(:priority) => non_neg_integer(),
           required(:dependencies) => [String.t()],
           required(:default_mode) => :off | :shadow | :advisory | :canary | :active

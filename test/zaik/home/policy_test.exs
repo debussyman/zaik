@@ -157,7 +157,8 @@ defmodule Zaik.Home.PolicyTest do
       policy_id: "test",
       policy_version: "1",
       scope: "room",
-      priority: 1,
+      priority_class: :daylight_energy,
+      priority: 40,
       confidence: 1.1,
       desired_state: [
         %{entity_id: "blind", device: "Blind", capability: "cover", target: %{"position" => 0}}
@@ -182,7 +183,8 @@ defmodule Zaik.Home.PolicyTest do
                policy_id: "bad",
                policy_version: "1",
                scope: "room",
-               priority: 1,
+               priority_class: :daylight_energy,
+               priority: 40,
                confidence: 0.9,
                desired_state: [
                  %{

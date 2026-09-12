@@ -12,6 +12,7 @@ defmodule Zaik.Home.Policies.DaylightHarvesting do
       id: "daylight_harvesting",
       version: "1",
       description: "Prefer natural daylight in occupied, dark, sufficiently cool rooms.",
+      priority_class: :daylight_energy,
       priority: 40,
       dependencies: ["presence", "illuminance", "temperature", "cover", "environment"],
       default_mode: :shadow
@@ -51,7 +52,8 @@ defmodule Zaik.Home.Policies.DaylightHarvesting do
           policy_id: policy.id,
           policy_version: policy.version,
           scope: scope(context),
-          priority: Keyword.get(opts, :priority, policy.priority),
+          priority_class: policy.priority_class,
+          priority: policy.priority,
           confidence: confidence,
           desired_state: desired_state,
           evidence: %{

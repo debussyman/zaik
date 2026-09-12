@@ -11,6 +11,19 @@ defmodule Zaik.Home.ArbitratorTest do
     %{clock: clock}
   end
 
+  test "household priority classes have fixed non-model-selected weights" do
+    assert Zaik.Home.Priority.classes() == [
+             safety_security: 100,
+             explicit_user: 90,
+             privacy_sleep: 80,
+             comfort: 60,
+             daylight_energy: 40
+           ]
+
+    assert {:error, {:priority_class_mismatch, :comfort, 60, 100}} =
+             Zaik.Home.Priority.validate(:comfort, 100)
+  end
+
   test "higher-priority bedtime target suppresses daylight target", %{clock: clock} do
     daylight = candidate("daylight", 40, %{"state" => "OPEN"}, clock)
     bedtime = candidate("bedtime", 80, %{"state" => "CLOSE"}, clock)
@@ -44,7 +57,7 @@ defmodule Zaik.Home.ArbitratorTest do
 
   test "equivalent targets coalesce and expired candidates cannot win", %{clock: clock} do
     first = candidate("policy_a", 40, %{"state" => "OPEN"}, clock)
-    equivalent = candidate("policy_b", 30, %{"position" => 0}, clock)
+    equivalent = candidate("policy_b", 40, %{"position" => 0}, clock)
     expired = candidate("manual", 100, %{"state" => "CLOSE"}, clock, -1)
 
     result =
@@ -64,6 +77,7 @@ defmodule Zaik.Home.ArbitratorTest do
       policy_id: policy_id,
       policy_version: "1",
       scope: "lily_bedroom",
+      priority_class: priority_class(priority),
       priority: priority,
       confidence: confidence,
       desired_state: [
@@ -80,4 +94,10 @@ defmodule Zaik.Home.ArbitratorTest do
       expires_at: DateTime.add(now, ttl, :second)
     })
   end
+
+  defp priority_class(100), do: :safety_security
+  defp priority_class(90), do: :explicit_user
+  defp priority_class(80), do: :privacy_sleep
+  defp priority_class(60), do: :comfort
+  defp priority_class(40), do: :daylight_energy
 end

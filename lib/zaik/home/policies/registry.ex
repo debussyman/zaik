@@ -125,17 +125,24 @@ defmodule Zaik.Home.Policies.Registry do
     version = value(descriptor, :version)
     description = value(descriptor, :description)
     priority = value(descriptor, :priority)
+    priority_class = value(descriptor, :priority_class)
+
+    priority_valid? =
+      match?({:ok, {_class, ^priority}}, Zaik.Home.Priority.validate(priority_class, priority))
+
     dependencies = List.wrap(value(descriptor, :dependencies)) |> Enum.map(&normalize/1)
     mode = value(descriptor, :default_mode)
 
     if id != "" and is_binary(version) and version != "" and is_binary(description) and
-         description != "" and is_integer(priority) and priority in 0..100 and
+         description != "" and is_integer(priority) and priority in 0..100 and priority_valid? and
          dependencies != [] and Enum.all?(dependencies, &(&1 != "")) and mode in @modes do
       {:ok,
        %{
          id: id,
          version: version,
          description: description,
+         priority_class:
+           elem(Zaik.Home.Priority.validate(priority_class, priority), 1) |> elem(0),
          priority: priority,
          dependencies: dependencies,
          default_mode: mode

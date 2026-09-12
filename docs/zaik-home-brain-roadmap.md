@@ -282,9 +282,9 @@ Acceptance:
 
 Goal: choose one explainable desired state when policies and people disagree.
 
-- [ ] Define household priority classes, initially:
+- [x] Define fixed, non-model-selected household priority classes:
   safety/security > explicit user/manual override > privacy/sleep > comfort >
-  daylight/energy optimization.
+  daylight/energy optimization. Candidate numeric weights must match their class.
 - [x] Add deterministic priority arbitration per entity capability.
 - [x] Record selected and suppressed candidates with expired, equivalent, or
   conflicting reasons.

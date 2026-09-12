@@ -65,6 +65,7 @@ defmodule Zaik.Home.Arbitrator do
       candidate_id: entry.candidate.id,
       policy_id: entry.candidate.policy_id,
       policy_version: entry.candidate.policy_version,
+      priority_class: entry.candidate.priority_class,
       priority: entry.candidate.priority,
       confidence: entry.candidate.confidence,
       evidence: entry.candidate.evidence,
