@@ -1,6 +1,23 @@
 defmodule Zaik.Tools.ExecutorTest do
   use ExUnit.Case, async: true
 
+  defmodule FakeHomeAction do
+    @behaviour Zaik.Tool
+
+    def descriptor do
+      %{
+        name: "control_device",
+        description: "Fake home action",
+        input_schema: %{"type" => "object"},
+        kind: :action,
+        risk: :low
+      }
+    end
+
+    def run(_args, _context),
+      do: {:ok, %{status: "accepted", action_id: "fake-action"}}
+  end
+
   defmodule SkillAction do
     @behaviour Zaik.Tool
 
@@ -138,6 +155,58 @@ defmodule Zaik.Tools.ExecutorTest do
              Zaik.Tools.Executor.run("skill_action", %{}, allowed,
                registry_opts: [modules: [SkillAction]]
              )
+  end
+
+  test "successful explicit home actions create area capability override leases", %{
+    ledger: ledger,
+    supervisor: supervisor
+  } do
+    {:ok, devices} = start_supervised({Zaik.Home.DeviceStore, name: nil, event_bus: false})
+
+    {:ok, overrides} =
+      start_supervised({Zaik.Home.Autonomy.ManualOverrideStore, name: nil, db_path: ":memory:"})
+
+    Zaik.Home.DeviceStore.upsert_device(
+      devices,
+      "Office blind",
+      %{"position" => 50},
+      %{"ieee_address" => "office", "area_id" => "office"}
+    )
+
+    context = %{
+      channel: :telegram,
+      chat_id: "-100",
+      message_id: 200,
+      sender_id: "family-member",
+      action_ledger: ledger,
+      task_supervisor: supervisor,
+      device_store: devices,
+      manual_override_store: overrides
+    }
+
+    args = %{"device" => "Office blind", "capability" => "cover", "target" => %{"position" => 70}}
+
+    assert {:ok, %{status: "accepted"}} =
+             Zaik.Tools.Executor.run("control_device", args, context,
+               registry_opts: [modules: [FakeHomeAction]]
+             )
+
+    assert [lease] = Zaik.Home.Autonomy.ManualOverrideStore.active("office", [], overrides)
+    assert lease.owner == "family-member"
+    assert lease.capability == "cover"
+    assert lease.reason =~ "fake-action"
+
+    autonomous =
+      context
+      |> Map.put(:message_id, 201)
+      |> Map.put(:autonomy_decision_id, "decision")
+
+    assert {:ok, %{status: "accepted"}} =
+             Zaik.Tools.Executor.run("control_device", args, autonomous,
+               registry_opts: [modules: [FakeHomeAction]]
+             )
+
+    assert length(Zaik.Home.Autonomy.ManualOverrideStore.active("office", [], overrides)) == 1
   end
 
   test "bounds action execution time", %{ledger: ledger, supervisor: supervisor} do

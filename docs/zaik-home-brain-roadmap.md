@@ -300,7 +300,9 @@ Goal: choose one explainable desired state when policies and people disagree.
 - [ ] Enforce per-device, per-room, and global action-rate budgets.
 - [ ] Prevent oscillation through hysteresis, settle windows, cooldowns, and
   conflict locks.
-- [ ] Preserve explicit action-plan preflight, ledger, verifier, and retry policy.
+- [x] Preserve explicit action-plan preflight, idempotency ledger, physical
+  verifier, and policy-gated retry boundary; successful explicit actions also
+  create area/capability override leases so background goals cannot undo them.
 - [ ] Add autonomy modes globally and per policy/room: off, shadow, advisory,
   canary, active.
 

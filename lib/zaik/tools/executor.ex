@@ -16,15 +16,19 @@ defmodule Zaik.Tools.Executor do
          :ok <- authorize_active_skills(descriptor, context),
          :ok <- authorize_versioned_goal(descriptor, context) do
       if descriptor.kind == :action do
-        run_action(
-          descriptor.name,
-          args,
-          context,
-          fn action_context ->
-            Zaik.Tools.Registry.run(descriptor.name, args, action_context, registry_opts)
-          end,
-          opts
-        )
+        result =
+          run_action(
+            descriptor.name,
+            args,
+            context,
+            fn action_context ->
+              Zaik.Tools.Registry.run(descriptor.name, args, action_context, registry_opts)
+            end,
+            opts
+          )
+
+        maybe_record_manual_override(descriptor.name, args, context, result)
+        result
       else
         Zaik.Tools.Registry.run(descriptor.name, args, context, registry_opts)
       end
@@ -127,6 +131,110 @@ defmodule Zaik.Tools.Executor do
   defp risk_rank(value) when value in [:medium, "medium"], do: 2
   defp risk_rank(value) when value in [:high, "high"], do: 3
   defp risk_rank(_value), do: -1
+
+  defp maybe_record_manual_override(tool, args, context, result) do
+    if explicit_home_action?(tool, context) and side_effect_accepted?(result) and
+         not duplicate_result?(result) do
+      store =
+        context_value(context, :manual_override_store) || Zaik.Home.Autonomy.ManualOverrideStore
+
+      ttl =
+        Application.get_env(:zaik, :home_autonomy, [])
+        |> Keyword.get(:explicit_override_ttl_seconds, 30 * 60)
+
+      owner =
+        context_value(context, :sender_id) || context_value(context, :created_by) || "operator"
+
+      action_reference = result_action_reference(result)
+
+      args
+      |> action_targets(tool)
+      |> Enum.map(fn target ->
+        with {:ok, entity} <-
+               Zaik.Home.World.get(target.device,
+                 device_store: context_value(context, :device_store) || Zaik.Home.DeviceStore,
+                 identity_store: context_value(context, :history_store) || Zaik.Home.HistoryStore,
+                 capability: target.capability
+               ),
+             area when is_binary(area) and area != "" <- entity.area_id do
+          Zaik.Home.Autonomy.ManualOverrideStore.create(
+            area,
+            %{
+              owner: to_string(owner),
+              reason: "explicit #{tool} action #{action_reference}",
+              capability: target.capability,
+              ttl_seconds: ttl
+            },
+            [],
+            store
+          )
+        else
+          _ -> :ignored
+        end
+      end)
+
+      :ok
+    else
+      :ok
+    end
+  catch
+    :exit, _reason -> :ok
+  end
+
+  defp explicit_home_action?(tool, context) do
+    tool in ["control_device", "control_blind", "execute_home_plan", "apply_device_preset"] and
+      is_nil(context_value(context, :autonomy_decision_id))
+  end
+
+  defp action_targets(args, "execute_home_plan") do
+    (Map.get(args, "actions") || Map.get(args, :actions) || [])
+    |> Enum.flat_map(fn action ->
+      device = Map.get(action, "device") || Map.get(action, :device)
+      capability = Map.get(action, "capability") || Map.get(action, :capability)
+
+      if is_binary(device) and is_binary(capability),
+        do: [%{device: device, capability: capability}],
+        else: []
+    end)
+    |> Enum.uniq()
+  end
+
+  defp action_targets(args, _tool) do
+    device =
+      Map.get(args, "device") || Map.get(args, :device) || Map.get(args, "query") ||
+        Map.get(args, :query)
+
+    capability = Map.get(args, "capability") || Map.get(args, :capability) || "cover"
+    if is_binary(device), do: [%{device: device, capability: capability}], else: []
+  end
+
+  defp side_effect_accepted?({:ok, result}) when is_map(result),
+    do:
+      (Map.get(result, :status) || Map.get(result, "status")) in [
+        "accepted",
+        "verified",
+        "unavailable"
+      ]
+
+  defp side_effect_accepted?({:error, {:action_plan_failed, report}}) when is_map(report),
+    do: (Map.get(report, :completed_count) || Map.get(report, "completed_count") || 0) > 0
+
+  defp side_effect_accepted?(_result), do: false
+
+  defp duplicate_result?({:ok, result}) when is_map(result),
+    do: Map.get(result, :duplicate) == true or Map.get(result, "duplicate") == true
+
+  defp duplicate_result?(_result), do: false
+
+  defp result_action_reference({:ok, result}) when is_map(result) do
+    Map.get(result, :plan_run_id) || Map.get(result, "plan_run_id") ||
+      Map.get(result, :action_id) || Map.get(result, "action_id") || "unknown"
+  end
+
+  defp result_action_reference({:error, {:action_plan_failed, report}}) when is_map(report),
+    do: Map.get(report, :plan_run_id) || Map.get(report, "plan_run_id") || "partial"
+
+  defp result_action_reference(_result), do: "unknown"
 
   defp invoke(fun, _context) when is_function(fun, 0), do: fun.()
   defp invoke(fun, context) when is_function(fun, 1), do: fun.(context)

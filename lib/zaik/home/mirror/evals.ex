@@ -31,7 +31,8 @@ defmodule Zaik.Home.Mirror.Evals do
       %{name: "manual_override_suppresses_until_virtual_expiry", kind: :manual_override},
       %{name: "occupancy_absence_requires_virtual_settle_window", kind: :occupancy_debounce},
       %{name: "goal_context_gathers_fresh_independent_evidence", kind: :goal_context},
-      %{name: "generic_preset_capture_and_apply_use_mirror_executor", kind: :preset_tools}
+      %{name: "generic_preset_capture_and_apply_use_mirror_executor", kind: :preset_tools},
+      %{name: "explicit_action_creates_temporary_override", kind: :explicit_override}
     ]
   end
 
@@ -248,6 +249,47 @@ defmodule Zaik.Home.Mirror.Evals do
       fn run ->
         run.result == 1 and run.report.passed? and run.report.side_effect_count == 0 and
           Enum.map(run.report.reports, & &1.disposition) == ["accepted", "stale"]
+      end
+    )
+  end
+
+  defp run_case(%{kind: :explicit_override} = definition) do
+    scenario = Scenarios.lily_bedtime_with_ac(id: definition.name)
+
+    finish(
+      definition,
+      Runner.run(scenario, fn _mirror, context ->
+        result =
+          Zaik.Tools.Executor.run(
+            "apply_device_preset",
+            %{
+              "device" => "Lily's bedroom right blind",
+              "capability" => "cover",
+              "preset" => "above AC"
+            },
+            Map.merge(context, %{
+              channel: :telegram,
+              chat_id: "mirror-chat",
+              message_id: "explicit-preset",
+              sender_id: "mirror-user"
+            }),
+            task_supervisor: context.task_supervisor,
+            ledger: context.action_ledger
+          )
+
+        overrides =
+          Zaik.Home.Autonomy.ManualOverrideStore.active(
+            "lily_bedroom",
+            [clock: context.clock],
+            context.manual_override_store
+          )
+
+        %{action: result, overrides: overrides}
+      end),
+      fn run ->
+        match?({:ok, %{target: %{"position" => 71}}}, run.result.action) and
+          match?([%{owner: "mirror-user", capability: "cover"}], run.result.overrides) and
+          run.report.side_effect_count == 1
       end
     )
   end

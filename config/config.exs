@@ -148,6 +148,7 @@ config :zaik, :home_autonomy,
   event_debounce_ms: 500,
   event_min_interval_ms: 60_000,
   occupancy_absence_debounce_ms: 300_000,
+  explicit_override_ttl_seconds: 1_800,
   subscribe_events: true,
   decision_db_path: if(config_env() == :test, do: ":memory:", else: "~/.zaik/home/home.db")
 
