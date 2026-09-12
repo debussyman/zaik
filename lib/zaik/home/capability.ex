@@ -17,4 +17,7 @@ defmodule Zaik.Home.Capability do
   @callback detected?(device :: map()) :: boolean()
   @callback state(device :: map()) :: map()
   @callback validate_target(target :: map()) :: {:ok, map()} | {:error, term()}
+  @callback capture_target(typed_state :: map()) :: {:ok, map()} | {:error, term()}
+
+  @optional_callbacks capture_target: 1
 end

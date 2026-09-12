@@ -154,6 +154,8 @@ Home automation is one optional domain, not the whole harness.
 | `Zaik.Home.Tools.GetHistory` | Bounded typed capability/time-window history. | Keep as primary ordinary history tool. |
 | `Zaik.Home.Tools.GetAreaContext` | Typed room summary combining current entities, deterministic environment, and bounded historical aggregates. | Keep as the goal/policy context read boundary. |
 | `Zaik.Home.Tools.ControlDevice` | Generic entity/capability/target control tool. | Replace device-class-specific model tools over time. |
+| `Zaik.Home.Tools.ApplyDevicePreset` | Resolves a named preset and re-enters validated capability control. | Keep as the generic preset action boundary. |
+| `Zaik.Home.Tools.CaptureDevicePreset` | Captures fresh canonical capability state without accepting adapter payloads. | Extend through optional capability capture callbacks. |
 | `Zaik.Home.Tools.ExecutePlan` | Registered preflighted multi-action control tool. | Keep as the coordinated-action tool. |
 | `Zaik.Home.Tools.RetryAction` | Policy-gated retry by persistent action ID; reconstructs only unresolved original targets. | Keep as the explicit retry boundary. |
 | `Zaik.Home.Mirror` / `Mirror.Scenario` / `Mirror.Scenarios` | Isolated runtime plus fingerprinted and reusable virtual-home fixture definitions. | Keep as the evaluation-world boundary. |

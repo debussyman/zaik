@@ -17,6 +17,8 @@ defmodule Zaik.Tools.Registry do
     Zaik.Home.Tools.GetActionStatus,
     Zaik.Home.Tools.RetryAction,
     Zaik.Home.Tools.ExecutePlan,
+    Zaik.Home.Tools.ApplyDevicePreset,
+    Zaik.Home.Tools.CaptureDevicePreset,
     Zaik.Home.Tools.ControlDevice,
     Zaik.Home.Tools.ControlBlind
   ]

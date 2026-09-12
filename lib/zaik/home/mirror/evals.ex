@@ -30,7 +30,8 @@ defmodule Zaik.Home.Mirror.Evals do
       %{name: "daylight_harvesting_shadow_has_zero_side_effects", kind: :daylight_shadow},
       %{name: "manual_override_suppresses_until_virtual_expiry", kind: :manual_override},
       %{name: "occupancy_absence_requires_virtual_settle_window", kind: :occupancy_debounce},
-      %{name: "goal_context_gathers_fresh_independent_evidence", kind: :goal_context}
+      %{name: "goal_context_gathers_fresh_independent_evidence", kind: :goal_context},
+      %{name: "generic_preset_capture_and_apply_use_mirror_executor", kind: :preset_tools}
     ]
   end
 
@@ -247,6 +248,44 @@ defmodule Zaik.Home.Mirror.Evals do
       fn run ->
         run.result == 1 and run.report.passed? and run.report.side_effect_count == 0 and
           Enum.map(run.report.reports, & &1.disposition) == ["accepted", "stale"]
+      end
+    )
+  end
+
+  defp run_case(%{kind: :preset_tools} = definition) do
+    scenario = Scenarios.lily_bedtime_with_ac(id: definition.name)
+
+    finish(
+      definition,
+      Runner.run(scenario, fn mirror, context ->
+        args = %{
+          "device" => "Lily's bedroom right blind",
+          "capability" => "cover",
+          "preset" => "captured open"
+        }
+
+        {:ok, captured} =
+          Zaik.Home.Tools.CaptureDevicePreset.run(args, Map.put(context, :sender_id, "mirror"))
+
+        Zaik.Home.DeviceStore.upsert_device(
+          mirror.device_store,
+          "Lily's bedroom right blind",
+          %{"position" => 100},
+          %{"observed_at" => Zaik.Home.Mirror.now(mirror), "source" => "mirror"}
+        )
+
+        applied =
+          Zaik.Home.Tools.ApplyDevicePreset.run(
+            args,
+            Map.put(context, :action_id, "mirror-preset-apply")
+          )
+
+        %{captured: captured, applied: applied}
+      end),
+      fn run ->
+        run.result.captured["target"] == %{"position" => 0} and
+          match?({:ok, %{target: %{"position" => 0}}}, run.result.applied) and
+          run.report.side_effect_count == 1
       end
     )
   end

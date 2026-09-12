@@ -212,7 +212,9 @@ natural-language invocation.
 - [ ] Validate evidence freshness and required observations before execution.
   `GoalContextBuilder` now blocks, clarifies, or explicitly degrades before
   planning; binding evidence references to the eventual action plan remains.
-- [ ] Add generic `apply_device_preset` and `capture_device_preset` tools.
+- [x] Add generic `apply_device_preset` and `capture_device_preset` tools;
+  captured targets come only from fresh canonical capability state and applying
+  a preset re-enters normal target validation and supervised execution.
 - [ ] Add proposal/confirmation-based natural-language skill authoring and
   reject unvalidated direct skill writes.
 - [ ] Define conservative behavior when observations or presets are missing.

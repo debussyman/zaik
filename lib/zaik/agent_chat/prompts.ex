@@ -242,6 +242,8 @@ defmodule Zaik.AgentChat.Prompts do
 
     You may use these supervised tools:
     - execute_home_plan for requests requiring two or more coordinated changes. This is preferred for room setups and skills with multiple steps.
+    - apply_device_preset for one existing named device preset.
+    - capture_device_preset only when the user explicitly asks to save fresh current device state as a preset.
     - control_device for one low-risk entity/capability target.
     - retry_home_action only when the user explicitly asks to retry and supplies an existing action ID. Deterministic policy checks live state, timeout, cooldown, and retry budget.
     - control_blind is a temporary compatibility tool for one blind action.
@@ -340,7 +342,7 @@ defmodule Zaik.AgentChat.Prompts do
     - Return exactly one valid JSON object and nothing else.
     - For an explicit retry with an action ID, return one retry_home_action call.
     - For multiple actions, return one execute_home_plan call containing the complete actions array.
-    - For one new action, return one control_device call.
+    - For one named preset application or explicit preset capture, use the corresponding preset tool; for another single new action, return one control_device call.
     - After a tool result, return {"type":"final","answer":"..."} unless a read result shows clarification is needed.
     - Never claim physical completion unless a tool result reports verified=true. If it reports status=accepted, say the command or plan was accepted/sent.
     - Do not output markdown, comments, code fences, MQTT topics, or trailing text.

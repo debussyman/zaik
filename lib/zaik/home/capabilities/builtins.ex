@@ -167,6 +167,19 @@ defmodule Zaik.Home.Capabilities.Cover do
     do: {:ok, %{"preset" => preset}}
 
   def validate_target(_target), do: {:error, :invalid_cover_target}
+
+  def capture_target(state) when is_map(state) do
+    case Map.get(state, :position) || Map.get(state, "position") do
+      position when is_integer(position) and position in 0..100 ->
+        {:ok, %{"position" => position}}
+
+      position when is_float(position) and position >= 0 and position <= 100 ->
+        {:ok, %{"position" => round(position)}}
+
+      _ ->
+        {:error, :missing_cover_position}
+    end
+  end
 end
 
 defmodule Zaik.Home.Capabilities.Battery do
