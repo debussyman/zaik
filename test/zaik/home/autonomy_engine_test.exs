@@ -41,6 +41,9 @@ defmodule Zaik.Home.AutonomyEngineTest do
     {:ok, desired_states} =
       start_supervised({Zaik.Home.Autonomy.DesiredStateStore, name: nil, db_path: ":memory:"})
 
+    {:ok, action_budgets} =
+      start_supervised({Zaik.Home.Autonomy.ActionBudgetStore, name: nil, db_path: ":memory:"})
+
     {:ok, engine} =
       start_supervised(
         {Zaik.Home.Autonomy.Engine,
@@ -49,7 +52,8 @@ defmodule Zaik.Home.AutonomyEngineTest do
          mode: :shadow,
          occupancy_tracker: false,
          manual_override_store: overrides,
-         desired_state_store: desired_states}
+         desired_state_store: desired_states,
+         action_budget_store: action_budgets}
       )
 
     sensor_metadata = %{
@@ -100,6 +104,7 @@ defmodule Zaik.Home.AutonomyEngineTest do
       decisions: decisions,
       overrides: overrides,
       desired_states: desired_states,
+      action_budgets: action_budgets,
       engine: engine
     }
   end
@@ -155,6 +160,8 @@ defmodule Zaik.Home.AutonomyEngineTest do
     assert stored.snapshot_id == ready.snapshot_id
     assert length(stored.candidates) == 1
     assert length(stored.reconciliation["actions"]) == 2
+    assert stored.action_budget["status"] == "allowed"
+    assert stored.action_budget["usage"]["global"]["current"] == 0
 
     assert desired =
              Zaik.Home.Autonomy.DesiredStateStore.active(
@@ -166,6 +173,46 @@ defmodule Zaik.Home.AutonomyEngineTest do
     assert length(desired) == 2
     assert Enum.all?(desired, &(&1.priority_class == "daylight_energy"))
     assert Enum.all?(desired, &(&1.decision_id == ready.id))
+  end
+
+  test "shadow reconciliation applies durable device action budgets", context do
+    left_action = %{entity_id: "left", capability: "cover"}
+
+    for decision_id <- ["budget-one", "budget-two"] do
+      assert {:ok, [_]} =
+               Zaik.Home.Autonomy.ActionBudgetStore.record(
+                 [left_action],
+                 %{decision_id: decision_id, scope: "lily_bedroom"},
+                 context.action_budgets
+               )
+    end
+
+    opts = [
+      clock: {Zaik.Home.Mirror.Clock, context.clock},
+      device_store: context.devices,
+      history_store: context.history,
+      decision_store: context.decisions,
+      action_budget_store: context.action_budgets,
+      environment_config: %{utc_offset_minutes: 0},
+      policy_opts: [maximum_temperature_f: 76.0]
+    ]
+
+    assert {:ok, %{status: "blocked"}} =
+             Zaik.Home.Autonomy.Engine.evaluate("lily", opts, context.engine)
+
+    Zaik.Home.Mirror.Clock.advance(context.clock, 30_000)
+    assert {:ok, decision} = Zaik.Home.Autonomy.Engine.evaluate("lily", opts, context.engine)
+
+    assert decision.action_budget.status == "blocked"
+    assert Enum.map(decision.reconciliation.actions, & &1.entity_id) == ["right"]
+
+    assert [%{reason: "action_budget_exceeded", dimensions: dimensions}] =
+             Enum.filter(
+               decision.reconciliation.blocked,
+               &(&1.reason == "action_budget_exceeded")
+             )
+
+    assert Enum.map(dimensions, & &1.dimension) == ["device"]
   end
 
   test "accepted relevant events are coalesced through virtual debounce", context do
@@ -186,6 +233,7 @@ defmodule Zaik.Home.AutonomyEngineTest do
          history_store: context.history,
          decision_store: context.decisions,
          desired_state_store: context.desired_states,
+         action_budget_store: context.action_budgets,
          environment_config: %{utc_offset_minutes: 0},
          policy_opts: [maximum_temperature_f: 76.0, settle_seconds: 0]},
         id: :event_autonomy_engine
@@ -233,6 +281,7 @@ defmodule Zaik.Home.AutonomyEngineTest do
       history_store: context.history,
       decision_store: context.decisions,
       desired_state_store: context.desired_states,
+      action_budget_store: context.action_budgets,
       environment_config: %{utc_offset_minutes: 0},
       policy_opts: [maximum_temperature_f: 76.0]
     ]
@@ -253,6 +302,7 @@ defmodule Zaik.Home.AutonomyEngineTest do
          history_store: context.history,
          decision_store: context.decisions,
          desired_state_store: context.desired_states,
+         action_budget_store: context.action_budgets,
          environment_config: %{utc_offset_minutes: 0},
          policy_opts: [maximum_temperature_f: 76.0]},
         id: :restored_settle_engine
@@ -284,6 +334,7 @@ defmodule Zaik.Home.AutonomyEngineTest do
          history_store: context.history,
          decision_store: context.decisions,
          desired_state_store: context.desired_states,
+         action_budget_store: context.action_budgets,
          environment_config: %{utc_offset_minutes: 0},
          policy_opts: [maximum_temperature_f: 76.0, settle_seconds: 2]},
         id: :settle_event_engine
@@ -372,6 +423,7 @@ defmodule Zaik.Home.AutonomyEngineTest do
          history_store: context.history,
          decision_store: context.decisions,
          desired_state_store: context.desired_states,
+         action_budget_store: context.action_budgets,
          manual_override_store: context.overrides,
          environment_config: %{utc_offset_minutes: 0},
          policy_registry_opts: [modules: [SlowReadOnlyPolicy]]},

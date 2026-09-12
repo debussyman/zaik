@@ -34,7 +34,8 @@ defmodule Zaik.Home.Mirror.Evals do
       %{name: "generic_preset_capture_and_apply_use_mirror_executor", kind: :preset_tools},
       %{name: "explicit_action_creates_temporary_override", kind: :explicit_override},
       %{name: "operator_pause_blocks_autonomy_evaluation", kind: :operator_pause},
-      %{name: "daylight_hysteresis_survives_sensor_noise", kind: :daylight_hysteresis}
+      %{name: "daylight_hysteresis_survives_sensor_noise", kind: :daylight_hysteresis},
+      %{name: "autonomy_action_budgets_expire_under_virtual_time", kind: :action_budget}
     ]
   end
 
@@ -255,6 +256,53 @@ defmodule Zaik.Home.Mirror.Evals do
     )
   end
 
+  defp run_case(%{kind: :action_budget} = definition) do
+    scenario = Scenarios.lily_with_history_and_telemetry(id: definition.name)
+
+    finish(
+      definition,
+      Runner.run(scenario, fn mirror, context ->
+        left = %{entity_id: "eval-left", capability: "cover"}
+        right = %{entity_id: "eval-right", capability: "cover"}
+
+        for decision_id <- ["mirror-budget-one", "mirror-budget-two"] do
+          {:ok, _ids} =
+            Zaik.Home.Autonomy.ActionBudgetStore.record(
+              [left],
+              %{decision_id: decision_id, scope: "lily_bedroom"},
+              context.action_budget_store
+            )
+        end
+
+        {:ok, blocked} =
+          Zaik.Home.Autonomy.ActionBudgetStore.assess(
+            [left, right],
+            "lily_bedroom",
+            [],
+            context.action_budget_store
+          )
+
+        Zaik.Home.Mirror.advance(mirror, 900_001)
+
+        {:ok, expired} =
+          Zaik.Home.Autonomy.ActionBudgetStore.assess(
+            [left, right],
+            "lily_bedroom",
+            [],
+            context.action_budget_store
+          )
+
+        %{blocked: blocked, expired: expired}
+      end),
+      fn run ->
+        run.result.blocked.status == "blocked" and
+          Enum.map(run.result.blocked.allowed, & &1.entity_id) == ["eval-right"] and
+          run.result.expired.status == "allowed" and length(run.result.expired.allowed) == 2 and
+          run.report.side_effect_count == 0
+      end
+    )
+  end
+
   defp run_case(%{kind: :daylight_hysteresis} = definition) do
     scenario = Scenarios.lily_with_history_and_telemetry(id: definition.name)
 
@@ -299,6 +347,7 @@ defmodule Zaik.Home.Mirror.Evals do
           history_store: context.history_store,
           decision_store: decisions,
           desired_state_store: context.desired_state_store,
+          action_budget_store: context.action_budget_store,
           manual_override_store: context.manual_override_store,
           environment_config: %{utc_offset_minutes: 0},
           max_state_age_seconds: 600,
@@ -397,6 +446,7 @@ defmodule Zaik.Home.Mirror.Evals do
              task_supervisor: context.task_supervisor,
              clock: context.clock,
              desired_state_store: context.desired_state_store,
+             action_budget_store: context.action_budget_store,
              manual_override_store: context.manual_override_store}
           )
 
@@ -718,6 +768,7 @@ defmodule Zaik.Home.Mirror.Evals do
           history_store: context.history_store,
           decision_store: decision_store,
           desired_state_store: context.desired_state_store,
+          action_budget_store: context.action_budget_store,
           manual_override_store: context.manual_override_store,
           environment_config: %{utc_offset_minutes: 0},
           policy_opts: [maximum_temperature_f: 80.0]

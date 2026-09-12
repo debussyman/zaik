@@ -126,6 +126,12 @@ defmodule Zaik do
     do: Zaik.Home.Autonomy.DecisionStore.recent(limit)
 
   @doc """
+  Return current autonomous-action budget usage for an area and globally.
+  """
+  def home_action_budget_status(scope \\ "home", opts \\ []),
+    do: Zaik.Home.Autonomy.ActionBudgetStore.usage(scope, opts)
+
+  @doc """
   Return active durable desired-state leases selected by home arbitration.
   """
   def home_desired_states(scope \\ nil, opts \\ []),

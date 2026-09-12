@@ -156,6 +156,11 @@ config :zaik, :home_autonomy,
   max_concurrent_evaluations: 2,
   occupancy_absence_debounce_ms: 300_000,
   explicit_override_ttl_seconds: 1_800,
+  action_budgets: %{
+    device: %{max_actions: 2, window_seconds: 900},
+    room: %{max_actions: 5, window_seconds: 900},
+    global: %{max_actions: 10, window_seconds: 900}
+  },
   subscribe_events: true,
   decision_db_path: if(config_env() == :test, do: ":memory:", else: "~/.zaik/home/home.db")
 

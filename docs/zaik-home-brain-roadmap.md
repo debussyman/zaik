@@ -302,7 +302,9 @@ Goal: choose one explainable desired state when policies and people disagree.
   missing or stale state.
 - [x] Skip converged targets and emit inert action arguments only for unresolved
   differences.
-- [ ] Enforce per-device, per-room, and global action-rate budgets.
+- [x] Enforce durable sliding-window action-rate budgets per device, room, and
+  globally during reconciliation. Shadow/advisory assessment is non-consuming;
+  only accepted autonomous execution may record a budget event.
 - [ ] Prevent oscillation through hysteresis, settle windows, cooldowns, and
   conflict locks. Per-policy stability windows are enforced; cross-policy/device
   conflict locks remain.

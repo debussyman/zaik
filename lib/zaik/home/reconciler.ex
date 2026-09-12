@@ -7,6 +7,24 @@ defmodule Zaik.Home.Reconciler do
   capability observation is missing or stale.
   """
 
+  def apply_action_budget(reconciliation, %{allowed: allowed, blocked: blocked})
+      when is_map(reconciliation) and is_list(allowed) and is_list(blocked) do
+    budget_blocks =
+      Enum.map(blocked, fn entry ->
+        %{
+          action: value(entry, :action),
+          reason: value(entry, :reason) || "action_budget_exceeded",
+          dimensions: value(entry, :dimensions)
+        }
+      end)
+
+    reconciliation
+    |> Map.put(:actions, allowed)
+    |> Map.update(:blocked, budget_blocks, &(&1 ++ budget_blocks))
+    |> Map.delete(:fingerprint)
+    |> then(&Map.put(&1, :fingerprint, fingerprint(&1)))
+  end
+
   def diff(%{selected: selected}, room_context, opts \\ []) when is_list(selected) do
     now = Zaik.Time.now(Keyword.get(opts, :clock))
     max_state_age_seconds = Keyword.get(opts, :max_state_age_seconds, 120)
@@ -66,6 +84,7 @@ defmodule Zaik.Home.Reconciler do
             case stability_block(desired, room_context, now, opts) do
               nil ->
                 action = %{
+                  entity_id: entity_id,
                   device: value(desired, :device),
                   capability: capability,
                   target: value(desired, :target),

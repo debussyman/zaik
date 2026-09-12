@@ -30,6 +30,12 @@ defmodule Zaik.Home.Autonomy.Engine do
       max_concurrent_evaluations: Keyword.get(configured, :max_concurrent_evaluations, 2),
       occupancy_absence_debounce_ms:
         Keyword.get(configured, :occupancy_absence_debounce_ms, 5 * 60_000),
+      action_budgets:
+        Keyword.get(configured, :action_budgets, %{
+          device: %{max_actions: 2, window_seconds: 900},
+          room: %{max_actions: 5, window_seconds: 900},
+          global: %{max_actions: 10, window_seconds: 900}
+        }),
       subscribe_events: Keyword.get(configured, :subscribe_events, false),
       decision_db_path:
         Keyword.get(configured, :decision_db_path, Zaik.Home.HistoryStore.config().db_path)
@@ -403,6 +409,9 @@ defmodule Zaik.Home.Autonomy.Engine do
           policy_stability: policy_stability(opts)
         )
 
+      {reconciliation, action_budget} =
+        apply_action_budget(reconciliation, context, opts, cfg, clock)
+
       decision = %{
         id: decision_id(context.snapshot_id, candidates, mode, now),
         mode: mode,
@@ -413,6 +422,7 @@ defmodule Zaik.Home.Autonomy.Engine do
         candidates: candidates,
         arbitration: arbitration,
         reconciliation: reconciliation,
+        action_budget: action_budget,
         policy_fingerprint:
           Zaik.Home.Policies.Registry.fingerprint(Keyword.get(opts, :policy_registry_opts, [])),
         created_at: now
@@ -433,6 +443,68 @@ defmodule Zaik.Home.Autonomy.Engine do
         {:error, reason} -> {:error, {:decision_not_recorded, reason}}
       end
     end
+  end
+
+  defp apply_action_budget(%{actions: []} = reconciliation, context, _opts, cfg, clock) do
+    {reconciliation,
+     %{
+       status: "not_required",
+       scope: List.first(context.areas) || "home",
+       limits: cfg.action_budgets,
+       assessed_at: DateTime.to_iso8601(Zaik.Time.now(clock))
+     }}
+  end
+
+  defp apply_action_budget(reconciliation, context, opts, cfg, clock) do
+    store =
+      Keyword.get(
+        opts,
+        :action_budget_store,
+        Map.get(cfg, :action_budget_store, Zaik.Home.Autonomy.ActionBudgetStore)
+      )
+
+    scope = List.first(context.areas) || "home"
+
+    cond do
+      store in [nil, false] ->
+        {reconciliation, %{status: "disabled", scope: scope}}
+
+      process_available?(store) ->
+        case Zaik.Home.Autonomy.ActionBudgetStore.assess(
+               reconciliation.actions,
+               scope,
+               [clock: clock, limits: Keyword.get(opts, :action_budgets, cfg.action_budgets)],
+               store
+             ) do
+          {:ok, assessment} ->
+            {Zaik.Home.Reconciler.apply_action_budget(reconciliation, assessment), assessment}
+
+          {:error, reason} ->
+            budget_unavailable(reconciliation, scope, reason, clock)
+        end
+
+      true ->
+        budget_unavailable(reconciliation, scope, :store_unavailable, clock)
+    end
+  catch
+    :exit, reason ->
+      budget_unavailable(reconciliation, List.first(context.areas) || "home", reason, clock)
+  end
+
+  defp budget_unavailable(reconciliation, scope, reason, clock) do
+    assessment = %{
+      status: "unavailable",
+      scope: scope,
+      reason: inspect(reason),
+      allowed: [],
+      blocked:
+        Enum.map(reconciliation.actions, fn action ->
+          %{action: action, reason: "action_budget_unavailable", dimensions: []}
+        end),
+      assessed_at: DateTime.to_iso8601(Zaik.Time.now(clock))
+    }
+
+    {Zaik.Home.Reconciler.apply_action_budget(reconciliation, assessment), assessment}
   end
 
   defp policy_stability(opts) do

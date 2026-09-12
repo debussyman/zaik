@@ -48,6 +48,7 @@ defmodule Zaik.Home.Autonomy.DecisionStore do
       Jason.encode!(normalized.candidates),
       Jason.encode!(normalized.arbitration),
       Jason.encode!(normalized.reconciliation),
+      Jason.encode!(normalized.action_budget),
       normalized.policy_fingerprint,
       normalized.created_at
     ]
@@ -58,8 +59,9 @@ defmodule Zaik.Home.Autonomy.DecisionStore do
         """
         INSERT INTO home_autonomy_decisions (
           id, mode, query, snapshot_id, status, context_json, candidates_json,
-          arbitration_json, reconciliation_json, policy_fingerprint, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          arbitration_json, reconciliation_json, action_budget_json,
+          policy_fingerprint, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO NOTHING
         """,
         params
@@ -103,33 +105,39 @@ defmodule Zaik.Home.Autonomy.DecisionStore do
   end
 
   def migrate(conn) do
-    Sqlite3.execute(conn, """
-    PRAGMA journal_mode = WAL;
-    PRAGMA synchronous = NORMAL;
+    with :ok <-
+           Sqlite3.execute(conn, """
+           PRAGMA journal_mode = WAL;
+           PRAGMA synchronous = NORMAL;
 
-    CREATE TABLE IF NOT EXISTS home_autonomy_decisions (
-      id TEXT PRIMARY KEY,
-      mode TEXT NOT NULL,
-      query TEXT NOT NULL,
-      snapshot_id TEXT NOT NULL,
-      status TEXT NOT NULL,
-      context_json TEXT NOT NULL,
-      candidates_json TEXT NOT NULL,
-      arbitration_json TEXT NOT NULL,
-      reconciliation_json TEXT NOT NULL,
-      policy_fingerprint TEXT NOT NULL,
-      created_at TEXT NOT NULL
-    );
+           CREATE TABLE IF NOT EXISTS home_autonomy_decisions (
+             id TEXT PRIMARY KEY,
+             mode TEXT NOT NULL,
+             query TEXT NOT NULL,
+             snapshot_id TEXT NOT NULL,
+             status TEXT NOT NULL,
+             context_json TEXT NOT NULL,
+             candidates_json TEXT NOT NULL,
+             arbitration_json TEXT NOT NULL,
+             reconciliation_json TEXT NOT NULL,
+             action_budget_json TEXT NOT NULL DEFAULT '{}',
+             policy_fingerprint TEXT NOT NULL,
+             created_at TEXT NOT NULL
+           );
 
-    CREATE INDEX IF NOT EXISTS home_autonomy_decisions_created_idx
-      ON home_autonomy_decisions(created_at DESC);
-    """)
+           CREATE INDEX IF NOT EXISTS home_autonomy_decisions_created_idx
+             ON home_autonomy_decisions(created_at DESC);
+           """),
+         :ok <- ensure_action_budget_column(conn) do
+      :ok
+    end
   end
 
   defp select_sql(suffix) do
     """
     SELECT id, mode, query, snapshot_id, status, context_json, candidates_json,
-           arbitration_json, reconciliation_json, policy_fingerprint, created_at
+           arbitration_json, reconciliation_json, action_budget_json,
+           policy_fingerprint, created_at
     FROM home_autonomy_decisions
     #{suffix}
     """
@@ -146,6 +154,7 @@ defmodule Zaik.Home.Autonomy.DecisionStore do
       candidates: json_safe(value(decision, :candidates) || []),
       arbitration: json_safe(value(decision, :arbitration) || %{}),
       reconciliation: json_safe(value(decision, :reconciliation) || %{}),
+      action_budget: json_safe(value(decision, :action_budget) || %{}),
       policy_fingerprint: to_string(value(decision, :policy_fingerprint)),
       created_at: format_time(value(decision, :created_at))
     }
@@ -161,6 +170,7 @@ defmodule Zaik.Home.Autonomy.DecisionStore do
          candidates,
          arbitration,
          reconciliation,
+         action_budget,
          policy_fingerprint,
          created_at
        ]) do
@@ -174,9 +184,23 @@ defmodule Zaik.Home.Autonomy.DecisionStore do
       candidates: Jason.decode!(candidates),
       arbitration: Jason.decode!(arbitration),
       reconciliation: Jason.decode!(reconciliation),
+      action_budget: Jason.decode!(action_budget),
       policy_fingerprint: policy_fingerprint,
       created_at: created_at
     }
+  end
+
+  defp ensure_action_budget_column(conn) do
+    columns = query(conn, "PRAGMA table_info(home_autonomy_decisions)", [])
+
+    if Enum.any?(columns, fn [_cid, name | _rest] -> name == "action_budget_json" end) do
+      :ok
+    else
+      Sqlite3.execute(
+        conn,
+        "ALTER TABLE home_autonomy_decisions ADD COLUMN action_budget_json TEXT NOT NULL DEFAULT '{}'"
+      )
+    end
   end
 
   defp one([]), do: {:error, :not_found}

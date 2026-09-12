@@ -23,6 +23,7 @@ defmodule Zaik.Home.Mirror do
     :preset_store,
     :manual_override_store,
     :desired_state_store,
+    :action_budget_store,
     :action_verifier,
     :action_ledger,
     :task_supervisor,
@@ -109,6 +110,12 @@ defmodule Zaik.Home.Mirror do
              {Zaik.Home.Autonomy.DesiredStateStore,
               name: nil, db_path: ":memory:", clock: clock_provider}
            ),
+         {:ok, action_budget_store} <-
+           start_child(
+             supervisor,
+             {Zaik.Home.Autonomy.ActionBudgetStore,
+              name: nil, db_path: paths.home, clock: clock_provider}
+           ),
          {:ok, action_ledger} <-
            start_child(
              supervisor,
@@ -159,6 +166,7 @@ defmodule Zaik.Home.Mirror do
          preset_store: preset_store,
          manual_override_store: manual_override_store,
          desired_state_store: desired_state_store,
+         action_budget_store: action_budget_store,
          action_verifier: action_verifier,
          action_ledger: action_ledger,
          task_supervisor: task_supervisor,
@@ -176,6 +184,7 @@ defmodule Zaik.Home.Mirror do
         preset_store: mirror.preset_store,
         manual_override_store: mirror.manual_override_store,
         desired_state_store: mirror.desired_state_store,
+        action_budget_store: mirror.action_budget_store,
         history_store: mirror.history_store,
         telemetry_store: mirror.telemetry_store,
         sql_tool_opts: [
