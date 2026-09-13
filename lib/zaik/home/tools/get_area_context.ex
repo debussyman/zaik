@@ -49,6 +49,8 @@ defmodule Zaik.Home.Tools.GetAreaContext do
         device_store: value(context, :device_store),
         history_store: value(context, :history_store),
         occupancy_tracker: value(context, :occupancy_tracker),
+        preset_store: value(context, :preset_store) || Zaik.Home.DevicePresetStore,
+        mode_store: value(context, :mode_store) || Zaik.Home.Autonomy.ModeStore,
         manual_override_store: value(context, :manual_override_store),
         desired_state_store: value(context, :desired_state_store),
         capability_opts: value(context, :capability_opts),

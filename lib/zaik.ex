@@ -138,6 +138,23 @@ defmodule Zaik do
     do: Zaik.Home.Autonomy.DesiredStateStore.active(scope, opts)
 
   @doc """
+  Activate a typed, expiring household mode such as bedtime or privacy.
+  """
+  def activate_home_mode(scope, mode, attrs \\ %{}),
+    do: Zaik.Home.Autonomy.ModeStore.activate(scope, mode, attrs)
+
+  @doc """
+  Return active household modes for an area.
+  """
+  def home_modes(scope, opts \\ []), do: Zaik.Home.Autonomy.ModeStore.active(scope, opts)
+
+  @doc """
+  Cancel a household mode while retaining its audit record.
+  """
+  def cancel_home_mode(id, cancelled_by \\ "operator"),
+    do: Zaik.Home.Autonomy.ModeStore.cancel(id, cancelled_by)
+
+  @doc """
   Create an expiring manual-override lease that suppresses background autonomy
   for an area (or `home`).
   """

@@ -254,12 +254,13 @@ states without directly controlling devices.
   breaks ties only within the same household priority.
 - [ ] Implement initial generic policies:
   - [x] shadow-first daylight harvesting;
-  - [ ] bedtime/privacy comfort;
+  - [x] explicit, expiring bedtime/privacy modes with generic cover targets and
+    per-device bedtime presets;
   - solar-heat avoidance;
   - occupancy lighting after light capabilities exist;
   - absence-based lighting shutdown.
-- [ ] Policies must depend on area/capability contracts rather than household
-  device names.
+- [x] Built-in policies depend on area/capability contracts, typed mode leases,
+  and generic named presets rather than household device names.
 - [x] Require policy hysteresis, minimum-active, settle, and cooldown contracts.
   Daylight enforces release hysteresis and minimum-active duration; the generic
   reconciler enforces code-owned settle/cooldown windows from durable desired-

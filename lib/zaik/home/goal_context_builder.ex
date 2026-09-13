@@ -35,6 +35,7 @@ defmodule Zaik.Home.GoalContextBuilder do
             evidence,
             room.occupancy,
             room.manual_overrides,
+            room.home_modes,
             room.desired_state_leases
           )
       }
@@ -76,8 +77,12 @@ defmodule Zaik.Home.GoalContextBuilder do
       device_store: Keyword.get(opts, :device_store),
       history_store: Keyword.get(opts, :history_store),
       occupancy_tracker: Keyword.get(opts, :occupancy_tracker),
-      manual_override_store: Keyword.get(opts, :manual_override_store),
-      desired_state_store: Keyword.get(opts, :desired_state_store),
+      preset_store: Keyword.get(opts, :preset_store, Zaik.Home.DevicePresetStore),
+      manual_override_store:
+        Keyword.get(opts, :manual_override_store, Zaik.Home.Autonomy.ManualOverrideStore),
+      mode_store: Keyword.get(opts, :mode_store, Zaik.Home.Autonomy.ModeStore),
+      desired_state_store:
+        Keyword.get(opts, :desired_state_store, Zaik.Home.Autonomy.DesiredStateStore),
       capability_opts: Keyword.get(opts, :capability_opts),
       clock: Keyword.get(opts, :clock),
       window_minutes: Keyword.get(opts, :window_minutes, 180),
@@ -161,13 +166,20 @@ defmodule Zaik.Home.GoalContextBuilder do
     {:error, {:missing_required_observations, Enum.map(result.missing, & &1.requirement), result}}
   end
 
-  defp fingerprint(contract, evidence, occupancy, manual_overrides, desired_state_leases) do
+  defp fingerprint(
+         contract,
+         evidence,
+         occupancy,
+         manual_overrides,
+         home_modes,
+         desired_state_leases
+       ) do
     stable_evidence =
       Enum.map(evidence, fn item ->
         Map.update(item, :value, nil, &drop_derived_age/1)
       end)
 
-    {contract, stable_evidence, occupancy, manual_overrides, desired_state_leases}
+    {contract, stable_evidence, occupancy, manual_overrides, home_modes, desired_state_leases}
     |> :erlang.term_to_binary()
     |> then(&:crypto.hash(:sha256, &1))
     |> Base.encode16(case: :lower)

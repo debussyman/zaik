@@ -22,6 +22,7 @@ defmodule Zaik.Home.Mirror do
     :ops_db_path,
     :preset_store,
     :manual_override_store,
+    :mode_store,
     :desired_state_store,
     :action_budget_store,
     :action_verifier,
@@ -104,6 +105,12 @@ defmodule Zaik.Home.Mirror do
              {Zaik.Home.Autonomy.ManualOverrideStore,
               name: nil, db_path: ":memory:", clock: clock_provider}
            ),
+         {:ok, mode_store} <-
+           start_child(
+             supervisor,
+             {Zaik.Home.Autonomy.ModeStore,
+              name: nil, db_path: paths.home, clock: clock_provider, event_bus: false}
+           ),
          {:ok, desired_state_store} <-
            start_child(
              supervisor,
@@ -165,6 +172,7 @@ defmodule Zaik.Home.Mirror do
          ops_db_path: paths.ops,
          preset_store: preset_store,
          manual_override_store: manual_override_store,
+         mode_store: mode_store,
          desired_state_store: desired_state_store,
          action_budget_store: action_budget_store,
          action_verifier: action_verifier,
@@ -183,6 +191,7 @@ defmodule Zaik.Home.Mirror do
         occupancy_tracker: mirror.occupancy_tracker,
         preset_store: mirror.preset_store,
         manual_override_store: mirror.manual_override_store,
+        mode_store: mirror.mode_store,
         desired_state_store: mirror.desired_state_store,
         action_budget_store: mirror.action_budget_store,
         history_store: mirror.history_store,

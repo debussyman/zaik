@@ -60,6 +60,8 @@ defmodule Zaik.Home.RoomContext do
       manual_overrides = active_manual_overrides(areas, clock, opts)
       desired_state_leases = active_desired_states(areas, clock, opts)
       desired_state_history = desired_state_history(areas, opts)
+      home_modes = active_home_modes(areas, clock, opts)
+      device_presets = device_presets(entities, opts)
 
       context = %{
         query: query,
@@ -69,6 +71,8 @@ defmodule Zaik.Home.RoomContext do
         manual_override: List.first(manual_overrides),
         desired_state_leases: desired_state_leases,
         desired_state_history: desired_state_history,
+        home_modes: home_modes,
+        device_presets: device_presets,
         occupancy: occupancy(entities, areas, opts),
         environment: environment,
         entities: entities,
@@ -126,6 +130,43 @@ defmodule Zaik.Home.RoomContext do
         end,
       observations: observations
     }
+  end
+
+  defp active_home_modes(areas, clock, opts) do
+    store = Keyword.get(opts, :mode_store, Zaik.Home.Autonomy.ModeStore)
+
+    if process_available?(store) do
+      areas
+      |> Enum.flat_map(&Zaik.Home.Autonomy.ModeStore.active(&1, [clock: clock], store))
+      |> Enum.uniq_by(& &1.id)
+    else
+      []
+    end
+  catch
+    :exit, _reason -> []
+  end
+
+  defp device_presets(entities, opts) do
+    store = Keyword.get(opts, :preset_store, Zaik.Home.DevicePresetStore)
+
+    if process_available?(store) do
+      entities
+      |> Enum.flat_map(fn entity ->
+        Zaik.Home.DevicePresetStore.list(
+          Map.get(entity, :name) || Map.get(entity, "name"),
+          [],
+          store
+        )
+      end)
+      |> Enum.uniq_by(fn preset ->
+        {Map.get(preset, "device_name"), Map.get(preset, "preset_name"),
+         Map.get(preset, "capability")}
+      end)
+    else
+      []
+    end
+  catch
+    :exit, _reason -> []
   end
 
   defp desired_state_history(areas, opts) do

@@ -98,6 +98,7 @@ defmodule Zaik.Home.Tools.ExecutePlan do
       device_store: value(context, :device_store),
       history_store: value(context, :history_store),
       occupancy_tracker: value(context, :occupancy_tracker),
+      mode_store: value(context, :mode_store) || Zaik.Home.Autonomy.ModeStore,
       manual_override_store: value(context, :manual_override_store),
       desired_state_store: value(context, :desired_state_store),
       preset_store: value(context, :preset_store),

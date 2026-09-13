@@ -137,6 +137,15 @@ defmodule Zaik.Home.Autonomy.Engine do
     do: {:reply, {:error, {:execution_mode_not_enabled, mode}}, state}
 
   @impl true
+  def handle_info({:zaik_home_event, %{type: :home_mode_changed}}, %{pause: pause} = state)
+      when not is_nil(pause),
+      do: {:noreply, state}
+
+  def handle_info({:zaik_home_event, %{type: :home_mode_changed, area: area} = event}, state) do
+    event = Map.merge(event, %{device: area, changed_keys: ["home_mode"]})
+    {:noreply, schedule_event(state, area, area, event)}
+  end
+
   def handle_info({:zaik_home_event, %{type: :device_observed} = event}, %{pause: nil} = state) do
     if relevant_event?(event) do
       {key, query} = event_scope(event, state.config)
@@ -389,6 +398,18 @@ defmodule Zaik.Home.Autonomy.Engine do
                  "presence"
                ]),
              environment_config: Keyword.get(opts, :environment_config, %{}),
+             preset_store:
+               Keyword.get(
+                 opts,
+                 :preset_store,
+                 Map.get(cfg, :preset_store, Zaik.Home.DevicePresetStore)
+               ),
+             mode_store:
+               Keyword.get(
+                 opts,
+                 :mode_store,
+                 Map.get(cfg, :mode_store, Zaik.Home.Autonomy.ModeStore)
+               ),
              manual_override_store:
                Keyword.get(
                  opts,
@@ -700,7 +721,7 @@ defmodule Zaik.Home.Autonomy.Engine do
     |> Enum.flat_map(fn
       "position" -> ["cover"]
       "state" -> ["cover"]
-      key when key in ["presence", "illuminance", "temperature"] -> [key]
+      key when key in ["presence", "illuminance", "temperature", "home_mode"] -> [key]
       _key -> []
     end)
     |> Enum.uniq()

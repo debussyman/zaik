@@ -133,11 +133,13 @@ Home automation is one optional domain, not the whole harness.
 | `Zaik.Home.GoalCandidate` | Validated inert desired-state proposal with evidence, priority class, calibrated confidence, expiry, and fingerprint. | Keep in the home policy/arbitration layer. |
 | `Zaik.Home.Policy` / `Zaik.Home.Policies.Registry` | Hot-load-friendly policy contract and uncached descriptor/fingerprint registry. | Keep in the home policy layer. |
 | `Zaik.Home.Policies.DaylightHarvesting` | Shadow-first generic candidate policy for occupied, dark, daytime, cool rooms. | Keep as a built-in policy example/default. |
+| `Zaik.Home.Policies.BedtimePrivacy` | Privacy/sleep authority policy driven by typed mode leases; bedtime targets come from generic device presets. | Keep as the built-in mode-driven privacy policy. |
 | `Zaik.Home.Arbitrator` | Pure priority/conflict selection producing chosen and suppressed desired targets. | Keep in the home policy layer. |
 | `Zaik.Home.Reconciler` | Pure freshness-aware diff from selected desired state to inert unresolved actions. | Keep before the existing action-plan execution boundary. |
 | `Zaik.Home.Autonomy.Engine` | Supervised shadow/advisory context-policy-arbitration-reconciliation pipeline; active execution is deliberately rejected. | Evolve into the event-driven home autonomy coordinator. |
 | `Zaik.Home.Autonomy.DecisionStore` | SQLite ledger for context snapshots, candidates, arbitration, and reconciliation decisions. | Extend with outcomes, feedback, and operator controls. |
 | `Zaik.Home.Autonomy.ManualOverrideStore` | Durable expiring area/home override leases with ownership, reasons, capability scope, cancellation audit, and automatic leases after explicit actions. | Add richer source-action metadata and configurable room defaults. |
+| `Zaik.Home.Autonomy.ModeStore` | Durable typed bedtime/privacy context leases with owner, reason, source, expiry, supersession, cancellation, and event publication. | Extend only through validated mode contracts. |
 | `Zaik.Home.Autonomy.DesiredStateStore` | Bounded durable ledger of selected semantic target leases and supersession history. | Drive restart-safe reconciliation once execution rollout gates exist. |
 | `Zaik.Home.Autonomy.ConflictLock` | Pure gate that suppresses equivalent pending actions and blocks contradictory targets using verifier-owned in-flight state. | Keep immediately before action-budget assessment and execution. |
 | `Zaik.Home.Autonomy.ActionBudgetStore` | Durable sliding-window per-device, room, and global autonomous-action accounting and pre-execution assessment. | Keep as a fail-closed execution gate; record only accepted autonomous actions. |

@@ -41,6 +41,17 @@ defmodule Zaik.Home.AutonomyEngineTest do
     {:ok, desired_states} =
       start_supervised({Zaik.Home.Autonomy.DesiredStateStore, name: nil, db_path: ":memory:"})
 
+    {:ok, modes} =
+      start_supervised(
+        {Zaik.Home.Autonomy.ModeStore, name: nil, db_path: ":memory:", event_bus: false}
+      )
+
+    {:ok, presets} =
+      start_supervised(
+        {Zaik.Home.DevicePresetStore,
+         name: nil, db_path: ":memory:", import_legacy_blind_presets?: false}
+      )
+
     {:ok, action_budgets} =
       start_supervised({Zaik.Home.Autonomy.ActionBudgetStore, name: nil, db_path: ":memory:"})
 
@@ -58,6 +69,8 @@ defmodule Zaik.Home.AutonomyEngineTest do
          mode: :shadow,
          occupancy_tracker: false,
          manual_override_store: overrides,
+         mode_store: modes,
+         preset_store: presets,
          desired_state_store: desired_states,
          action_budget_store: action_budgets,
          action_verifier: action_verifier}
@@ -110,6 +123,8 @@ defmodule Zaik.Home.AutonomyEngineTest do
       history: history,
       decisions: decisions,
       overrides: overrides,
+      modes: modes,
+      presets: presets,
       desired_states: desired_states,
       action_budgets: action_budgets,
       action_verifier: action_verifier,
@@ -182,6 +197,108 @@ defmodule Zaik.Home.AutonomyEngineTest do
     assert length(desired) == 2
     assert Enum.all?(desired, &(&1.priority_class == "daylight_energy"))
     assert Enum.all?(desired, &(&1.decision_id == ready.id))
+  end
+
+  test "mode lease events trigger dependency-filtered area evaluation", context do
+    {:ok, bus} = start_supervised({Zaik.Home.EventBus, name: nil}, id: :mode_event_bus)
+
+    {:ok, modes} =
+      start_supervised(
+        {Zaik.Home.Autonomy.ModeStore,
+         name: nil,
+         db_path: ":memory:",
+         clock: {Zaik.Home.Mirror.Clock, context.clock},
+         event_bus: bus},
+        id: :event_mode_store
+      )
+
+    {:ok, event_engine} =
+      start_supervised(
+        {Zaik.Home.Autonomy.Engine,
+         name: nil,
+         enabled: true,
+         mode: :shadow,
+         subscribe_events: true,
+         event_bus: bus,
+         event_debounce_ms: 100,
+         clock: {Zaik.Home.Mirror.Clock, context.clock},
+         device_store: context.devices,
+         occupancy_tracker: false,
+         history_store: context.history,
+         decision_store: context.decisions,
+         mode_store: modes,
+         preset_store: context.presets,
+         desired_state_store: context.desired_states,
+         action_budget_store: context.action_budgets,
+         action_verifier: context.action_verifier,
+         manual_override_store: context.overrides,
+         environment_config: %{utc_offset_minutes: 0}},
+        id: :mode_event_engine
+      )
+
+    assert {:ok, _mode} =
+             Zaik.Home.Autonomy.ModeStore.activate(
+               "lily_bedroom",
+               "privacy",
+               %{ttl_seconds: 600},
+               [],
+               modes
+             )
+
+    assert_eventually(fn -> Zaik.Home.Autonomy.Engine.status(event_engine).pending_count == 1 end)
+    Zaik.Home.Mirror.Clock.advance(context.clock, 100)
+
+    assert_eventually(fn ->
+      case Zaik.Home.Autonomy.Engine.status(event_engine).last_decision do
+        %{candidates: [%{policy_id: "bedtime_privacy"}]} -> true
+        _ -> false
+      end
+    end)
+  end
+
+  test "privacy mode suppresses daylight harvesting with a durable explanation", context do
+    clock = {Zaik.Home.Mirror.Clock, context.clock}
+
+    assert {:ok, mode} =
+             Zaik.Home.Autonomy.ModeStore.activate(
+               "lily_bedroom",
+               "privacy",
+               %{owner: "parent", reason: "privacy", ttl_seconds: 600},
+               [clock: clock],
+               context.modes
+             )
+
+    assert {:ok, decision} =
+             Zaik.Home.Autonomy.Engine.evaluate(
+               "lily",
+               [
+                 clock: clock,
+                 device_store: context.devices,
+                 history_store: context.history,
+                 decision_store: context.decisions,
+                 mode_store: context.modes,
+                 preset_store: context.presets,
+                 environment_config: %{utc_offset_minutes: 0},
+                 policy_opts: [maximum_temperature_f: 76.0]
+               ],
+               context.engine
+             )
+
+    assert decision.status == "satisfied"
+    assert Enum.all?(decision.arbitration.selected, &(&1.policy_id == "bedtime_privacy"))
+
+    assert Enum.all?(
+             decision.arbitration.suppressed,
+             &(&1.reason == "conflicting_lower_priority")
+           )
+
+    assert [%{id: id, mode: "privacy"}] = decision.context.home_modes
+    assert id == mode.id
+
+    assert {:ok, stored} =
+             Zaik.Home.Autonomy.DecisionStore.lookup(decision.id, context.decisions)
+
+    assert Enum.all?(stored.arbitration["selected"], &(&1["policy_id"] == "bedtime_privacy"))
   end
 
   test "reconciliation locks targets that conflict with a pending physical action", context do

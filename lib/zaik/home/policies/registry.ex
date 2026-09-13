@@ -3,7 +3,10 @@ defmodule Zaik.Home.Policies.Registry do
   Uncached runtime registry for home policy modules.
   """
 
-  @default_modules [Zaik.Home.Policies.DaylightHarvesting]
+  @default_modules [
+    Zaik.Home.Policies.BedtimePrivacy,
+    Zaik.Home.Policies.DaylightHarvesting
+  ]
   @modes [:off, :shadow, :advisory, :canary, :active]
 
   def modules(opts \\ []) do

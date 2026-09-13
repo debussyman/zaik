@@ -36,7 +36,8 @@ defmodule Zaik.Home.Mirror.Evals do
       %{name: "operator_pause_blocks_autonomy_evaluation", kind: :operator_pause},
       %{name: "daylight_hysteresis_survives_sensor_noise", kind: :daylight_hysteresis},
       %{name: "autonomy_action_budgets_expire_under_virtual_time", kind: :action_budget},
-      %{name: "autonomy_conflict_locks_follow_pending_actions", kind: :conflict_lock}
+      %{name: "autonomy_conflict_locks_follow_pending_actions", kind: :conflict_lock},
+      %{name: "privacy_mode_suppresses_daylight_until_expiry", kind: :privacy_mode}
     ]
   end
 
@@ -253,6 +254,135 @@ defmodule Zaik.Home.Mirror.Evals do
       fn run ->
         run.result == 1 and run.report.passed? and run.report.side_effect_count == 0 and
           Enum.map(run.report.reports, & &1.disposition) == ["accepted", "stale"]
+      end
+    )
+  end
+
+  defp run_case(%{kind: :privacy_mode} = definition) do
+    scenario = Scenarios.lily_with_history_and_telemetry(id: definition.name)
+
+    finish(
+      definition,
+      Runner.run(scenario, fn mirror, context ->
+        now = Zaik.Home.Mirror.now(mirror)
+
+        for device <- ["Lily's bedroom left blind", "Lily's bedroom right blind"] do
+          Zaik.Home.DeviceStore.upsert_device(
+            mirror.device_store,
+            device,
+            %{"position" => 100},
+            %{"observed_at" => now, "source" => "mirror"}
+          )
+        end
+
+        Zaik.Home.DeviceStore.upsert_device(
+          mirror.device_store,
+          "Lily's room multi-sensor",
+          %{"temperature" => 22.0, "illuminance" => 15, "presence" => true},
+          %{"observed_at" => now, "source" => "mirror"}
+        )
+
+        {:ok, lease} =
+          Zaik.Home.Autonomy.ModeStore.activate(
+            "lily_bedroom",
+            "privacy",
+            %{owner: "mirror-parent", reason: "privacy", ttl_seconds: 60},
+            [clock: context.clock],
+            context.mode_store
+          )
+
+        room_opts = [
+          clock: context.clock,
+          device_store: context.device_store,
+          occupancy_tracker: context.occupancy_tracker,
+          history_store: context.history_store,
+          preset_store: context.preset_store,
+          mode_store: context.mode_store,
+          manual_override_store: context.manual_override_store,
+          desired_state_store: context.desired_state_store,
+          environment_config: %{utc_offset_minutes: 0}
+        ]
+
+        {:ok, active_context} = Zaik.Home.RoomContext.build("lily", room_opts)
+
+        {:ok, active_candidates} =
+          Zaik.Home.Policies.Registry.evaluate_all(active_context,
+            policy_opts: [clock: context.clock, maximum_temperature_f: 80.0]
+          )
+
+        active_arbitration =
+          Zaik.Home.Arbitrator.arbitrate(active_candidates, clock: context.clock)
+
+        Zaik.Home.Mirror.advance(mirror, 60_000)
+        {:ok, expired_context} = Zaik.Home.RoomContext.build("lily", room_opts)
+
+        {:ok, expired_candidates} =
+          Zaik.Home.Policies.Registry.evaluate_all(expired_context,
+            policy_opts: [clock: context.clock, maximum_temperature_f: 80.0]
+          )
+
+        {:ok, _left_preset} =
+          Zaik.Home.DevicePresetStore.put(
+            "Lily's bedroom left blind",
+            "bedtime",
+            "cover",
+            %{"position" => 100},
+            %{source: "mirror"},
+            context.preset_store
+          )
+
+        {:ok, _right_preset} =
+          Zaik.Home.DevicePresetStore.put(
+            "Lily's bedroom right blind",
+            "bedtime",
+            "cover",
+            %{"position" => 71},
+            %{source: "mirror"},
+            context.preset_store
+          )
+
+        {:ok, _bedtime} =
+          Zaik.Home.Autonomy.ModeStore.activate(
+            "lily_bedroom",
+            "bedtime",
+            %{owner: "mirror-parent", reason: "sleep", ttl_seconds: 60},
+            [clock: context.clock],
+            context.mode_store
+          )
+
+        {:ok, bedtime_context} = Zaik.Home.RoomContext.build("lily", room_opts)
+
+        {:ok, bedtime_candidates} =
+          Zaik.Home.Policies.Registry.evaluate_all(bedtime_context,
+            policy_opts: [clock: context.clock, maximum_temperature_f: 80.0]
+          )
+
+        bedtime_candidate =
+          Enum.find(bedtime_candidates, &(&1.policy_id == "bedtime_privacy"))
+
+        %{
+          lease: lease,
+          active_context: active_context,
+          active_candidates: active_candidates,
+          active_arbitration: active_arbitration,
+          expired_context: expired_context,
+          expired_candidates: expired_candidates,
+          bedtime_candidate: bedtime_candidate
+        }
+      end),
+      fn run ->
+        Enum.map(run.result.active_candidates, & &1.policy_id) |> Enum.sort() ==
+          ["bedtime_privacy", "daylight_harvesting"] and
+          Enum.all?(run.result.active_arbitration.selected, &(&1.policy_id == "bedtime_privacy")) and
+          Enum.all?(
+            run.result.active_arbitration.suppressed,
+            &(&1.reason == "conflicting_lower_priority")
+          ) and run.result.expired_context.home_modes == [] and
+          Enum.map(run.result.expired_candidates, & &1.policy_id) == ["daylight_harvesting"] and
+          Enum.map(run.result.bedtime_candidate.desired_state, & &1.target) == [
+            %{"position" => 100},
+            %{"position" => 71}
+          ] and run.report.side_effect_count == 0
       end
     )
   end
