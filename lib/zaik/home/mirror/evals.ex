@@ -5,6 +5,31 @@ defmodule Zaik.Home.Mirror.Evals do
 
   alias Zaik.Home.Mirror.{Runner, Scenarios}
 
+  defmodule HangingPolicy do
+    @behaviour Zaik.Home.Policy
+
+    def descriptor do
+      %{
+        id: "mirror_hanging_policy",
+        version: "1",
+        description: "Mirror-only timeout policy",
+        priority_class: :daylight_energy,
+        priority: 40,
+        dependencies: ["cover"],
+        hysteresis: %{},
+        minimum_active_seconds: 0,
+        settle_seconds: 0,
+        cooldown_seconds: 0,
+        default_mode: :shadow
+      }
+    end
+
+    def evaluate(_context, _opts) do
+      Process.sleep(5_000)
+      {:ok, []}
+    end
+  end
+
   def run do
     results = Enum.map(cases(), &run_case/1)
 
@@ -39,7 +64,8 @@ defmodule Zaik.Home.Mirror.Evals do
       %{name: "autonomy_conflict_locks_follow_pending_actions", kind: :conflict_lock},
       %{name: "privacy_mode_suppresses_daylight_until_expiry", kind: :privacy_mode},
       %{name: "solar_heat_outranks_daylight_but_not_privacy", kind: :solar_heat},
-      %{name: "decision_outcomes_and_feedback_are_durable", kind: :decision_feedback}
+      %{name: "decision_outcomes_and_feedback_are_durable", kind: :decision_feedback},
+      %{name: "stuck_policy_evaluation_is_durably_timed_out", kind: :evaluation_timeout}
     ]
   end
 
@@ -256,6 +282,82 @@ defmodule Zaik.Home.Mirror.Evals do
       fn run ->
         run.result == 1 and run.report.passed? and run.report.side_effect_count == 0 and
           Enum.map(run.report.reports, & &1.disposition) == ["accepted", "stale"]
+      end
+    )
+  end
+
+  defp run_case(%{kind: :evaluation_timeout} = definition) do
+    scenario = Scenarios.lily_with_history_and_telemetry(id: definition.name)
+
+    finish(
+      definition,
+      Runner.run(scenario, fn mirror, context ->
+        {:ok, bus} =
+          DynamicSupervisor.start_child(
+            mirror.supervisor,
+            {Zaik.Home.EventBus, name: nil}
+          )
+
+        {:ok, decisions} =
+          DynamicSupervisor.start_child(
+            mirror.supervisor,
+            {Zaik.Home.Autonomy.DecisionStore,
+             name: nil, db_path: mirror.home_db_path, clock: context.clock}
+          )
+
+        {:ok, engine} =
+          DynamicSupervisor.start_child(
+            mirror.supervisor,
+            {Zaik.Home.Autonomy.Engine,
+             name: nil,
+             enabled: true,
+             mode: :shadow,
+             subscribe_events: true,
+             event_bus: bus,
+             event_debounce_ms: 1,
+             event_min_interval_ms: 1,
+             evaluation_timeout_ms: 10,
+             task_supervisor: context.task_supervisor,
+             clock: context.clock,
+             device_store: context.device_store,
+             occupancy_tracker: context.occupancy_tracker,
+             history_store: context.history_store,
+             decision_store: decisions,
+             mode_store: context.mode_store,
+             preset_store: context.preset_store,
+             desired_state_store: context.desired_state_store,
+             action_budget_store: context.action_budget_store,
+             action_verifier: context.action_verifier,
+             manual_override_store: context.manual_override_store,
+             policy_registry_opts: [modules: [HangingPolicy]]}
+          )
+
+        Zaik.Home.EventBus.publish(
+          %{
+            type: :device_observed,
+            device: "Lily's bedroom left blind",
+            changed_keys: ["position"],
+            observed_at: Zaik.Home.Mirror.now(mirror)
+          },
+          bus
+        )
+
+        Process.sleep(5)
+        Zaik.Home.Mirror.advance(mirror, 1)
+        Process.sleep(5)
+        Zaik.Home.Mirror.advance(mirror, 10)
+        Process.sleep(5)
+
+        %{
+          status: Zaik.Home.Autonomy.Engine.status(engine),
+          decisions: Zaik.Home.Autonomy.DecisionStore.recent(5, decisions)
+        }
+      end),
+      fn run ->
+        run.result.status.evaluation_timeout_count == 1 and
+          match?(%{status: "evaluation_timed_out"}, run.result.status.last_evaluation_failure) and
+          match?([%{status: "evaluation_timed_out"} | _], run.result.decisions) and
+          run.report.side_effect_count == 0
       end
     )
   end

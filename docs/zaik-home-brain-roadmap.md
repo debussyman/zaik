@@ -346,7 +346,10 @@ Goal: run observation-to-reconciliation continuously under OTP supervision.
   plan records remain.
 - [ ] Correlate every physical action with its originating decision, goal,
   policy, and observation snapshot.
-- [ ] Add watchdog recovery for stuck evaluations and staged plans.
+- [ ] Add watchdog recovery for stuck evaluations and staged plans. Bounded
+  evaluation workers are now brutally terminated at timeout with durable
+  diagnostic decisions and operator-visible counters; staged-plan recovery
+  remains.
 - [x] Expose operator status, global pause/resume, safe runtime mode changes,
   manual suppression leases, desired-state inspection, and recent decisions;
   canary/active modes remain impossible.

@@ -26,6 +26,31 @@ defmodule Zaik.Home.AutonomyEngineTest do
     end
   end
 
+  defmodule TimeoutPolicy do
+    @behaviour Zaik.Home.Policy
+
+    def descriptor do
+      %{
+        id: "timeout_policy",
+        version: "1",
+        description: "Test evaluation timeout",
+        priority_class: :daylight_energy,
+        priority: 40,
+        dependencies: ["cover"],
+        hysteresis: %{},
+        minimum_active_seconds: 0,
+        settle_seconds: 0,
+        cooldown_seconds: 0,
+        default_mode: :shadow
+      }
+    end
+
+    def evaluate(_context, _opts) do
+      Process.sleep(5_000)
+      {:ok, []}
+    end
+  end
+
   setup do
     now = ~U[2026-07-15 14:00:00Z]
     {:ok, clock} = start_supervised({Zaik.Home.Mirror.Clock, name: nil, now: now})
@@ -628,6 +653,63 @@ defmodule Zaik.Home.AutonomyEngineTest do
     assert Zaik.Home.Autonomy.Engine.status(event_engine).pending_count == 0
     assert_eventually(fn -> Zaik.Home.Autonomy.Engine.status(event_engine).running_count == 0 end)
     assert Zaik.Home.Autonomy.Engine.status(event_engine).last_decision.status == "no_candidates"
+  end
+
+  test "timed-out policy workers are killed and durably diagnosed", context do
+    {:ok, bus} = start_supervised({Zaik.Home.EventBus, name: nil}, id: :timeout_event_bus)
+    {:ok, tasks} = start_supervised({Task.Supervisor, name: nil}, id: :timeout_tasks)
+
+    {:ok, event_engine} =
+      start_supervised(
+        {Zaik.Home.Autonomy.Engine,
+         name: nil,
+         enabled: true,
+         mode: :shadow,
+         subscribe_events: true,
+         event_bus: bus,
+         event_debounce_ms: 1,
+         event_min_interval_ms: 1,
+         evaluation_timeout_ms: 10,
+         task_supervisor: tasks,
+         clock: {Zaik.Home.Mirror.Clock, context.clock},
+         device_store: context.devices,
+         occupancy_tracker: false,
+         history_store: context.history,
+         decision_store: context.decisions,
+         mode_store: context.modes,
+         preset_store: context.presets,
+         desired_state_store: context.desired_states,
+         action_budget_store: context.action_budgets,
+         action_verifier: context.action_verifier,
+         manual_override_store: context.overrides,
+         policy_registry_opts: [modules: [TimeoutPolicy]]},
+        id: :timeout_event_engine
+      )
+
+    Zaik.Home.EventBus.publish(
+      %{
+        type: :device_observed,
+        device: "Lily's bedroom left blind",
+        changed_keys: ["position"],
+        observed_at: context.now
+      },
+      bus
+    )
+
+    assert_eventually(fn -> Zaik.Home.Autonomy.Engine.status(event_engine).pending_count == 1 end)
+    Zaik.Home.Mirror.Clock.advance(context.clock, 1)
+    assert_eventually(fn -> Zaik.Home.Autonomy.Engine.status(event_engine).running_count == 1 end)
+    Zaik.Home.Mirror.Clock.advance(context.clock, 10)
+
+    assert_eventually(fn ->
+      status = Zaik.Home.Autonomy.Engine.status(event_engine)
+
+      status.running_count == 0 and status.evaluation_timeout_count == 1 and
+        match?(%{status: "evaluation_timed_out"}, status.last_evaluation_failure)
+    end)
+
+    assert [%{status: "evaluation_timed_out", outcomes: [%{"status" => "evaluation_timed_out"}]}] =
+             Zaik.Home.Autonomy.DecisionStore.recent(1, context.decisions)
   end
 
   test "operator pause, resume, and safe runtime modes are explicit", context do

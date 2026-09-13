@@ -73,6 +73,8 @@ defmodule Zaik.Home.Autonomy.Engine do
       stability_wakeups: %{},
       last_evaluated_ms: %{},
       last_decision: nil,
+      last_evaluation_failure: nil,
+      evaluation_timeout_count: 0,
       pause: nil,
       mode_changed_by: "configuration"
     }
@@ -104,6 +106,8 @@ defmodule Zaik.Home.Autonomy.Engine do
        pending_count: map_size(state.pending),
        running_count: map_size(state.running),
        stability_wakeup_count: map_size(state.stability_wakeups),
+       evaluation_timeout_count: state.evaluation_timeout_count,
+       last_evaluation_failure: state.last_evaluation_failure,
        last_decision: state.last_decision
      }, state}
   end
@@ -237,9 +241,18 @@ defmodule Zaik.Home.Autonomy.Engine do
       {nil, _running} ->
         {:noreply, state}
 
-      {%{task: task}, running} ->
+      {%{task: task} = entry, running} ->
         Task.shutdown(task, :brutal_kill)
-        {:noreply, %{state | running: running}}
+        failure = evaluation_timeout_decision(entry, state)
+        _ = record_decision(failure, Map.get(state.config, :decision_store))
+
+        {:noreply,
+         %{
+           state
+           | running: running,
+             last_evaluation_failure: failure,
+             evaluation_timeout_count: state.evaluation_timeout_count + 1
+         }}
     end
   end
 
@@ -290,7 +303,13 @@ defmodule Zaik.Home.Autonomy.Engine do
             Map.get(state.config, :evaluation_timeout_ms, 30_000)
           )
 
-        put_in(state, [:running, task.ref], %{task: task, timer: timer, key: key, query: query})
+        put_in(state, [:running, task.ref], %{
+          task: task,
+          timer: timer,
+          key: key,
+          query: query,
+          started_at: Zaik.Time.now(Map.get(state.config, :clock))
+        })
     end
   end
 
@@ -657,6 +676,41 @@ defmodule Zaik.Home.Autonomy.Engine do
   defp decision_status(_candidates, %{actions: [_ | _]}), do: "proposed"
   defp decision_status(_candidates, %{blocked: [_ | _]}), do: "blocked"
   defp decision_status(_candidates, _reconciliation), do: "satisfied"
+
+  defp evaluation_timeout_decision(entry, state) do
+    now = Zaik.Time.now(Map.get(state.config, :clock))
+    timeout_ms = Map.get(state.config, :evaluation_timeout_ms, 30_000)
+    snapshot_id = "evaluation-timeout:#{entry.key}"
+
+    %{
+      id: decision_id(snapshot_id, [], state.config.mode, now),
+      mode: state.config.mode,
+      query: entry.query,
+      snapshot_id: snapshot_id,
+      status: "evaluation_timed_out",
+      context: %{
+        scope: entry.key,
+        started_at: DateTime.to_iso8601(entry.started_at),
+        timed_out_at: DateTime.to_iso8601(now),
+        timeout_ms: timeout_ms
+      },
+      candidates: [],
+      arbitration: %{},
+      reconciliation: %{actions: [], satisfied: [], blocked: []},
+      conflict_locks: %{status: "not_evaluated"},
+      action_budget: %{status: "not_evaluated"},
+      outcomes: [
+        %{
+          status: "evaluation_timed_out",
+          timeout_ms: timeout_ms,
+          recorded_at: DateTime.to_iso8601(now)
+        }
+      ],
+      feedback: [],
+      policy_fingerprint: Zaik.Home.Policies.Registry.fingerprint(),
+      created_at: now
+    }
+  end
 
   defp decision_id(snapshot_id, candidates, mode, now) do
     {snapshot_id, Enum.map(candidates, & &1.fingerprint), mode, DateTime.to_iso8601(now)}
