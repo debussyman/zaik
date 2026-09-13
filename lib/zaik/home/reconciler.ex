@@ -7,20 +7,26 @@ defmodule Zaik.Home.Reconciler do
   capability observation is missing or stale.
   """
 
-  def apply_action_budget(reconciliation, %{allowed: allowed, blocked: blocked})
-      when is_map(reconciliation) and is_list(allowed) and is_list(blocked) do
-    budget_blocks =
+  def apply_action_budget(reconciliation, assessment),
+    do: apply_action_gate(reconciliation, assessment)
+
+  def apply_conflict_locks(reconciliation, assessment),
+    do: apply_action_gate(reconciliation, assessment)
+
+  defp apply_action_gate(reconciliation, %{allowed: allowed, blocked: blocked})
+       when is_map(reconciliation) and is_list(allowed) and is_list(blocked) do
+    gate_blocks =
       Enum.map(blocked, fn entry ->
-        %{
-          action: value(entry, :action),
-          reason: value(entry, :reason) || "action_budget_exceeded",
-          dimensions: value(entry, :dimensions)
-        }
+        entry
+        |> Map.new()
+        |> Map.delete(:action)
+        |> Map.delete("action")
+        |> Map.put(:action, value(entry, :action))
       end)
 
     reconciliation
     |> Map.put(:actions, allowed)
-    |> Map.update(:blocked, budget_blocks, &(&1 ++ budget_blocks))
+    |> Map.update(:blocked, gate_blocks, &(&1 ++ gate_blocks))
     |> Map.delete(:fingerprint)
     |> then(&Map.put(&1, :fingerprint, fingerprint(&1)))
   end

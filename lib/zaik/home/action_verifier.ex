@@ -70,6 +70,10 @@ defmodule Zaik.Home.ActionVerifier do
     GenServer.call(Keyword.get(opts, :server, __MODULE__), {:status, action_id})
   end
 
+  def pending(opts \\ []) do
+    GenServer.call(Keyword.get(opts, :server, __MODULE__), :pending)
+  end
+
   def barrier(server \\ __MODULE__), do: GenServer.call(server, :barrier)
 
   def await(action_id, timeout_ms, opts \\ []) when is_binary(action_id) do
@@ -170,6 +174,17 @@ defmodule Zaik.Home.ActionVerifier do
         notify_ledger(action)
         {:reply, :ok, put_action(state, action)}
     end
+  end
+
+  def handle_call(:pending, _from, state) do
+    pending =
+      state.actions
+      |> Map.values()
+      |> Enum.filter(&(&1.status in [:registered, :pending]))
+      |> Enum.sort_by(&{&1.device_key, &1.capability, &1.action_id})
+      |> Enum.map(&public_status/1)
+
+    {:reply, pending, state}
   end
 
   def handle_call(:barrier, _from, state), do: {:reply, :ok, state}

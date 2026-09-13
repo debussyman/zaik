@@ -305,9 +305,10 @@ Goal: choose one explainable desired state when policies and people disagree.
 - [x] Enforce durable sliding-window action-rate budgets per device, room, and
   globally during reconciliation. Shadow/advisory assessment is non-consuming;
   only accepted autonomous execution may record a budget event.
-- [ ] Prevent oscillation through hysteresis, settle windows, cooldowns, and
-  conflict locks. Per-policy stability windows are enforced; cross-policy/device
-  conflict locks remain.
+- [x] Prevent oscillation through hysteresis, settle windows, cooldowns, and
+  conflict locks. Reconciliation now suppresses equivalent in-flight actions and
+  blocks contradictory targets until the physical verifier reaches a terminal
+  state, while arbitration retains one target per entity capability.
 - [x] Preserve explicit action-plan preflight, idempotency ledger, physical
   verifier, and policy-gated retry boundary; successful explicit actions also
   create area/capability override leases so background goals cannot undo them.

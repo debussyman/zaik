@@ -44,6 +44,12 @@ defmodule Zaik.Home.AutonomyEngineTest do
     {:ok, action_budgets} =
       start_supervised({Zaik.Home.Autonomy.ActionBudgetStore, name: nil, db_path: ":memory:"})
 
+    {:ok, action_verifier} =
+      start_supervised(
+        {Zaik.Home.ActionVerifier,
+         name: nil, clock: {Zaik.Home.Mirror.Clock, clock}, timeout_ms: 30_000}
+      )
+
     {:ok, engine} =
       start_supervised(
         {Zaik.Home.Autonomy.Engine,
@@ -53,7 +59,8 @@ defmodule Zaik.Home.AutonomyEngineTest do
          occupancy_tracker: false,
          manual_override_store: overrides,
          desired_state_store: desired_states,
-         action_budget_store: action_budgets}
+         action_budget_store: action_budgets,
+         action_verifier: action_verifier}
       )
 
     sensor_metadata = %{
@@ -105,6 +112,7 @@ defmodule Zaik.Home.AutonomyEngineTest do
       overrides: overrides,
       desired_states: desired_states,
       action_budgets: action_budgets,
+      action_verifier: action_verifier,
       engine: engine
     }
   end
@@ -160,6 +168,7 @@ defmodule Zaik.Home.AutonomyEngineTest do
     assert stored.snapshot_id == ready.snapshot_id
     assert length(stored.candidates) == 1
     assert length(stored.reconciliation["actions"]) == 2
+    assert stored.conflict_locks["status"] == "clear"
     assert stored.action_budget["status"] == "allowed"
     assert stored.action_budget["usage"]["global"]["current"] == 0
 
@@ -173,6 +182,56 @@ defmodule Zaik.Home.AutonomyEngineTest do
     assert length(desired) == 2
     assert Enum.all?(desired, &(&1.priority_class == "daylight_energy"))
     assert Enum.all?(desired, &(&1.decision_id == ready.id))
+  end
+
+  test "reconciliation locks targets that conflict with a pending physical action", context do
+    opts = [
+      clock: {Zaik.Home.Mirror.Clock, context.clock},
+      device_store: context.devices,
+      history_store: context.history,
+      decision_store: context.decisions,
+      action_budget_store: context.action_budgets,
+      action_verifier: context.action_verifier,
+      environment_config: %{utc_offset_minutes: 0},
+      policy_opts: [maximum_temperature_f: 76.0]
+    ]
+
+    assert {:ok, %{status: "blocked"}} =
+             Zaik.Home.Autonomy.Engine.evaluate("lily", opts, context.engine)
+
+    Zaik.Home.Mirror.Clock.advance(context.clock, 30_000)
+
+    assert {:ok, _} =
+             Zaik.Home.ActionVerifier.register(
+               "manual-close-pending",
+               "Lily's bedroom left blind",
+               "cover",
+               %{"position" => 100},
+               server: context.action_verifier,
+               timeout_ms: 30_000
+             )
+
+    assert {:ok, _} =
+             Zaik.Home.ActionVerifier.published(
+               "manual-close-pending",
+               server: context.action_verifier
+             )
+
+    assert {:ok, decision} = Zaik.Home.Autonomy.Engine.evaluate("lily", opts, context.engine)
+    assert decision.conflict_locks.status == "blocked"
+    assert Enum.map(decision.reconciliation.actions, & &1.entity_id) == ["right"]
+
+    assert [%{reason: "conflicting_action_pending", pending_action_id: "manual-close-pending"}] =
+             Enum.filter(
+               decision.reconciliation.blocked,
+               &(&1.reason == "conflicting_action_pending")
+             )
+
+    Zaik.Home.Mirror.Clock.advance(context.clock, 30_000)
+    assert Zaik.Home.ActionVerifier.pending(server: context.action_verifier) == []
+
+    assert {:ok, unlocked} = Zaik.Home.Autonomy.Engine.evaluate("lily", opts, context.engine)
+    assert Enum.map(unlocked.reconciliation.actions, & &1.entity_id) == ["left", "right"]
   end
 
   test "shadow reconciliation applies durable device action budgets", context do
@@ -193,6 +252,7 @@ defmodule Zaik.Home.AutonomyEngineTest do
       history_store: context.history,
       decision_store: context.decisions,
       action_budget_store: context.action_budgets,
+      action_verifier: context.action_verifier,
       environment_config: %{utc_offset_minutes: 0},
       policy_opts: [maximum_temperature_f: 76.0]
     ]
@@ -234,6 +294,7 @@ defmodule Zaik.Home.AutonomyEngineTest do
          decision_store: context.decisions,
          desired_state_store: context.desired_states,
          action_budget_store: context.action_budgets,
+         action_verifier: context.action_verifier,
          environment_config: %{utc_offset_minutes: 0},
          policy_opts: [maximum_temperature_f: 76.0, settle_seconds: 0]},
         id: :event_autonomy_engine
@@ -282,6 +343,7 @@ defmodule Zaik.Home.AutonomyEngineTest do
       decision_store: context.decisions,
       desired_state_store: context.desired_states,
       action_budget_store: context.action_budgets,
+      action_verifier: context.action_verifier,
       environment_config: %{utc_offset_minutes: 0},
       policy_opts: [maximum_temperature_f: 76.0]
     ]
@@ -303,6 +365,7 @@ defmodule Zaik.Home.AutonomyEngineTest do
          decision_store: context.decisions,
          desired_state_store: context.desired_states,
          action_budget_store: context.action_budgets,
+         action_verifier: context.action_verifier,
          environment_config: %{utc_offset_minutes: 0},
          policy_opts: [maximum_temperature_f: 76.0]},
         id: :restored_settle_engine
@@ -335,6 +398,7 @@ defmodule Zaik.Home.AutonomyEngineTest do
          decision_store: context.decisions,
          desired_state_store: context.desired_states,
          action_budget_store: context.action_budgets,
+         action_verifier: context.action_verifier,
          environment_config: %{utc_offset_minutes: 0},
          policy_opts: [maximum_temperature_f: 76.0, settle_seconds: 2]},
         id: :settle_event_engine
@@ -424,6 +488,7 @@ defmodule Zaik.Home.AutonomyEngineTest do
          decision_store: context.decisions,
          desired_state_store: context.desired_states,
          action_budget_store: context.action_budgets,
+         action_verifier: context.action_verifier,
          manual_override_store: context.overrides,
          environment_config: %{utc_offset_minutes: 0},
          policy_registry_opts: [modules: [SlowReadOnlyPolicy]]},

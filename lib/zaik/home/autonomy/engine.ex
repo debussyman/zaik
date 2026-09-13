@@ -319,7 +319,14 @@ defmodule Zaik.Home.Autonomy.Engine do
       decision
       |> get_in([:reconciliation, :blocked])
       |> List.wrap()
-      |> Enum.filter(&(Map.get(&1, :reason) in ["policy_settling", "policy_cooldown"]))
+      |> Enum.filter(
+        &(Map.get(&1, :reason) in [
+            "policy_settling",
+            "policy_cooldown",
+            "equivalent_action_pending",
+            "conflicting_action_pending"
+          ])
+      )
       |> Enum.map(&Map.get(&1, :retry_after_seconds))
       |> Enum.filter(&(is_integer(&1) and &1 > 0))
       |> Enum.min(fn -> nil end)
@@ -409,6 +416,9 @@ defmodule Zaik.Home.Autonomy.Engine do
           policy_stability: policy_stability(opts)
         )
 
+      {reconciliation, conflict_locks} =
+        apply_conflict_locks(reconciliation, opts, cfg, clock)
+
       {reconciliation, action_budget} =
         apply_action_budget(reconciliation, context, opts, cfg, clock)
 
@@ -422,6 +432,7 @@ defmodule Zaik.Home.Autonomy.Engine do
         candidates: candidates,
         arbitration: arbitration,
         reconciliation: reconciliation,
+        conflict_locks: conflict_locks,
         action_budget: action_budget,
         policy_fingerprint:
           Zaik.Home.Policies.Registry.fingerprint(Keyword.get(opts, :policy_registry_opts, [])),
@@ -443,6 +454,55 @@ defmodule Zaik.Home.Autonomy.Engine do
         {:error, reason} -> {:error, {:decision_not_recorded, reason}}
       end
     end
+  end
+
+  defp apply_conflict_locks(%{actions: []} = reconciliation, _opts, _cfg, clock) do
+    {reconciliation,
+     %{status: "not_required", assessed_at: DateTime.to_iso8601(Zaik.Time.now(clock))}}
+  end
+
+  defp apply_conflict_locks(reconciliation, opts, cfg, clock) do
+    verifier =
+      Keyword.get(
+        opts,
+        :action_verifier,
+        Map.get(cfg, :action_verifier, Zaik.Home.ActionVerifier)
+      )
+
+    cond do
+      verifier in [nil, false] ->
+        {reconciliation, %{status: "disabled"}}
+
+      process_available?(verifier) ->
+        assessment =
+          reconciliation.actions
+          |> Zaik.Home.Autonomy.ConflictLock.assess(
+            Zaik.Home.ActionVerifier.pending(server: verifier),
+            clock: clock
+          )
+
+        {Zaik.Home.Reconciler.apply_conflict_locks(reconciliation, assessment), assessment}
+
+      true ->
+        conflict_locks_unavailable(reconciliation, :verifier_unavailable, clock)
+    end
+  catch
+    :exit, reason -> conflict_locks_unavailable(reconciliation, reason, clock)
+  end
+
+  defp conflict_locks_unavailable(reconciliation, reason, clock) do
+    assessment = %{
+      status: "unavailable",
+      reason: inspect(reason),
+      allowed: [],
+      blocked:
+        Enum.map(reconciliation.actions, fn action ->
+          %{action: action, reason: "conflict_lock_unavailable"}
+        end),
+      assessed_at: DateTime.to_iso8601(Zaik.Time.now(clock))
+    }
+
+    {Zaik.Home.Reconciler.apply_conflict_locks(reconciliation, assessment), assessment}
   end
 
   defp apply_action_budget(%{actions: []} = reconciliation, context, _opts, cfg, clock) do

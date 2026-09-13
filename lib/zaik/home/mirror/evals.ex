@@ -35,7 +35,8 @@ defmodule Zaik.Home.Mirror.Evals do
       %{name: "explicit_action_creates_temporary_override", kind: :explicit_override},
       %{name: "operator_pause_blocks_autonomy_evaluation", kind: :operator_pause},
       %{name: "daylight_hysteresis_survives_sensor_noise", kind: :daylight_hysteresis},
-      %{name: "autonomy_action_budgets_expire_under_virtual_time", kind: :action_budget}
+      %{name: "autonomy_action_budgets_expire_under_virtual_time", kind: :action_budget},
+      %{name: "autonomy_conflict_locks_follow_pending_actions", kind: :conflict_lock}
     ]
   end
 
@@ -256,6 +257,72 @@ defmodule Zaik.Home.Mirror.Evals do
     )
   end
 
+  defp run_case(%{kind: :conflict_lock} = definition) do
+    scenario = Scenarios.lily_with_history_and_telemetry(id: definition.name)
+
+    finish(
+      definition,
+      Runner.run(scenario, fn mirror, context ->
+        {:ok, _registered} =
+          Zaik.Home.ActionVerifier.register(
+            "mirror-pending-close",
+            "Lily's bedroom left blind",
+            "cover",
+            %{"position" => 100},
+            server: context.action_verifier,
+            timeout_ms: 1_000
+          )
+
+        {:ok, _pending} =
+          Zaik.Home.ActionVerifier.published(
+            "mirror-pending-close",
+            server: context.action_verifier
+          )
+
+        actions = [
+          %{
+            entity_id: "eval-left",
+            device: "Lily's bedroom left blind",
+            capability: "cover",
+            target: %{"position" => 0}
+          },
+          %{
+            entity_id: "eval-right",
+            device: "Lily's bedroom right blind",
+            capability: "cover",
+            target: %{"position" => 0}
+          }
+        ]
+
+        blocked =
+          Zaik.Home.Autonomy.ConflictLock.assess(
+            actions,
+            Zaik.Home.ActionVerifier.pending(server: context.action_verifier),
+            clock: context.clock
+          )
+
+        Zaik.Home.Mirror.advance(mirror, 1_000)
+
+        clear =
+          Zaik.Home.Autonomy.ConflictLock.assess(
+            actions,
+            Zaik.Home.ActionVerifier.pending(server: context.action_verifier),
+            clock: context.clock
+          )
+
+        %{blocked: blocked, clear: clear}
+      end),
+      fn run ->
+        run.result.blocked.status == "blocked" and
+          match?(
+            [%{reason: "conflicting_action_pending", pending_action_id: "mirror-pending-close"}],
+            run.result.blocked.blocked
+          ) and length(run.result.blocked.allowed) == 1 and run.result.clear.status == "clear" and
+          length(run.result.clear.allowed) == 2 and run.report.side_effect_count == 0
+      end
+    )
+  end
+
   defp run_case(%{kind: :action_budget} = definition) do
     scenario = Scenarios.lily_with_history_and_telemetry(id: definition.name)
 
@@ -348,6 +415,7 @@ defmodule Zaik.Home.Mirror.Evals do
           decision_store: decisions,
           desired_state_store: context.desired_state_store,
           action_budget_store: context.action_budget_store,
+          action_verifier: context.action_verifier,
           manual_override_store: context.manual_override_store,
           environment_config: %{utc_offset_minutes: 0},
           max_state_age_seconds: 600,
@@ -447,6 +515,7 @@ defmodule Zaik.Home.Mirror.Evals do
              clock: context.clock,
              desired_state_store: context.desired_state_store,
              action_budget_store: context.action_budget_store,
+             action_verifier: context.action_verifier,
              manual_override_store: context.manual_override_store}
           )
 
@@ -769,6 +838,7 @@ defmodule Zaik.Home.Mirror.Evals do
           decision_store: decision_store,
           desired_state_store: context.desired_state_store,
           action_budget_store: context.action_budget_store,
+          action_verifier: context.action_verifier,
           manual_override_store: context.manual_override_store,
           environment_config: %{utc_offset_minutes: 0},
           policy_opts: [maximum_temperature_f: 80.0]

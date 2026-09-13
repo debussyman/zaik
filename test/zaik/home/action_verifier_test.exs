@@ -157,6 +157,15 @@ defmodule Zaik.Home.ActionVerifierTest do
     assert {:ok, _pending} =
              Zaik.Home.ActionVerifier.published("first-action", server: verifier)
 
+    assert [
+             %{
+               action_id: "first-action",
+               device: "Office blind",
+               capability: "cover",
+               status: "pending"
+             }
+           ] = Zaik.Home.ActionVerifier.pending(server: verifier)
+
     assert {:error, {:conflicting_action_pending, "first-action"}} =
              Zaik.Home.ActionVerifier.register(
                "second-action",
@@ -167,6 +176,7 @@ defmodule Zaik.Home.ActionVerifierTest do
              )
 
     assert :ok = Zaik.Home.ActionVerifier.cancel("first-action", :operator, server: verifier)
+    assert Zaik.Home.ActionVerifier.pending(server: verifier) == []
 
     assert {:ok, _registered} =
              Zaik.Home.ActionVerifier.register(
