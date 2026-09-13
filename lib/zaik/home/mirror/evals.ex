@@ -448,12 +448,15 @@ defmodule Zaik.Home.Mirror.Evals do
         )
 
         {:ok, lease} =
-          Zaik.Home.Autonomy.ModeStore.activate(
-            "lily_bedroom",
-            "privacy",
-            %{owner: "mirror-parent", reason: "privacy", ttl_seconds: 60},
-            [clock: context.clock],
-            context.mode_store
+          Zaik.Tools.Registry.run(
+            "activate_home_mode",
+            %{
+              "scope" => "lily",
+              "mode" => "privacy",
+              "ttl_seconds" => 60,
+              "reason" => "privacy"
+            },
+            Map.put(context, :sender_id, "mirror-parent")
           )
 
         room_opts = [

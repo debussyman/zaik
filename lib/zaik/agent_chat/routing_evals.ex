@@ -62,6 +62,29 @@ defmodule Zaik.AgentChat.RoutingEvals do
         prompt_must_not_include: []
       },
       %{
+        name: "activate_privacy_mode_routes_to_semantic_mode_tool",
+        kind: :domain,
+        prompt: "Activate privacy mode in Lily's room for one hour",
+        expected_domain: :home_control,
+        prompt_must_include: [
+          "Required action tool: activate_home_mode",
+          "ttl_seconds",
+          "creates policy context"
+        ],
+        prompt_must_not_include: ["Required action tool: control_device"]
+      },
+      %{
+        name: "active_modes_route_to_read_only_mode_tool",
+        kind: :domain,
+        prompt: "What modes are active in Lily's room?",
+        expected_domain: :home_readings,
+        prompt_must_include: [
+          "DOMAIN: active household modes",
+          "Required and only available tool: get_home_modes"
+        ],
+        prompt_must_not_include: ["activate_home_mode", "cancel_home_mode"]
+      },
+      %{
         name: "home_action_status_routes_to_read_tool",
         kind: :domain,
         prompt: "Check home action status abc123",

@@ -332,8 +332,9 @@ Goal: run observation-to-reconciliation continuously under OTP supervision.
   polling process lists or spawning untracked model calls; execution modes remain
   deliberately unavailable pending rollout gates.
 - [ ] Subscribe it only to accepted canonical changes and explicit user goals.
-  Production shadow observation subscription, area/dependency filtering, and
-  explicit operator evaluation are implemented; semantic user-goal ingestion remains.
+  Production observation filtering and operator evaluation are implemented;
+  explicit language can now create bounded typed bedtime/privacy mode goals via
+  registered tools and mode events, while general semantic goal ingestion remains.
 - [x] Coalesce area bursts, union changed dependencies, enforce a configurable
   minimum interval, and execute event-triggered policy evaluations in bounded,
   monitored `Task.Supervisor` workers with timeouts; explicit operator calls

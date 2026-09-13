@@ -101,7 +101,7 @@ defmodule Zaik.AgentChat.Prompts do
 
     reading_field? =
       Regex.match?(
-        ~r/\b(temperature|temp|humidity|humid|illuminance|brightness|bright|presence|motion|battery|voltage|linkquality|reading|readings|warm|cool|warmer|cooler|trend|trending)\b/,
+        ~r/\b(temperature|temp|humidity|humid|illuminance|brightness|bright|presence|motion|battery|voltage|linkquality|reading|readings|warm|cool|warmer|cooler|trend|trending|mode|modes|privacy|bedtime)\b/,
         normalized_text
       )
 
@@ -111,13 +111,13 @@ defmodule Zaik.AgentChat.Prompts do
   defp home_control_request?(text, normalized_text, opts) do
     action? =
       Regex.match?(
-        ~r/\b(set|setup|set up|prepare|adjust|move|open|close|stop|raise|lower|turn|make)\b/,
+        ~r/\b(set|setup|set up|prepare|adjust|move|open|close|stop|raise|lower|turn|make|activate|deactivate|cancel)\b/,
         normalized_text
       )
 
     home_target? =
       Regex.match?(
-        ~r/\b(home|room|bedroom|blind|blinds|shade|shades|cover|covers|preset|presets|ac|air conditioner|bedtime|sleep)\b/,
+        ~r/\b(home|room|bedroom|blind|blinds|shade|shades|cover|covers|preset|presets|ac|air conditioner|bedtime|sleep|privacy|mode)\b/,
         normalized_text
       ) or
         known_home_device_match?(normalized_text, opts) or relevant_home_skill?(text)
@@ -241,6 +241,9 @@ defmodule Zaik.AgentChat.Prompts do
     Required action tool: #{required_tool}
 
     You may use these supervised tools:
+    - activate_home_mode for an explicit expiring bedtime/privacy mode request; this creates policy context and does not directly control devices.
+    - get_home_modes to inspect exact active mode IDs and expiry before cancellation.
+    - cancel_home_mode only with an exact active mode ID.
     - execute_home_plan for requests requiring two or more coordinated changes. This is preferred for room setups and skills with multiple steps.
     - apply_device_preset for one existing named device preset.
     - capture_device_preset only when the user explicitly asks to save fresh current device state as a preset.
@@ -256,12 +259,16 @@ defmodule Zaik.AgentChat.Prompts do
     Valid single-action shape:
     {"type":"tool_call","tool":"control_device","args":{"device":"Lily's bedroom left blind","capability":"cover","target":{"state":"CLOSE"}}}
 
+    Valid mode activation shape:
+    {"type":"tool_call","tool":"activate_home_mode","args":{"scope":"Lily's room","mode":"privacy","ttl_seconds":3600,"reason":"explicit user request"}}
+
     Valid explicit retry shape:
     {"type":"tool_call","tool":"retry_home_action","args":{"action_id":"exact ID supplied by the user"}}
 
     Rules:
     - For a relevant skill containing goal_id, call get_home_goal_context with that exact semantic goal ID before proposing actions. If required evidence is missing or stale, ask for clarification and do not execute. Otherwise copy the exact returned goal_id and fingerprint into execute_home_plan as goal_id and goal_context_fingerprint; invented, omitted, or changed evidence is rejected.
     - Choose actions only from the validated goal context, relevant skills, current devices, and presets below.
+    - Mode activation requires an explicit bounded duration. Do not invent a permanent mode. Cancellation requires an exact mode ID from the user or get_home_modes.
     - Do not invent devices, capabilities, presets, MQTT topics, or MQTT payloads.
     - Use exact device names when calling tools.
     - Put every required change into one execute_home_plan call. Elixir preflights every action and preset before the first command is sent.
@@ -298,6 +305,15 @@ defmodule Zaik.AgentChat.Prompts do
     cond do
       Regex.match?(~r/\bretry(?: the)?(?: home)? action\b/, normalized) ->
         "retry_home_action"
+
+      Regex.match?(~r/\b(cancel|deactivate)\b.*\b(mode|privacy|bedtime)\b/, normalized) ->
+        "cancel_home_mode"
+
+      Regex.match?(~r/\b(activate|set)\b.*\b(mode|privacy)\b/, normalized) ->
+        "activate_home_mode"
+
+      Regex.match?(~r/\bactivate\b.*\bbedtime\b/, normalized) ->
+        "activate_home_mode"
 
       Regex.match?(~r/\b(set up|setup|prepare|ready|routine|scene|bedtime)\b/, normalized) ->
         "execute_home_plan"
@@ -548,7 +564,24 @@ defmodule Zaik.AgentChat.Prompts do
       "get_home_state" -> current_home_readings_policy(text)
       "get_home_history" -> historical_home_readings_policy(text)
       "get_area_context" -> area_context_policy(text)
+      "get_home_modes" -> home_modes_policy(text)
     end
+  end
+
+  defp home_modes_policy(text) do
+    lookup = home_lookup_hint(text)
+
+    """
+    DOMAIN: active household modes.
+    Exact user request: #{text}
+    Required and only available tool: get_home_modes
+
+    Return exactly this read call before answering:
+    {"type":"tool_call","tool":"get_home_modes","args":{"scope":"#{lookup}"}}
+
+    Report exact mode IDs, owners, reasons, and expiry. Do not cancel or activate a mode from a read request.
+    """
+    |> String.trim()
   end
 
   defp current_home_readings_policy(text) do
@@ -615,6 +648,9 @@ defmodule Zaik.AgentChat.Prompts do
     normalized = normalize_home_name(text)
 
     cond do
+      Regex.match?(~r/\b(mode|modes|privacy mode|bedtime mode)\b/, normalized) ->
+        "get_home_modes"
+
       Regex.match?(
         ~r/\b(recent|recently|past|last|ago|since|today|tonight|morning|afternoon|evening|yesterday|minute|minutes|hour|hours|day|days|week|weeks|change|changed|changing|trend|trending|getting|warmer|cooler|history|historical|was|were)\b|\bhas been\b|\bhave been\b/,
         normalized
