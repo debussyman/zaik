@@ -33,5 +33,39 @@ defmodule Zaik.Home.AutonomyDecisionStoreTest do
            ]
 
     assert {:error, :not_found} = Zaik.Home.Autonomy.DecisionStore.lookup("decision-1", store)
+
+    assert {:ok, with_outcome} =
+             Zaik.Home.Autonomy.DecisionStore.record_outcome(
+               "decision-3",
+               %{
+                 status: "verified",
+                 action_id: "action-3",
+                 policy_id: "daylight_harvesting",
+                 snapshot_id: "snapshot-3"
+               },
+               store
+             )
+
+    assert [outcome] = with_outcome.outcomes
+    assert outcome["status"] == "verified"
+    assert outcome["action_id"] == "action-3"
+    assert is_binary(outcome["recorded_at"])
+
+    assert {:ok, with_feedback} =
+             Zaik.Home.Autonomy.DecisionStore.record_feedback(
+               "decision-3",
+               %{rating: 1, owner: "parent", comment: "correct"},
+               store
+             )
+
+    assert [%{"rating" => 1, "owner" => "parent", "comment" => "correct"}] =
+             Enum.map(with_feedback.feedback, &Map.drop(&1, ["recorded_at"]))
+
+    assert {:error, {:invalid_autonomy_feedback, :rating_or_owner}} =
+             Zaik.Home.Autonomy.DecisionStore.record_feedback(
+               "decision-3",
+               %{rating: 5},
+               store
+             )
   end
 end

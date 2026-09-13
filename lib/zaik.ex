@@ -126,6 +126,18 @@ defmodule Zaik do
     do: Zaik.Home.Autonomy.DecisionStore.recent(limit)
 
   @doc """
+  Append a structured execution outcome to a durable autonomy decision.
+  """
+  def record_home_autonomy_outcome(decision_id, outcome),
+    do: Zaik.Home.Autonomy.DecisionStore.record_outcome(decision_id, outcome)
+
+  @doc """
+  Append explicit operator feedback (`rating` -1, 0, or 1) to a decision.
+  """
+  def record_home_autonomy_feedback(decision_id, feedback),
+    do: Zaik.Home.Autonomy.DecisionStore.record_feedback(decision_id, feedback)
+
+  @doc """
   Return current autonomous-action budget usage for an area and globally.
   """
   def home_action_budget_status(scope \\ "home", opts \\ []),

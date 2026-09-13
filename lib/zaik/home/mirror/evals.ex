@@ -38,7 +38,8 @@ defmodule Zaik.Home.Mirror.Evals do
       %{name: "autonomy_action_budgets_expire_under_virtual_time", kind: :action_budget},
       %{name: "autonomy_conflict_locks_follow_pending_actions", kind: :conflict_lock},
       %{name: "privacy_mode_suppresses_daylight_until_expiry", kind: :privacy_mode},
-      %{name: "solar_heat_outranks_daylight_but_not_privacy", kind: :solar_heat}
+      %{name: "solar_heat_outranks_daylight_but_not_privacy", kind: :solar_heat},
+      %{name: "decision_outcomes_and_feedback_are_durable", kind: :decision_feedback}
     ]
   end
 
@@ -255,6 +256,61 @@ defmodule Zaik.Home.Mirror.Evals do
       fn run ->
         run.result == 1 and run.report.passed? and run.report.side_effect_count == 0 and
           Enum.map(run.report.reports, & &1.disposition) == ["accepted", "stale"]
+      end
+    )
+  end
+
+  defp run_case(%{kind: :decision_feedback} = definition) do
+    scenario = Scenarios.lily_with_history_and_telemetry(id: definition.name)
+
+    finish(
+      definition,
+      Runner.run(scenario, fn mirror, context ->
+        {:ok, decisions} =
+          DynamicSupervisor.start_child(
+            mirror.supervisor,
+            {Zaik.Home.Autonomy.DecisionStore,
+             name: nil, db_path: mirror.home_db_path, clock: context.clock}
+          )
+
+        decision = %{
+          id: "mirror-feedback-decision",
+          mode: :shadow,
+          query: "lily_bedroom",
+          snapshot_id: "snapshot-feedback",
+          status: "proposed",
+          context: %{},
+          candidates: [],
+          arbitration: %{},
+          reconciliation: %{},
+          conflict_locks: %{},
+          action_budget: %{},
+          policy_fingerprint: "policies",
+          created_at: Zaik.Home.Mirror.now(mirror)
+        }
+
+        {:ok, _stored} = Zaik.Home.Autonomy.DecisionStore.record(decision, decisions)
+
+        {:ok, _outcome} =
+          Zaik.Home.Autonomy.DecisionStore.record_outcome(
+            decision.id,
+            %{status: "verified", action_id: "mirror-action", snapshot_id: decision.snapshot_id},
+            decisions
+          )
+
+        {:ok, updated} =
+          Zaik.Home.Autonomy.DecisionStore.record_feedback(
+            decision.id,
+            %{rating: 1, owner: "mirror-parent", comment: "correct"},
+            decisions
+          )
+
+        updated
+      end),
+      fn run ->
+        match?([%{"status" => "verified", "action_id" => "mirror-action"}], run.result.outcomes) and
+          match?([%{"rating" => 1, "owner" => "mirror-parent"}], run.result.feedback) and
+          run.report.side_effect_count == 0
       end
     )
   end

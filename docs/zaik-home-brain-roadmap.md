@@ -339,9 +339,10 @@ Goal: run observation-to-reconciliation continuously under OTP supervision.
   monitored `Task.Supervisor` workers with timeouts; explicit operator calls
   remain synchronous by design.
 - [ ] Add durable decision IDs and a SQLite decision ledger containing snapshot,
-  candidates, arbitration, plan, outcomes, and feedback. The initial ledger now
-  stores a bounded newest window of context, candidates, arbitration, and
-  reconciliation; execution outcomes and feedback remain.
+  candidates, arbitration, plan, outcomes, and feedback. The bounded ledger now
+  stores context, candidates, arbitration, reconciliation, conflict/budget gates,
+  append-only structured execution outcomes, and rated operator feedback; staged
+  plan records remain.
 - [ ] Correlate every physical action with its originating decision, goal,
   policy, and observation snapshot.
 - [ ] Add watchdog recovery for stuck evaluations and staged plans.

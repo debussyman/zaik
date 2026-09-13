@@ -20,6 +20,14 @@ defmodule Zaik.Home.Autonomy.DecisionStore do
   def recent(limit \\ 20, server \\ __MODULE__) when is_integer(limit),
     do: GenServer.call(server, {:recent, limit})
 
+  def record_outcome(id, outcome, server \\ __MODULE__)
+      when is_binary(id) and is_map(outcome),
+      do: GenServer.call(server, {:record_outcome, id, outcome})
+
+  def record_feedback(id, feedback, server \\ __MODULE__)
+      when is_binary(id) and is_map(feedback),
+      do: GenServer.call(server, {:record_feedback, id, feedback})
+
   def reset(server \\ __MODULE__), do: GenServer.call(server, :reset)
 
   @impl true
@@ -28,7 +36,12 @@ defmodule Zaik.Home.Autonomy.DecisionStore do
     unless path == ":memory:", do: path |> Path.dirname() |> File.mkdir_p!()
 
     with {:ok, conn} <- Sqlite3.open(path), :ok <- migrate(conn) do
-      {:ok, %{conn: conn, max_rows: Keyword.get(opts, :max_rows, 10_000)}}
+      {:ok,
+       %{
+         conn: conn,
+         max_rows: Keyword.get(opts, :max_rows, 10_000),
+         clock: Keyword.get(opts, :clock)
+       }}
     else
       {:error, reason} -> {:stop, reason}
     end
@@ -50,6 +63,8 @@ defmodule Zaik.Home.Autonomy.DecisionStore do
       Jason.encode!(normalized.reconciliation),
       Jason.encode!(normalized.conflict_locks),
       Jason.encode!(normalized.action_budget),
+      Jason.encode!(normalized.outcomes),
+      Jason.encode!(normalized.feedback),
       normalized.policy_fingerprint,
       normalized.created_at
     ]
@@ -61,8 +76,8 @@ defmodule Zaik.Home.Autonomy.DecisionStore do
         INSERT INTO home_autonomy_decisions (
           id, mode, query, snapshot_id, status, context_json, candidates_json,
           arbitration_json, reconciliation_json, conflict_locks_json,
-          action_budget_json, policy_fingerprint, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          action_budget_json, outcomes_json, feedback_json, policy_fingerprint, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO NOTHING
         """,
         params
@@ -95,6 +110,16 @@ defmodule Zaik.Home.Autonomy.DecisionStore do
      |> Enum.map(&decode/1), state}
   end
 
+  def handle_call({:record_outcome, id, outcome}, _from, state) do
+    reply = append_entry(state, id, :outcomes, validate_outcome(outcome))
+    {:reply, reply, state}
+  end
+
+  def handle_call({:record_feedback, id, feedback}, _from, state) do
+    reply = append_entry(state, id, :feedback, validate_feedback(feedback))
+    {:reply, reply, state}
+  end
+
   def handle_call(:reset, _from, state) do
     {:reply, Sqlite3.execute(state.conn, "DELETE FROM home_autonomy_decisions"), state}
   end
@@ -123,6 +148,8 @@ defmodule Zaik.Home.Autonomy.DecisionStore do
              reconciliation_json TEXT NOT NULL,
              conflict_locks_json TEXT NOT NULL DEFAULT '{}',
              action_budget_json TEXT NOT NULL DEFAULT '{}',
+             outcomes_json TEXT NOT NULL DEFAULT '[]',
+             feedback_json TEXT NOT NULL DEFAULT '[]',
              policy_fingerprint TEXT NOT NULL,
              created_at TEXT NOT NULL
            );
@@ -130,8 +157,10 @@ defmodule Zaik.Home.Autonomy.DecisionStore do
            CREATE INDEX IF NOT EXISTS home_autonomy_decisions_created_idx
              ON home_autonomy_decisions(created_at DESC);
            """),
-         :ok <- ensure_json_column(conn, "conflict_locks_json"),
-         :ok <- ensure_json_column(conn, "action_budget_json") do
+         :ok <- ensure_json_column(conn, "conflict_locks_json", "{}"),
+         :ok <- ensure_json_column(conn, "action_budget_json", "{}"),
+         :ok <- ensure_json_column(conn, "outcomes_json", "[]"),
+         :ok <- ensure_json_column(conn, "feedback_json", "[]") do
       :ok
     end
   end
@@ -140,7 +169,7 @@ defmodule Zaik.Home.Autonomy.DecisionStore do
     """
     SELECT id, mode, query, snapshot_id, status, context_json, candidates_json,
            arbitration_json, reconciliation_json, conflict_locks_json,
-           action_budget_json, policy_fingerprint, created_at
+           action_budget_json, outcomes_json, feedback_json, policy_fingerprint, created_at
     FROM home_autonomy_decisions
     #{suffix}
     """
@@ -159,6 +188,8 @@ defmodule Zaik.Home.Autonomy.DecisionStore do
       reconciliation: json_safe(value(decision, :reconciliation) || %{}),
       conflict_locks: json_safe(value(decision, :conflict_locks) || %{}),
       action_budget: json_safe(value(decision, :action_budget) || %{}),
+      outcomes: json_safe(value(decision, :outcomes) || []),
+      feedback: json_safe(value(decision, :feedback) || []),
       policy_fingerprint: to_string(value(decision, :policy_fingerprint)),
       created_at: format_time(value(decision, :created_at))
     }
@@ -176,6 +207,8 @@ defmodule Zaik.Home.Autonomy.DecisionStore do
          reconciliation,
          conflict_locks,
          action_budget,
+         outcomes,
+         feedback,
          policy_fingerprint,
          created_at
        ]) do
@@ -191,12 +224,73 @@ defmodule Zaik.Home.Autonomy.DecisionStore do
       reconciliation: Jason.decode!(reconciliation),
       conflict_locks: Jason.decode!(conflict_locks),
       action_budget: Jason.decode!(action_budget),
+      outcomes: Jason.decode!(outcomes),
+      feedback: Jason.decode!(feedback),
       policy_fingerprint: policy_fingerprint,
       created_at: created_at
     }
   end
 
-  defp ensure_json_column(conn, column) do
+  defp append_entry(_state, _id, _field, {:error, _reason} = error), do: error
+
+  defp append_entry(state, id, field, {:ok, entry}) do
+    case query(state.conn, select_sql("WHERE id = ? LIMIT 1"), [id]) do
+      [] ->
+        {:error, :not_found}
+
+      [row] ->
+        decision = decode(row)
+        recorded_at = Zaik.Time.now(state.clock) |> DateTime.to_iso8601()
+        entry = entry |> Map.put_new("recorded_at", recorded_at) |> json_safe()
+        entries = (Map.fetch!(decision, field) ++ [entry]) |> Enum.take(-100)
+        column = if field == :outcomes, do: "outcomes_json", else: "feedback_json"
+
+        case execute(
+               state.conn,
+               "UPDATE home_autonomy_decisions SET #{column} = ? WHERE id = ?",
+               [Jason.encode!(entries), id]
+             ) do
+          :ok ->
+            case query(state.conn, select_sql("WHERE id = ? LIMIT 1"), [id]) do
+              [updated] -> {:ok, decode(updated)}
+              [] -> {:error, :not_found}
+            end
+
+          error ->
+            error
+        end
+    end
+  end
+
+  defp validate_outcome(outcome) do
+    status = value(outcome, :status)
+
+    if is_binary(status) and String.trim(status) != "" do
+      {:ok,
+       outcome
+       |> Map.new(fn {key, nested} -> {to_string(key), nested} end)
+       |> Map.put("status", String.trim(status))}
+    else
+      {:error, {:invalid_autonomy_outcome, :status}}
+    end
+  end
+
+  defp validate_feedback(feedback) do
+    rating = value(feedback, :rating)
+    owner = value(feedback, :owner) || "operator"
+
+    if rating in [-1, 0, 1] and is_binary(owner) and String.trim(owner) != "" do
+      {:ok,
+       feedback
+       |> Map.new(fn {key, nested} -> {to_string(key), nested} end)
+       |> Map.put("rating", rating)
+       |> Map.put("owner", String.trim(owner))}
+    else
+      {:error, {:invalid_autonomy_feedback, :rating_or_owner}}
+    end
+  end
+
+  defp ensure_json_column(conn, column, default) do
     columns = query(conn, "PRAGMA table_info(home_autonomy_decisions)", [])
 
     if Enum.any?(columns, fn [_cid, name | _rest] -> name == column end) do
@@ -204,7 +298,7 @@ defmodule Zaik.Home.Autonomy.DecisionStore do
     else
       Sqlite3.execute(
         conn,
-        "ALTER TABLE home_autonomy_decisions ADD COLUMN #{column} TEXT NOT NULL DEFAULT '{}'"
+        "ALTER TABLE home_autonomy_decisions ADD COLUMN #{column} TEXT NOT NULL DEFAULT '#{default}'"
       )
     end
   end

@@ -138,7 +138,7 @@ Home automation is one optional domain, not the whole harness.
 | `Zaik.Home.Arbitrator` | Pure priority/conflict selection producing chosen and suppressed desired targets. | Keep in the home policy layer. |
 | `Zaik.Home.Reconciler` | Pure freshness-aware diff from selected desired state to inert unresolved actions. | Keep before the existing action-plan execution boundary. |
 | `Zaik.Home.Autonomy.Engine` | Supervised shadow/advisory context-policy-arbitration-reconciliation pipeline; active execution is deliberately rejected. | Evolve into the event-driven home autonomy coordinator. |
-| `Zaik.Home.Autonomy.DecisionStore` | SQLite ledger for context snapshots, candidates, arbitration, and reconciliation decisions. | Extend with outcomes, feedback, and operator controls. |
+| `Zaik.Home.Autonomy.DecisionStore` | Bounded SQLite ledger for context, candidates, arbitration, reconciliation, safety gates, append-only execution outcomes, and rated operator feedback. | Add staged-plan linkage and automated verified outcomes at the future execution boundary. |
 | `Zaik.Home.Autonomy.ManualOverrideStore` | Durable expiring area/home override leases with ownership, reasons, capability scope, cancellation audit, and automatic leases after explicit actions. | Add richer source-action metadata and configurable room defaults. |
 | `Zaik.Home.Autonomy.ModeStore` | Durable typed bedtime/privacy context leases with owner, reason, source, expiry, supersession, cancellation, and event publication. | Extend only through validated mode contracts. |
 | `Zaik.Home.Autonomy.DesiredStateStore` | Bounded durable ledger of selected semantic target leases and supersession history. | Drive restart-safe reconciliation once execution rollout gates exist. |
