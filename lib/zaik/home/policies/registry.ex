@@ -5,7 +5,8 @@ defmodule Zaik.Home.Policies.Registry do
 
   @default_modules [
     Zaik.Home.Policies.BedtimePrivacy,
-    Zaik.Home.Policies.DaylightHarvesting
+    Zaik.Home.Policies.DaylightHarvesting,
+    Zaik.Home.Policies.SolarHeatAvoidance
   ]
   @modes [:off, :shadow, :advisory, :canary, :active]
 

@@ -256,7 +256,7 @@ states without directly controlling devices.
   - [x] shadow-first daylight harvesting;
   - [x] explicit, expiring bedtime/privacy modes with generic cover targets and
     per-device bedtime presets;
-  - solar-heat avoidance;
+  - [x] calibrated-preset solar-heat avoidance with comfort authority;
   - occupancy lighting after light capabilities exist;
   - absence-based lighting shutdown.
 - [x] Built-in policies depend on area/capability contracts, typed mode leases,

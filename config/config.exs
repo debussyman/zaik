@@ -143,6 +143,16 @@ config :zaik, :daylight_harvesting,
   cooldown_seconds: 120,
   candidate_ttl_seconds: 120
 
+config :zaik, :home_solar_heat_policy,
+  activation_temperature_f: 78.0,
+  release_temperature_f: 76.0,
+  activation_illuminance_lux: 1_000,
+  release_illuminance_lux: 700,
+  minimum_active_seconds: 300,
+  settle_seconds: 60,
+  cooldown_seconds: 300,
+  candidate_ttl_seconds: 600
+
 # Shadow observation evaluation is enabled. The engine records inert decisions
 # and rejects canary/active execution regardless of configuration.
 config :zaik, :home_autonomy,

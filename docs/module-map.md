@@ -134,6 +134,7 @@ Home automation is one optional domain, not the whole harness.
 | `Zaik.Home.Policy` / `Zaik.Home.Policies.Registry` | Hot-load-friendly policy contract and uncached descriptor/fingerprint registry. | Keep in the home policy layer. |
 | `Zaik.Home.Policies.DaylightHarvesting` | Shadow-first generic candidate policy for occupied, dark, daytime, cool rooms. | Keep as a built-in policy example/default. |
 | `Zaik.Home.Policies.BedtimePrivacy` | Privacy/sleep authority policy driven by typed mode leases; bedtime targets come from generic device presets. | Keep as the built-in mode-driven privacy policy. |
+| `Zaik.Home.Policies.SolarHeatAvoidance` | Comfort-authority hot/bright-room policy using calibrated generic `solar heat` cover presets. | Keep as a built-in policy without household device branches. |
 | `Zaik.Home.Arbitrator` | Pure priority/conflict selection producing chosen and suppressed desired targets. | Keep in the home policy layer. |
 | `Zaik.Home.Reconciler` | Pure freshness-aware diff from selected desired state to inert unresolved actions. | Keep before the existing action-plan execution boundary. |
 | `Zaik.Home.Autonomy.Engine` | Supervised shadow/advisory context-policy-arbitration-reconciliation pipeline; active execution is deliberately rejected. | Evolve into the event-driven home autonomy coordinator. |

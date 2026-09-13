@@ -37,7 +37,8 @@ defmodule Zaik.Home.Mirror.Evals do
       %{name: "daylight_hysteresis_survives_sensor_noise", kind: :daylight_hysteresis},
       %{name: "autonomy_action_budgets_expire_under_virtual_time", kind: :action_budget},
       %{name: "autonomy_conflict_locks_follow_pending_actions", kind: :conflict_lock},
-      %{name: "privacy_mode_suppresses_daylight_until_expiry", kind: :privacy_mode}
+      %{name: "privacy_mode_suppresses_daylight_until_expiry", kind: :privacy_mode},
+      %{name: "solar_heat_outranks_daylight_but_not_privacy", kind: :solar_heat}
     ]
   end
 
@@ -254,6 +255,114 @@ defmodule Zaik.Home.Mirror.Evals do
       fn run ->
         run.result == 1 and run.report.passed? and run.report.side_effect_count == 0 and
           Enum.map(run.report.reports, & &1.disposition) == ["accepted", "stale"]
+      end
+    )
+  end
+
+  defp run_case(%{kind: :solar_heat} = definition) do
+    scenario = Scenarios.lily_with_history_and_telemetry(id: definition.name)
+
+    finish(
+      definition,
+      Runner.run(scenario, fn mirror, context ->
+        now = Zaik.Home.Mirror.now(mirror)
+
+        Zaik.Home.DeviceStore.upsert_device(
+          mirror.device_store,
+          "Lily's room multi-sensor",
+          %{"temperature" => 27.0, "illuminance" => 1_500, "presence" => true},
+          %{"observed_at" => now, "source" => "mirror"}
+        )
+
+        for device <- ["Lily's bedroom left blind", "Lily's bedroom right blind"] do
+          Zaik.Home.DeviceStore.upsert_device(
+            mirror.device_store,
+            device,
+            %{"position" => 100},
+            %{"observed_at" => now, "source" => "mirror"}
+          )
+        end
+
+        for {device, position} <- [
+              {"Lily's bedroom left blind", 100},
+              {"Lily's bedroom right blind", 71}
+            ] do
+          {:ok, _preset} =
+            Zaik.Home.DevicePresetStore.put(
+              device,
+              "solar heat",
+              "cover",
+              %{"position" => position},
+              %{source: "mirror"},
+              context.preset_store
+            )
+        end
+
+        room_opts = [
+          clock: context.clock,
+          device_store: context.device_store,
+          occupancy_tracker: context.occupancy_tracker,
+          history_store: context.history_store,
+          preset_store: context.preset_store,
+          mode_store: context.mode_store,
+          manual_override_store: context.manual_override_store,
+          desired_state_store: context.desired_state_store,
+          environment_config: %{utc_offset_minutes: 0}
+        ]
+
+        {:ok, hot_context} = Zaik.Home.RoomContext.build("lily", room_opts)
+
+        {:ok, hot_candidates} =
+          Zaik.Home.Policies.Registry.evaluate_all(hot_context,
+            policy_opts: [
+              clock: context.clock,
+              maximum_temperature_f: 82.0,
+              low_light_lux: 2_000
+            ]
+          )
+
+        hot_arbitration = Zaik.Home.Arbitrator.arbitrate(hot_candidates, clock: context.clock)
+
+        {:ok, _privacy} =
+          Zaik.Home.Autonomy.ModeStore.activate(
+            "lily_bedroom",
+            "privacy",
+            %{ttl_seconds: 60},
+            [clock: context.clock],
+            context.mode_store
+          )
+
+        {:ok, privacy_context} = Zaik.Home.RoomContext.build("lily", room_opts)
+
+        {:ok, privacy_candidates} =
+          Zaik.Home.Policies.Registry.evaluate_all(privacy_context,
+            policy_opts: [
+              clock: context.clock,
+              maximum_temperature_f: 82.0,
+              low_light_lux: 2_000
+            ]
+          )
+
+        privacy_arbitration =
+          Zaik.Home.Arbitrator.arbitrate(privacy_candidates, clock: context.clock)
+
+        %{
+          hot_candidates: hot_candidates,
+          hot_arbitration: hot_arbitration,
+          privacy_candidates: privacy_candidates,
+          privacy_arbitration: privacy_arbitration
+        }
+      end),
+      fn run ->
+        Enum.any?(run.result.hot_candidates, &(&1.policy_id == "solar_heat_avoidance")) and
+          Enum.all?(
+            run.result.hot_arbitration.selected,
+            &(&1.policy_id == "solar_heat_avoidance")
+          ) and
+          Enum.all?(
+            run.result.privacy_arbitration.selected,
+            &(&1.policy_id == "bedtime_privacy")
+          ) and run.report.side_effect_count == 0
       end
     )
   end
