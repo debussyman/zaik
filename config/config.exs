@@ -202,6 +202,10 @@ config :zaik, :home_history,
 # Deterministic civil-time context for home policies. When utc_offset_minutes is
 # nil, production uses the host's current local offset; mirrors should inject it.
 config :zaik, :home_environment,
+  timezone: "America/New_York",
+  location_name: nil,
+  latitude: nil,
+  longitude: nil,
   utc_offset_minutes: nil,
   hemisphere: "north",
   day_start_hour: 6,

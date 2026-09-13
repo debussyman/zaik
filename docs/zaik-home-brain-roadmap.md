@@ -172,12 +172,13 @@ from raw rows.
   `occupied`, `possibly_absent`, and `vacant` transitions. Positive evidence is
   immediate, absence requires an uninterrupted configurable settle window, and
   multiple sensors are composed conservatively.
-- [ ] Add configured timezone and location bindings. An initial explicit UTC
-  offset/host-local fallback is implemented; named-zone and location support
-  remains.
-- [ ] Derive solar phase from sunrise/sunset and derive a configured season;
-  retain the source and timestamp for each fact. Meteorological season and an
-  explicitly labeled configured-hours day/night phase are implemented first.
+- [x] Add configured timezone and calibrated location bindings. Named timezone,
+  location label, latitude, longitude, and explicit UTC offset are retained in
+  context; fixed offsets remain explicit until a timezone-database adapter is
+  added for automatic daylight-saving transitions.
+- [x] Derive solar phase from deterministic sunrise/sunset when calibrated
+  latitude/longitude are available, retain source/timestamps and season, and
+  conservatively fall back to labeled configured day/night hours.
 - [x] Add durable manual-override leases with owner, area/home scope, optional
   capability, reason, start, expiry, cancellation audit, and context evidence.
 - [x] Expose one generic typed `get_area_context` tool for an area and requested
