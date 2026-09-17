@@ -30,6 +30,7 @@ defmodule Zaik.Home.Autonomy.Engine do
       max_concurrent_evaluations: Keyword.get(configured, :max_concurrent_evaluations, 2),
       occupancy_absence_debounce_ms:
         Keyword.get(configured, :occupancy_absence_debounce_ms, 5 * 60_000),
+      scope_mode_store: Zaik.Home.Autonomy.ScopeModeStore,
       action_budgets:
         Keyword.get(configured, :action_budgets, %{
           device: %{max_actions: 2, window_seconds: 900},
@@ -148,6 +149,34 @@ defmodule Zaik.Home.Autonomy.Engine do
   def handle_info({:zaik_home_event, %{type: :home_mode_changed, area: area} = event}, state) do
     event = Map.merge(event, %{device: area, changed_keys: ["home_mode"]})
     {:noreply, schedule_event(state, area, area, event)}
+  end
+
+  def handle_info(
+        {:zaik_home_event, %{type: :autonomy_scope_mode_changed}},
+        %{pause: pause} = state
+      )
+      when not is_nil(pause),
+      do: {:noreply, state}
+
+  def handle_info(
+        {:zaik_home_event, %{type: :autonomy_scope_mode_changed, area: "home"} = event},
+        state
+      ) do
+    state =
+      state
+      |> configured_areas()
+      |> Enum.reduce(state, fn area, acc ->
+        schedule_event(acc, area, area, %{event | area: area, device: area})
+      end)
+
+    {:noreply, state}
+  end
+
+  def handle_info(
+        {:zaik_home_event, %{type: :autonomy_scope_mode_changed, area: area} = event},
+        state
+      ) do
+    {:noreply, schedule_event(state, area, area, Map.put(event, :device, area))}
   end
 
   def handle_info({:zaik_home_event, %{type: :device_observed} = event}, %{pause: nil} = state) do
@@ -442,7 +471,7 @@ defmodule Zaik.Home.Autonomy.Engine do
                  Map.get(cfg, :desired_state_store, Zaik.Home.Autonomy.DesiredStateStore)
                )
            ),
-         {:ok, candidates} <- evaluate_policies(context, opts, clock) do
+         {:ok, candidates, policy_modes} <- evaluate_policies(context, mode, cfg, opts, clock) do
       arbitration =
         Zaik.Home.Arbitrator.arbitrate(candidates,
           clock: clock
@@ -470,6 +499,7 @@ defmodule Zaik.Home.Autonomy.Engine do
         status: decision_status(candidates, reconciliation),
         context: context,
         candidates: candidates,
+        policy_modes: policy_modes,
         arbitration: arbitration,
         reconciliation: reconciliation,
         conflict_locks: conflict_locks,
@@ -623,20 +653,95 @@ defmodule Zaik.Home.Autonomy.Engine do
     end)
   end
 
-  defp evaluate_policies(context, opts, clock) do
+  defp evaluate_policies(context, mode, cfg, opts, clock) do
     registry_opts = Keyword.get(opts, :policy_registry_opts, [])
+    descriptors = Zaik.Home.Policies.Registry.descriptors(registry_opts)
+    area = List.first(context.areas) || "home"
+    policy_modes = effective_policy_modes(area, descriptors, mode, cfg, opts)
+    enabled_ids = policy_modes |> Enum.reject(&(&1.mode == :off)) |> MapSet.new(& &1.policy_id)
 
-    Zaik.Home.Policies.Registry.evaluate_all(
-      context,
-      Keyword.merge(registry_opts,
-        changed_dependencies: Keyword.get(opts, :changed_dependencies),
-        policy_opts:
-          Keyword.merge(Keyword.get(opts, :policy_opts, []),
-            clock: clock,
-            capability_opts: Keyword.get(opts, :capability_opts, [])
-          )
+    modules =
+      registry_opts
+      |> Zaik.Home.Policies.Registry.modules()
+      |> Enum.filter(fn module ->
+        case Zaik.Home.Policies.Registry.descriptor(module) do
+          {:ok, descriptor} -> MapSet.member?(enabled_ids, descriptor.id)
+          _ -> false
+        end
+      end)
+
+    evaluation_opts =
+      registry_opts
+      |> Keyword.put(:modules, modules)
+      |> Keyword.put(:additional_modules, [])
+      |> Keyword.put(:changed_dependencies, Keyword.get(opts, :changed_dependencies))
+      |> Keyword.put(
+        :policy_opts,
+        Keyword.merge(Keyword.get(opts, :policy_opts, []),
+          clock: clock,
+          capability_opts: Keyword.get(opts, :capability_opts, [])
+        )
       )
-    )
+
+    case Zaik.Home.Policies.Registry.evaluate_all(context, evaluation_opts) do
+      {:ok, candidates} -> {:ok, candidates, policy_modes}
+      error -> error
+    end
+  end
+
+  defp effective_policy_modes(area, descriptors, fallback_mode, cfg, opts) do
+    store =
+      Keyword.get(
+        opts,
+        :scope_mode_store,
+        Map.get(cfg, :scope_mode_store, Zaik.Home.Autonomy.ScopeModeStore)
+      )
+
+    Enum.map(descriptors, fn descriptor ->
+      resolution =
+        if process_available?(store) do
+          Zaik.Home.Autonomy.ScopeModeStore.effective(
+            area,
+            descriptor.id,
+            fallback_mode,
+            [clock: Keyword.get(opts, :clock)],
+            store
+          )
+        else
+          %{
+            mode: fallback_mode,
+            source: "runtime_default",
+            precedence: "runtime_default",
+            rule_id: nil,
+            scope: "home",
+            policy_id: descriptor.id,
+            changed_by: nil,
+            reason: nil
+          }
+        end
+
+      Map.merge(resolution, %{
+        policy_id: descriptor.id,
+        policy_version: descriptor.version,
+        policy_default_mode: descriptor.default_mode
+      })
+    end)
+  catch
+    :exit, _reason ->
+      Enum.map(descriptors, fn descriptor ->
+        %{
+          policy_id: descriptor.id,
+          policy_version: descriptor.version,
+          policy_default_mode: descriptor.default_mode,
+          mode: :off,
+          source: "scope_mode_store_unavailable",
+          precedence: "fail_closed",
+          rule_id: nil,
+          scope: area,
+          changed_by: nil,
+          reason: "scope mode store unavailable"
+        }
+      end)
   end
 
   defp record_desired_states(_decision, nil), do: :ok
@@ -695,6 +800,7 @@ defmodule Zaik.Home.Autonomy.Engine do
         timeout_ms: timeout_ms
       },
       candidates: [],
+      policy_modes: [],
       arbitration: %{},
       reconciliation: %{actions: [], satisfied: [], blocked: []},
       conflict_locks: %{status: "not_evaluated"},
@@ -768,6 +874,26 @@ defmodule Zaik.Home.Autonomy.Engine do
   catch
     :exit, _reason -> {event.device, event.device}
   end
+
+  defp configured_areas(state) do
+    state.config
+    |> Map.get(:device_store, Zaik.Home.DeviceStore)
+    |> then(fn store ->
+      Zaik.Home.World.snapshot(nil,
+        device_store: store,
+        identity_store: Map.get(state.config, :history_store, Zaik.Home.HistoryStore),
+        clock: Map.get(state.config, :clock)
+      )
+    end)
+    |> Map.get(:entities, [])
+    |> Enum.map(& &1.area_id)
+    |> Enum.reject(&is_nil/1)
+    |> Enum.uniq()
+  catch
+    :exit, _reason -> []
+  end
+
+  defp event_dependencies(%{type: :autonomy_scope_mode_changed}), do: nil
 
   defp event_dependencies(event) do
     event

@@ -59,6 +59,7 @@ defmodule Zaik.Home.Autonomy.DecisionStore do
       normalized.status,
       Jason.encode!(normalized.context),
       Jason.encode!(normalized.candidates),
+      Jason.encode!(normalized.policy_modes),
       Jason.encode!(normalized.arbitration),
       Jason.encode!(normalized.reconciliation),
       Jason.encode!(normalized.conflict_locks),
@@ -75,9 +76,9 @@ defmodule Zaik.Home.Autonomy.DecisionStore do
         """
         INSERT INTO home_autonomy_decisions (
           id, mode, query, snapshot_id, status, context_json, candidates_json,
-          arbitration_json, reconciliation_json, conflict_locks_json,
+          policy_modes_json, arbitration_json, reconciliation_json, conflict_locks_json,
           action_budget_json, outcomes_json, feedback_json, policy_fingerprint, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO NOTHING
         """,
         params
@@ -144,6 +145,7 @@ defmodule Zaik.Home.Autonomy.DecisionStore do
              status TEXT NOT NULL,
              context_json TEXT NOT NULL,
              candidates_json TEXT NOT NULL,
+             policy_modes_json TEXT NOT NULL DEFAULT '[]',
              arbitration_json TEXT NOT NULL,
              reconciliation_json TEXT NOT NULL,
              conflict_locks_json TEXT NOT NULL DEFAULT '{}',
@@ -157,6 +159,7 @@ defmodule Zaik.Home.Autonomy.DecisionStore do
            CREATE INDEX IF NOT EXISTS home_autonomy_decisions_created_idx
              ON home_autonomy_decisions(created_at DESC);
            """),
+         :ok <- ensure_json_column(conn, "policy_modes_json", "[]"),
          :ok <- ensure_json_column(conn, "conflict_locks_json", "{}"),
          :ok <- ensure_json_column(conn, "action_budget_json", "{}"),
          :ok <- ensure_json_column(conn, "outcomes_json", "[]"),
@@ -168,7 +171,7 @@ defmodule Zaik.Home.Autonomy.DecisionStore do
   defp select_sql(suffix) do
     """
     SELECT id, mode, query, snapshot_id, status, context_json, candidates_json,
-           arbitration_json, reconciliation_json, conflict_locks_json,
+           policy_modes_json, arbitration_json, reconciliation_json, conflict_locks_json,
            action_budget_json, outcomes_json, feedback_json, policy_fingerprint, created_at
     FROM home_autonomy_decisions
     #{suffix}
@@ -184,6 +187,7 @@ defmodule Zaik.Home.Autonomy.DecisionStore do
       status: to_string(value(decision, :status)),
       context: json_safe(value(decision, :context) || %{}),
       candidates: json_safe(value(decision, :candidates) || []),
+      policy_modes: json_safe(value(decision, :policy_modes) || []),
       arbitration: json_safe(value(decision, :arbitration) || %{}),
       reconciliation: json_safe(value(decision, :reconciliation) || %{}),
       conflict_locks: json_safe(value(decision, :conflict_locks) || %{}),
@@ -203,6 +207,7 @@ defmodule Zaik.Home.Autonomy.DecisionStore do
          status,
          context,
          candidates,
+         policy_modes,
          arbitration,
          reconciliation,
          conflict_locks,
@@ -220,6 +225,7 @@ defmodule Zaik.Home.Autonomy.DecisionStore do
       status: status,
       context: Jason.decode!(context),
       candidates: Jason.decode!(candidates),
+      policy_modes: Jason.decode!(policy_modes),
       arbitration: Jason.decode!(arbitration),
       reconciliation: Jason.decode!(reconciliation),
       conflict_locks: Jason.decode!(conflict_locks),

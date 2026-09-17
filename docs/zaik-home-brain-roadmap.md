@@ -353,7 +353,9 @@ Goal: run observation-to-reconciliation continuously under OTP supervision.
   diagnostic decisions and operator-visible counters; staged-plan recovery
   remains.
 - [x] Expose operator status, global pause/resume, safe runtime mode changes,
-  manual suppression leases, desired-state inspection, and recent decisions;
+  manual suppression leases, desired-state inspection, and recent decisions.
+  Durable whole-home, per-area, per-policy, and area-policy off/shadow/advisory
+  rules use deterministic precedence and are recorded in every decision;
   canary/active modes remain impossible.
 - [ ] Add alerts for repeated non-convergence, oscillation prevention, stale
   critical inputs, and telemetry failures, with cooldown/debounce.

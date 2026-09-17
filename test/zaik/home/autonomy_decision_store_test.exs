@@ -18,6 +18,9 @@ defmodule Zaik.Home.AutonomyDecisionStoreTest do
                    status: "no_candidates",
                    context: %{},
                    candidates: [],
+                   policy_modes: [
+                     %{policy_id: "daylight_harvesting", mode: :shadow, source: "test"}
+                   ],
                    arbitration: %{},
                    reconciliation: %{},
                    policy_fingerprint: "policy",
@@ -33,6 +36,12 @@ defmodule Zaik.Home.AutonomyDecisionStoreTest do
            ]
 
     assert {:error, :not_found} = Zaik.Home.Autonomy.DecisionStore.lookup("decision-1", store)
+
+    assert [%{"policy_id" => "daylight_harvesting", "mode" => "shadow"}] =
+             Zaik.Home.Autonomy.DecisionStore.recent(1, store)
+             |> hd()
+             |> Map.fetch!(:policy_modes)
+             |> Enum.map(&Map.drop(&1, ["source"]))
 
     assert {:ok, with_outcome} =
              Zaik.Home.Autonomy.DecisionStore.record_outcome(

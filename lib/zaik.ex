@@ -120,6 +120,21 @@ defmodule Zaik do
     do: Zaik.Home.Autonomy.Engine.set_mode(mode, changed_by)
 
   @doc """
+  Configure a durable off, shadow, or advisory autonomy mode for the whole home,
+  an area, a policy, or an area-policy pair.
+  """
+  def set_home_autonomy_scope_mode(scope, mode, attrs \\ %{}),
+    do: Zaik.Home.Autonomy.ScopeModeStore.configure(scope, mode, attrs)
+
+  @doc "Return active durable scoped autonomy-mode rules."
+  def home_autonomy_scope_modes(scope \\ nil),
+    do: Zaik.Home.Autonomy.ScopeModeStore.active(scope)
+
+  @doc "Remove one scoped autonomy-mode rule by exact ID."
+  def remove_home_autonomy_scope_mode(id, removed_by \\ "operator"),
+    do: Zaik.Home.Autonomy.ScopeModeStore.remove(id, removed_by)
+
+  @doc """
   Return recent durable home-autonomy decisions.
   """
   def home_autonomy_decisions(limit \\ 20),

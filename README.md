@@ -149,6 +149,7 @@ Key invariants include:
 - Policy-defined hysteresis, minimum-active, settle, and cooldown windows.
 - Pending-action conflict locks and sliding-window action budgets.
 - Durable decision traces, execution outcomes, and rated operator feedback.
+- Audited whole-home, per-room, per-policy, and room-policy `off | shadow | advisory` rollout controls with deterministic precedence.
 - Supervised, concurrency-bounded policy workers with durable timeout diagnostics.
 - Production shadow evaluation that reads live observations but cannot publish autonomous commands.
 
@@ -277,6 +278,12 @@ Zaik.home_action_budget_status(:global)
 # Explicit operator controls; physical autonomy modes are rejected
 Zaik.pause_home_autonomy("maintenance", "operator")
 Zaik.set_home_autonomy_mode(:shadow, "operator")
+Zaik.set_home_autonomy_scope_mode("nursery", :advisory, %{
+  policy_id: "daylight_harvesting",
+  changed_by: "operator",
+  reason: "room-level shadow review"
+})
+Zaik.home_autonomy_scope_modes("nursery")
 Zaik.resume_home_autonomy("operator")
 ```
 

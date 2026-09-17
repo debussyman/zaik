@@ -37,6 +37,7 @@ defmodule Zaik.Application do
       domain_child(:home, autonomy_mode_store_child()),
       domain_child(:home, autonomy_desired_state_store_child()),
       domain_child(:home, autonomy_action_budget_store_child()),
+      domain_child(:home, autonomy_scope_mode_store_child()),
       domain_child(:home, autonomy_engine_child()),
       domain_child(:home, alerts_rule_store_child()),
       domain_child(:home, alerts_engine_child()),
@@ -162,6 +163,14 @@ defmodule Zaik.Application do
     if config.enabled do
       {Zaik.Home.Autonomy.ActionBudgetStore,
        db_path: config.decision_db_path, limits: config.action_budgets}
+    end
+  end
+
+  defp autonomy_scope_mode_store_child do
+    config = Zaik.Home.Autonomy.Engine.config()
+
+    if config.enabled do
+      {Zaik.Home.Autonomy.ScopeModeStore, db_path: config.decision_db_path}
     end
   end
 

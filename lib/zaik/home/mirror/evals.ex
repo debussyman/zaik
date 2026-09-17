@@ -66,7 +66,8 @@ defmodule Zaik.Home.Mirror.Evals do
       %{name: "solar_heat_outranks_daylight_but_not_privacy", kind: :solar_heat},
       %{name: "decision_outcomes_and_feedback_are_durable", kind: :decision_feedback},
       %{name: "stuck_policy_evaluation_is_durably_timed_out", kind: :evaluation_timeout},
-      %{name: "occupancy_entry_sequences_remain_advisory", kind: :occupancy_sequences}
+      %{name: "occupancy_entry_sequences_remain_advisory", kind: :occupancy_sequences},
+      %{name: "scoped_policy_modes_are_inert_and_durable", kind: :scoped_policy_modes}
     ]
   end
 
@@ -385,6 +386,7 @@ defmodule Zaik.Home.Mirror.Evals do
              decision_store: decisions,
              mode_store: context.mode_store,
              preset_store: context.preset_store,
+             scope_mode_store: context.scope_mode_store,
              desired_state_store: context.desired_state_store,
              action_budget_store: context.action_budget_store,
              action_verifier: context.action_verifier,
@@ -873,6 +875,9 @@ defmodule Zaik.Home.Mirror.Evals do
           occupancy_tracker: context.occupancy_tracker,
           history_store: context.history_store,
           decision_store: decisions,
+          mode_store: context.mode_store,
+          preset_store: context.preset_store,
+          scope_mode_store: context.scope_mode_store,
           desired_state_store: context.desired_state_store,
           action_budget_store: context.action_budget_store,
           action_verifier: context.action_verifier,
@@ -973,6 +978,9 @@ defmodule Zaik.Home.Mirror.Evals do
              event_bus: false,
              task_supervisor: context.task_supervisor,
              clock: context.clock,
+             mode_store: context.mode_store,
+             preset_store: context.preset_store,
+             scope_mode_store: context.scope_mode_store,
              desired_state_store: context.desired_state_store,
              action_budget_store: context.action_budget_store,
              action_verifier: context.action_verifier,
@@ -1254,6 +1262,80 @@ defmodule Zaik.Home.Mirror.Evals do
     )
   end
 
+  defp run_case(%{kind: :scoped_policy_modes} = definition) do
+    scenario = Scenarios.lily_with_history_and_telemetry(id: definition.name)
+
+    finish(
+      definition,
+      Runner.run(scenario, fn mirror, context ->
+        scope_modes = context.scope_mode_store
+
+        {:ok, decisions} =
+          DynamicSupervisor.start_child(
+            mirror.supervisor,
+            {Zaik.Home.Autonomy.DecisionStore, name: nil, db_path: ":memory:"}
+          )
+
+        {:ok, engine} =
+          DynamicSupervisor.start_child(
+            mirror.supervisor,
+            {Zaik.Home.Autonomy.Engine,
+             name: nil, enabled: true, mode: :shadow, scope_mode_store: scope_modes}
+          )
+
+        {:ok, rule} =
+          Zaik.Home.Autonomy.ScopeModeStore.configure(
+            "lily_bedroom",
+            :off,
+            %{
+              policy_id: "daylight_harvesting",
+              changed_by: "mirror-operator",
+              reason: "scoped rollout"
+            },
+            [clock: context.clock],
+            scope_modes
+          )
+
+        result =
+          Zaik.Home.Autonomy.Engine.evaluate(
+            "lily",
+            [
+              clock: context.clock,
+              device_store: context.device_store,
+              occupancy_tracker: context.occupancy_tracker,
+              history_store: context.history_store,
+              decision_store: decisions,
+              mode_store: context.mode_store,
+              preset_store: context.preset_store,
+              desired_state_store: context.desired_state_store,
+              action_budget_store: context.action_budget_store,
+              action_verifier: context.action_verifier,
+              manual_override_store: context.manual_override_store,
+              scope_mode_store: scope_modes,
+              environment_config: %{utc_offset_minutes: 0},
+              policy_opts: [maximum_temperature_f: 80.0]
+            ],
+            engine
+          )
+
+        %{
+          result: result,
+          rule: rule,
+          stored: Zaik.Home.Autonomy.DecisionStore.recent(1, decisions)
+        }
+      end),
+      fn run ->
+        match?({:ok, %{status: "no_candidates", candidates: []}}, run.result.result) and
+          Enum.any?(elem(run.result.result, 1).policy_modes, fn policy ->
+            policy.policy_id == "daylight_harvesting" and policy.mode == :off and
+              policy.rule_id == run.result.rule.id
+          end) and
+          match?([%{policy_modes: [_ | _]}], run.result.stored) and
+          run.report.side_effect_count == 0
+      end
+    )
+  end
+
   defp run_case(%{kind: :daylight_shadow} = definition) do
     scenario = Scenarios.lily_with_history_and_telemetry(id: definition.name)
 
@@ -1296,6 +1378,9 @@ defmodule Zaik.Home.Mirror.Evals do
           occupancy_tracker: context.occupancy_tracker,
           history_store: context.history_store,
           decision_store: decision_store,
+          mode_store: context.mode_store,
+          preset_store: context.preset_store,
+          scope_mode_store: context.scope_mode_store,
           desired_state_store: context.desired_state_store,
           action_budget_store: context.action_budget_store,
           action_verifier: context.action_verifier,

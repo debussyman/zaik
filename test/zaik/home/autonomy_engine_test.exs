@@ -80,6 +80,11 @@ defmodule Zaik.Home.AutonomyEngineTest do
     {:ok, action_budgets} =
       start_supervised({Zaik.Home.Autonomy.ActionBudgetStore, name: nil, db_path: ":memory:"})
 
+    {:ok, scope_modes} =
+      start_supervised(
+        {Zaik.Home.Autonomy.ScopeModeStore, name: nil, db_path: ":memory:", event_bus: false}
+      )
+
     {:ok, action_verifier} =
       start_supervised(
         {Zaik.Home.ActionVerifier,
@@ -98,6 +103,7 @@ defmodule Zaik.Home.AutonomyEngineTest do
          preset_store: presets,
          desired_state_store: desired_states,
          action_budget_store: action_budgets,
+         scope_mode_store: scope_modes,
          action_verifier: action_verifier}
       )
 
@@ -152,6 +158,7 @@ defmodule Zaik.Home.AutonomyEngineTest do
       presets: presets,
       desired_states: desired_states,
       action_budgets: action_budgets,
+      scope_modes: scope_modes,
       action_verifier: action_verifier,
       engine: engine
     }
@@ -710,6 +717,101 @@ defmodule Zaik.Home.AutonomyEngineTest do
 
     assert [%{status: "evaluation_timed_out", outcomes: [%{"status" => "evaluation_timed_out"}]}] =
              Zaik.Home.Autonomy.DecisionStore.recent(1, context.decisions)
+  end
+
+  test "area-policy mode rules disable only the selected policy and are durable", context do
+    clock = {Zaik.Home.Mirror.Clock, context.clock}
+
+    assert {:ok, rule} =
+             Zaik.Home.Autonomy.ScopeModeStore.configure(
+               "lily_bedroom",
+               :off,
+               %{
+                 policy_id: "daylight_harvesting",
+                 changed_by: "parent",
+                 reason: "evaluate this policy elsewhere"
+               },
+               [clock: clock],
+               context.scope_modes
+             )
+
+    assert {:ok, decision} =
+             Zaik.Home.Autonomy.Engine.evaluate(
+               "lily",
+               [
+                 clock: clock,
+                 device_store: context.devices,
+                 history_store: context.history,
+                 decision_store: context.decisions,
+                 scope_mode_store: context.scope_modes,
+                 environment_config: %{utc_offset_minutes: 0}
+               ],
+               context.engine
+             )
+
+    assert decision.status == "no_candidates"
+    assert decision.candidates == []
+
+    assert daylight =
+             Enum.find(decision.policy_modes, &(&1.policy_id == "daylight_harvesting"))
+
+    assert daylight.mode == :off
+    assert daylight.precedence == "area_policy"
+    assert daylight.rule_id == rule.id
+
+    assert solar =
+             Enum.find(decision.policy_modes, &(&1.policy_id == "solar_heat_avoidance"))
+
+    assert solar.mode == :shadow
+    assert solar.precedence == "runtime_default"
+
+    assert {:ok, stored} =
+             Zaik.Home.Autonomy.DecisionStore.lookup(decision.id, context.decisions)
+
+    assert Enum.find(stored.policy_modes, &(&1["policy_id"] == "daylight_harvesting"))[
+             "mode"
+           ] == "off"
+  end
+
+  test "durable global off suppresses every policy despite specific advisory rules", context do
+    clock = {Zaik.Home.Mirror.Clock, context.clock}
+
+    assert {:ok, _} =
+             Zaik.Home.Autonomy.ScopeModeStore.configure(
+               "lily_bedroom",
+               :advisory,
+               %{policy_id: "daylight_harvesting", changed_by: "parent", reason: "test"},
+               [clock: clock],
+               context.scope_modes
+             )
+
+    assert {:ok, global} =
+             Zaik.Home.Autonomy.ScopeModeStore.configure(
+               "home",
+               :off,
+               %{changed_by: "parent", reason: "whole home maintenance"},
+               [clock: clock],
+               context.scope_modes
+             )
+
+    assert {:ok, decision} =
+             Zaik.Home.Autonomy.Engine.evaluate(
+               "lily",
+               [
+                 clock: clock,
+                 device_store: context.devices,
+                 history_store: context.history,
+                 decision_store: context.decisions,
+                 scope_mode_store: context.scope_modes,
+                 environment_config: %{utc_offset_minutes: 0}
+               ],
+               context.engine
+             )
+
+    assert decision.status == "no_candidates"
+    assert Enum.all?(decision.policy_modes, &(&1.mode == :off))
+    assert Enum.all?(decision.policy_modes, &(&1.precedence == "global_off"))
+    assert Enum.all?(decision.policy_modes, &(&1.rule_id == global.id))
   end
 
   test "operator pause, resume, and safe runtime modes are explicit", context do
