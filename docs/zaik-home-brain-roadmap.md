@@ -171,7 +171,9 @@ from raw rows.
 - [x] Add area-scoped debounced occupancy with confidence and `entered`,
   `occupied`, `possibly_absent`, and `vacant` transitions. Positive evidence is
   immediate, absence requires an uninterrupted configurable settle window, and
-  multiple sensors are composed conservatively.
+  multiple sensors are composed conservatively. Meaningful projected transitions
+  now have bounded durable history; cross-area entry sequences are labeled as
+  non-identifying advisory observations rather than inferred person movement.
 - [x] Add configured timezone and calibrated location bindings. Named timezone,
   location label, latitude, longitude, and explicit UTC offset are retained in
   context; fixed offsets remain explicit until a timezone-database adapter is

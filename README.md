@@ -142,7 +142,7 @@ Key invariants include:
 
 ### Continuous home brain
 
-- Debounced multi-sensor occupancy projection.
+- Debounced multi-sensor occupancy projection with durable meaningful transitions and advisory, non-identifying cross-area entry sequences.
 - Durable manual overrides, desired-state leases, and typed bedtime/privacy modes.
 - Deterministic daylight harvesting, solar-heat avoidance, and bedtime/privacy policies.
 - Fixed-authority arbitration and freshness-aware reconciliation.

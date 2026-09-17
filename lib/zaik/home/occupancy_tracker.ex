@@ -72,7 +72,7 @@ defmodule Zaik.Home.OccupancyTracker do
       }
 
       state = put_in(state, [:areas, area], occupancy)
-      publish_transition(state, occupancy)
+      publish_transition(state, occupancy, previous)
       {:noreply, state}
     else
       {:noreply, state}
@@ -109,7 +109,7 @@ defmodule Zaik.Home.OccupancyTracker do
         }
 
         state = put_in(state, [:areas, area], occupancy)
-        publish_transition(state, occupancy)
+        publish_transition(state, occupancy, previous)
         state
 
       true ->
@@ -131,25 +131,28 @@ defmodule Zaik.Home.OccupancyTracker do
         )
 
         state = put_in(state, [:areas, area], occupancy)
-        publish_transition(state, occupancy)
+        publish_transition(state, occupancy, previous)
         state
     end
   end
 
-  defp publish_transition(%{event_bus: false}, _occupancy), do: :ok
-  defp publish_transition(%{event_bus: nil}, _occupancy), do: :ok
+  defp publish_transition(%{event_bus: false}, _occupancy, _previous), do: :ok
+  defp publish_transition(%{event_bus: nil}, _occupancy, _previous), do: :ok
 
-  defp publish_transition(state, occupancy) do
+  defp publish_transition(state, occupancy, previous) do
     if process_available?(state.event_bus) do
       Zaik.Home.EventBus.publish(
         %{
           type: :occupancy_changed,
           area: occupancy.area,
           status: occupancy.status,
+          previous_status: previous.status,
           transition: occupancy.transition,
           confidence: occupancy.confidence,
+          evidence_count: occupancy.evidence_count,
           changed_keys: ["presence"],
-          observed_at: occupancy.observed_at
+          observed_at: occupancy.observed_at,
+          transitioned_at: occupancy.transitioned_at
         },
         state.event_bus
       )

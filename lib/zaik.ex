@@ -190,6 +190,14 @@ defmodule Zaik do
   """
   def home_occupancy(area), do: Zaik.Home.OccupancyTracker.status(area)
 
+  @doc "Return durable, debounced occupancy transitions for an area or the whole home."
+  def home_occupancy_transitions(area \\ nil, opts \\ []),
+    do: Zaik.Home.OccupancyTransitionStore.recent(area, opts)
+
+  @doc "Return advisory cross-area entry sequences without inferring person identity."
+  def home_occupancy_entry_sequences(opts \\ []),
+    do: Zaik.Home.OccupancyTransitionStore.entry_sequences(opts)
+
   @doc """
   Return latest known devices that expose a presence field.
   """

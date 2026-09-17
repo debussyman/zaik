@@ -65,7 +65,8 @@ defmodule Zaik.Home.Mirror.Evals do
       %{name: "privacy_mode_suppresses_daylight_until_expiry", kind: :privacy_mode},
       %{name: "solar_heat_outranks_daylight_but_not_privacy", kind: :solar_heat},
       %{name: "decision_outcomes_and_feedback_are_durable", kind: :decision_feedback},
-      %{name: "stuck_policy_evaluation_is_durably_timed_out", kind: :evaluation_timeout}
+      %{name: "stuck_policy_evaluation_is_durably_timed_out", kind: :evaluation_timeout},
+      %{name: "occupancy_entry_sequences_remain_advisory", kind: :occupancy_sequences}
     ]
   end
 
@@ -282,6 +283,65 @@ defmodule Zaik.Home.Mirror.Evals do
       fn run ->
         run.result == 1 and run.report.passed? and run.report.side_effect_count == 0 and
           Enum.map(run.report.reports, & &1.disposition) == ["accepted", "stale"]
+      end
+    )
+  end
+
+  defp run_case(%{kind: :occupancy_sequences} = definition) do
+    scenario = Scenarios.lily_with_history_and_telemetry(id: definition.name)
+
+    finish(
+      definition,
+      Runner.run(scenario, fn mirror, context ->
+        {:ok, bus} =
+          DynamicSupervisor.start_child(mirror.supervisor, {Zaik.Home.EventBus, name: nil})
+
+        {:ok, transitions} =
+          DynamicSupervisor.start_child(
+            mirror.supervisor,
+            {Zaik.Home.OccupancyTransitionStore,
+             name: nil, db_path: mirror.home_db_path, event_bus: bus, clock: context.clock}
+          )
+
+        {:ok, _tracker} =
+          DynamicSupervisor.start_child(
+            mirror.supervisor,
+            {Zaik.Home.OccupancyTracker,
+             name: nil,
+             event_bus: bus,
+             clock: context.clock,
+             device_store: context.device_store,
+             identity_store: context.history_store,
+             absence_debounce_ms: 300_000}
+          )
+
+        publish_presence(bus, "Lily sensor", "lily_bedroom", true, Zaik.Home.Mirror.now(mirror))
+        Process.sleep(5)
+        Zaik.Home.Mirror.advance(mirror, 90_000)
+        publish_presence(bus, "Hall sensor", "hallway", true, Zaik.Home.Mirror.now(mirror))
+        Process.sleep(5)
+
+        %{
+          transitions: Zaik.Home.OccupancyTransitionStore.recent(nil, [], transitions),
+          sequences:
+            Zaik.Home.OccupancyTransitionStore.entry_sequences(
+              [window_seconds: 120],
+              transitions
+            )
+        }
+      end),
+      fn run ->
+        Enum.count(run.result.transitions, &(&1.transition == "entered")) == 2 and
+          run.result.sequences == [
+            %{
+              from_area: "lily_bedroom",
+              to_area: "hallway",
+              observations: 1,
+              last_observed_at: "2026-01-01T12:01:30.000Z",
+              maximum_gap_seconds: 90,
+              semantics: "observed_entry_sequence_not_person_identity"
+            }
+          ] and run.report.side_effect_count == 0
       end
     )
   end
@@ -1335,6 +1395,20 @@ defmodule Zaik.Home.Mirror.Evals do
 
   defp action(device, target) do
     %{"device" => device, "capability" => "cover", "target" => target}
+  end
+
+  defp publish_presence(bus, device, area, detected, observed_at) do
+    Zaik.Home.EventBus.publish(
+      %{
+        type: :device_observed,
+        device: device,
+        payload: %{"presence" => detected},
+        metadata: %{"area_id" => area},
+        changed_keys: ["presence"],
+        observed_at: observed_at
+      },
+      bus
+    )
   end
 
   defp publish_presence(bus, detected, observed_at) do
