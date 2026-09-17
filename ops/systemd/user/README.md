@@ -21,7 +21,18 @@ ZAIK_SIGNAL_ALLOWED_SENDERS=+15555555555
 ZAIK_SIGNAL_POLL_INTERVAL_MS=5000
 ```
 
-Optional Telegram/home/LLM overrides:
+Optional home calibration (`~/.config/zaik/home.env`):
+
+```sh
+ZAIK_HOME_TIMEZONE=America/New_York
+ZAIK_HOME_LOCATION_NAME=Home
+ZAIK_HOME_LATITUDE=40.71
+ZAIK_HOME_LONGITUDE=-74.01
+```
+
+Approximate coordinates are sufficient. When `ZAIK_HOME_UTC_OFFSET_MINUTES` is omitted, Zaik uses the host's current local offset, so the host timezone should match `ZAIK_HOME_TIMEZONE`.
+
+Optional Telegram/LLM/adapter overrides:
 
 ```sh
 ZAIK_TELEGRAM_ENABLED=false

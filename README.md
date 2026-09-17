@@ -1,321 +1,245 @@
 # Zaik
 
-Zaik is a local-first personal agent harness built with Elixir/OTP. It provides a supervised task runtime, filesystem-backed session memory, Telegram chat ingress, pluggable local LLM providers, and MQTT/Zigbee2MQTT home-state integration.
+**A local-first, continuously reasoning house agent built on the BEAM.**
+
+Zaik combines Elixir/OTP, local language models, typed home state, deterministic safety boundaries, and a replayable mirror world. It is designed to understand household intent without handing an LLM unrestricted access to devices—or sending the household's private history to a cloud agent.
+
+```text
+Observe -> derive context -> generate goals -> arbitrate -> reconcile -> execute -> verify
+```
+
+Zaik is not a collection of prompt-triggered routines. It is an agent harness where models propose semantic goals and typed plans, while Elixir owns identity, permissions, evidence, priorities, execution, verification, retries, and rollout policy.
+
+> [!IMPORTANT]
+> Zaik is experimental. Explicit, validated user actions can control configured devices. Continuous autonomy currently runs only in `shadow` or `advisory` mode; physical `canary` and `active` modes are deliberately rejected until promotion and rollback gates are complete.
+
+## What makes Zaik different?
+
+- **Local-first by construction** — local LLM providers, SQLite telemetry, filesystem session memory, and local MQTT.
+- **One house brain** — Telegram and optional Signal ingress normalize into one bounded `Zaik.AgentChat` tool loop.
+- **Typed world model** — models see entities, capabilities, room context, history, occupancy, modes, presets, and evidence—not raw MQTT topics.
+- **Deterministic control plane** — Elixir validates every target, preset, policy, permission, risk ceiling, and evidence fingerprint.
+- **Physical verification** — broker acceptance is not physical success. Actions remain `accepted` until canonical device reports prove convergence.
+- **Continuous but conservative** — event-driven policies produce inert desired states; arbitration, overrides, freshness, hysteresis, locks, and budgets decide what remains actionable.
+- **A temporal mirror world** — production contracts run against isolated production-schema SQLite databases, virtual time, deterministic devices, and injected faults without publishing production MQTT.
+- **Hot-load-friendly extension points** — tools, capabilities, executors, and policies are discovered at runtime rather than cached as module code.
+
+## Architecture
+
+```mermaid
+flowchart TD
+    CHAT[Telegram / Signal / local API] --> INGRESS[Normalized ingress]
+    INGRESS --> BRAIN[AgentChat bounded tool loop]
+    LLM[Ollama or llama.cpp] <--> BRAIN
+    SKILLS[Versioned skills and goal contracts] --> BRAIN
+
+    MQTT[MQTT / Zigbee2MQTT] --> OBS[Ordered observations]
+    OBS --> WORLD[Typed Home.World]
+    WORLD --> CONTEXT[Room and goal context]
+    CONTEXT --> POLICIES[Deterministic policies]
+    POLICIES --> GOALS[Inert goal candidates]
+    GOALS --> ARB[Authority arbitration]
+    ARB --> RECON[Freshness-aware reconciliation]
+
+    BRAIN --> TOOLS[Runtime tool registry]
+    RECON --> SAFETY[Overrides / conflict locks / budgets]
+    TOOLS --> SAFETY
+    SAFETY --> PLAN[Preflighted action plans]
+    PLAN --> EXEC[Supervised capability executors]
+    EXEC --> MQTT
+    OBS --> VERIFY[Convergence verifier]
+    EXEC --> VERIFY
+
+    WORLD --> SQLITE[(Local SQLite)]
+    CONTEXT --> SQLITE
+    VERIFY --> SQLITE
+    RECON --> SQLITE
+
+    MIRROR[Virtual-time mirror world] -. same contracts .-> WORLD
+    MIRROR -. isolated bindings .-> SQLITE
+```
+
+The production and mirror worlds share capability, policy, plan, verifier, ledger, preset, retry, arbitration, budget, conflict-lock, and SQL semantics. Only their bindings differ: production uses real observations and configured executors; mirror runs use temporary databases and virtual devices.
+
+See [`docs/architecture.md`](docs/architecture.md), [`docs/module-map.md`](docs/module-map.md), and the active [`home brain roadmap`](docs/zaik-home-brain-roadmap.md).
+
+## Why Elixir and OTP?
+
+A house agent is a long-running distributed system, even when it lives on one machine. Sensors disconnect, brokers restart, models time out, messages arrive twice, and physical devices report late or out of order. OTP is the runtime architecture, not just the implementation language:
+
+- **Supervisors** isolate chat polling, MQTT, stores, policy evaluation, and action execution.
+- **Dynamic supervisors** run bounded task and tool workers without leaking processes.
+- **GenServers** serialize mutable coordination state such as queues, device observations, occupancy, and verification.
+- **Process monitors** remove dead subscribers and reconcile worker termination without process scanning.
+- **Message passing and timers** implement debounce, cooldown, settle windows, verification deadlines, and virtual time.
+- **Temporary action workers** prevent supervisor restarts from blindly replaying physical side effects.
+- **Durable ledgers** decide semantic recovery: idempotency, retry eligibility, action status, desired-state leases, budgets, and operator decisions survive process lifetimes.
+
+The BEAM restores processes. Zaik's ledgers decide whether work is still safe to perform.
+
+## The safety boundary
+
+The model may choose:
+
+- a semantic goal;
+- a registered tool;
+- a known entity and capability;
+- a typed target or named preset;
+- references to evidence gathered by Zaik.
+
+The model may **not** choose:
+
+- MQTT topics or arbitrary adapter payloads;
+- unrestricted predicates or SQL;
+- household authority weights;
+- fabricated device observations;
+- retry targets reconstructed from prose;
+- whether broker acceptance counts as physical completion.
+
+Key invariants include:
+
+1. Coordinated plans are completely preflighted before the first side effect.
+2. Versioned goals must carry an exact evidence fingerprint rebuilt immediately before execution.
+3. Stale and duplicate reports cannot regress state, create history, trigger autonomy, or verify actions.
+4. Equivalent pending actions are suppressed; contradictory pending targets are blocked.
+5. Explicit user actions create temporary override leases that background policy cannot immediately undo.
+6. Authority is fixed in code:
+
+   ```text
+   safety/security       100
+   explicit user          90
+   privacy/sleep          80
+   comfort                60
+   daylight/energy        40
+   ```
+
+7. Confidence breaks ties only inside the same authority class.
+8. Autonomous action budgets are durable and assessed per device, room, and home.
+9. Model fallback never replays an attempted side effect.
+10. `accepted` means transport accepted the command; `verified` means later canonical state converged.
 
 ## Current capabilities
 
-- OTP supervision tree for the runtime and agents
-- Dynamic supervised task execution with retry/cancel/await APIs
-- In-memory task queue and task store
-- Filesystem-backed session memory under `~/.zaik/sessions`
-- Context building from session branches/messages
-- Observability snapshots, health summaries, and watchdog reconciliation
-- Optional Signal ingress/replies via linked-device `signal-cli`
-- Telegram Bot API polling for a separate bot identity and multi-user chat
-- Unified free-form house-agent chat through `Zaik.AgentChat`
-- Read-only conversational agent mode with supervised SQL tools over home/ops telemetry
-- Deterministic presence alert rules with Telegram notifications and cooldown/debounce
-- Pluggable local LLM providers: Ollama and llama.cpp/`llama-server`
-- MQTT subscription to Zigbee2MQTT state
-- SQLite-backed home telemetry history in `~/.zaik/home/home.db`
-- Home commands for latest Zigbee2MQTT device/sensor state and trends
-- User-level systemd services for long-running Zaik and Zigbee2MQTT
+### Agent runtime
 
-## Development
+- Supervised task queue, dispatcher, retries, cancellation, timeouts, and watchdog reconciliation.
+- Filesystem-backed JSONL sessions under `~/.zaik/sessions`.
+- SQLite operational telemetry in `~/.zaik/zaik.db`.
+- Provider-neutral local LLM facade for Ollama and llama.cpp/`llama-server`.
+- Telegram-first normalized chat ingress with optional locally disabled Signal support.
+- Read-only bounded SQL over documented operational and home views.
 
-Enter the Nix dev shell:
+### Typed home runtime
+
+- MQTT/Zigbee2MQTT ingestion with source-time ordering and restart bootstrap.
+- Canonical temperature, humidity, illuminance, presence, cover, battery, and link-quality capabilities.
+- Generic device presets stored as typed capability targets.
+- Preflighted multi-device plans and structured partial completion.
+- Persistent request-scoped idempotency and policy-gated retries.
+- MQTT-backed action convergence verification.
+- Derived room context with occupancy, freshness, history summaries, season, and sunrise/sunset solar phase.
+- Versioned goal contracts with independently gathered evidence.
+
+### Continuous home brain
+
+- Debounced multi-sensor occupancy projection.
+- Durable manual overrides, desired-state leases, and typed bedtime/privacy modes.
+- Deterministic daylight harvesting, solar-heat avoidance, and bedtime/privacy policies.
+- Fixed-authority arbitration and freshness-aware reconciliation.
+- Policy-defined hysteresis, minimum-active, settle, and cooldown windows.
+- Pending-action conflict locks and sliding-window action budgets.
+- Durable decision traces, execution outcomes, and rated operator feedback.
+- Supervised, concurrency-bounded policy workers with durable timeout diagnostics.
+- Production shadow evaluation that reads live observations but cannot publish autonomous commands.
+
+### Evaluation harness
+
+- Contract and integration tests.
+- Deterministic routing and SQL-quality evals.
+- Temporal mirror scenarios with virtual time and injected delays, stale reports, conflicts, failures, non-convergence, expiry, budgets, and overrides.
+- Isolated live-model evals over temporary production-schema databases.
+- Privacy-filtered production replay and deterministic candidate gates.
+
+## Quick start
+
+### Requirements
+
+The development environment is defined by `flake.nix` and includes Elixir, Erlang, SQLite, and Mosquitto tools.
 
 ```bash
+git clone https://github.com/debussyman/zaik.git
+cd zaik
 nix develop
+mix test
 ```
 
-Run tests:
-
-```bash
-nix develop -c mix test
-```
-
-Run the app in the foreground:
+Run Zaik in the foreground:
 
 ```bash
 nix develop -c mix run --no-halt
 ```
 
-Run a one-off command processor smoke test:
+Inspect health:
 
 ```bash
-nix develop -c mix run -e 'IO.puts(Zaik.CommandProcessor.process("health"))'
+nix develop -c mix run -e 'IO.inspect(Zaik.health())'
 ```
 
-## Public Elixir API
+## Configuration
 
-Task harness:
+Runtime secrets and household calibration belong in private environment files, never in Git. Example files live under [`examples/env`](examples/env).
 
-```elixir
-{:ok, task_id} = Zaik.submit_task(:echo, %{message: "hello"})
-{:ok, result} = Zaik.await_task(task_id)
-Zaik.cancel_task(task_id)
-Zaik.get_task(task_id)
-Zaik.list_tasks(status: :running)
-Zaik.queue_size()
-```
-
-Custom task types can be added without changing Zaik core by configuring `:task_modules`:
-
-```elixir
-config :zaik, :task_modules,
-  custom_task: MyApp.CustomTask
-```
-
-Task modules implement/use `Zaik.Agent.TaskRunner`.
-
-Observability:
-
-```elixir
-Zaik.snapshot()
-Zaik.health()
-Zaik.task_summary()
-Zaik.watchdog_scan()
-Zaik.watchdog_state()
-```
-
-Sessions/context:
-
-```elixir
-Zaik.create_session(scope: "local")
-Zaik.list_sessions()
-Zaik.get_session_context(session_id)
-```
-
-Natural chat:
-
-```elixir
-Zaik.ChatRouter.process("Is the nursery cooling off?")
-Zaik.agent_chat("What changed in the nursery this morning?", %{channel: :telegram})
-```
-
-Home state:
-
-```elixir
-Zaik.home_devices()
-Zaik.home_device("nursery")
-Zaik.presence_devices()
-Zaik.home_trend("nursery")
-Zaik.home_readings("nursery", limit: 20)
-Zaik.configure_home_entity("0x54ef...", "lily_bedroom", ["nursery"])
-Zaik.home_action_status(action_id)
-Zaik.home_action_retry_eligibility(action_id)
-Zaik.retry_home_action(action_id)
-Zaik.resolve_home_action(action_id, :cancel)
-Zaik.reset_home_action_retry_budget(action_id, "operator")
-Zaik.mqtt_status()
-```
-
-## Text / messaging chat
-
-Messaging adapters normalize inbound chat into `Zaik.Ingress.Message` and call `Zaik.Ingress`: exact commands still work, and free-form messages route through `Zaik.ChatRouter` to one unified house-agent brain, `Zaik.AgentChat`.
-
-Explicit deterministic commands still use trusted Elixir command handlers. Normal free-form chat uses `Zaik.AgentChat`: a bounded registered-tool loop. Current state and ordinary capability history use typed tools, while bounded read-only SQL remains available for advanced aggregation; planner contracts come from the live runtime registry, single low-risk actions use `control_device`, and coordinated changes use a preflighted `execute_home_plan`. Elixir resolves devices, presets, capabilities, and targets before execution. Accepted actions receive correlation IDs; later Zigbee2MQTT state reports can promote them to verified only after their typed targets converge. Explicit retries use `retry_home_action`: policy requires fresh evidence of non-convergence, enforces cooldown and attempt limits, and reconstructs the original typed target from the ledger.
-
-Telegram is the preferred multi-person chat path because Zaik appears as its own bot identity instead of speaking as your linked Signal account.
-
-Natural-language examples:
+A user-level service can load:
 
 ```text
-How's the nursery?
-Is the nursery getting colder?
-Has that room cooled off in the last hour?
-Is anyone in the nursery right now?
-How bright is the nursery?
-What's going on at home?
-Is Zaik healthy?
-Do a watchdog scan
-```
-
-Explicit commands are still supported through `Zaik.CommandProcessor`:
-
-```text
-help
-health
-snapshot
-queue
-tasks
-tasks queued|running|failed
-task <task_id>
-sessions
-home
-home devices
-home sensors
-home trends
-presence
-sensor <device name>
-sensor <device name> trend
-blinds
-blinds <room/name>
-blinds <room/name> open|close|stop
-blinds <room/name> set <0-100|preset name>
-blinds <room/name> capture <preset name>
-watchdog
-watchdog scan
-alerts
-alerts all
-alert presence until <time>
-watch presence until <time>
-alert cancel <alert_id>
-ask <prompt>
-submit llm <prompt>
-submit echo <message>
-echo <message>
-system
-```
-
-Home command examples:
-
-```text
-home
-home devices
-presence
-sensor nursery
-sensor nursery trend
-home trends
-blinds lily
-blinds lily left capture above air conditioner
-blinds lily left set above air conditioner
-blinds lily right stop
-```
-
-LLM command example:
-
-```text
-ask summarize the current home state
-```
-
-## Runtime configuration
-
-Main config lives in `config/config.exs`. Runtime-sensitive values should be supplied via environment variables or private local files, not committed.
-
-### Signal
-
-Zaik uses `signal-cli` as a linked Signal device.
-
-Environment variables used by the service:
-
-```sh
-ZAIK_SIGNAL_ENABLED=true
-ZAIK_SIGNAL_MODE=cli
-ZAIK_SIGNAL_ACCOUNT=+15555555555
-ZAIK_SIGNAL_ALLOWED_SENDERS=+15555555555
-ZAIK_SIGNAL_POLL_INTERVAL_MS=5000
-```
-
-For the systemd service, put Signal settings in:
-
-```text
+~/.config/zaik/home.env
+~/.config/zaik/telegram.env
 ~/.config/zaik/signal.env
 ```
 
-Keep it private:
+Keep them private:
 
 ```bash
-chmod 600 ~/.config/zaik/signal.env
+chmod 600 ~/.config/zaik/*.env
 ```
+
+### Home and MQTT
+
+```sh
+ZAIK_MQTT_ENABLED=true
+ZAIK_MQTT_HOST=localhost
+ZAIK_MQTT_PORT=1883
+ZAIK_ZIGBEE2MQTT_DATA_DIR=$HOME/.local/share/zigbee2mqtt/data
+ZAIK_HOME_HISTORY_DB=$HOME/.zaik/home/home.db
+```
+
+Optional location calibration enables deterministic sunrise/sunset context. Approximate coordinates are sufficient:
+
+```sh
+ZAIK_HOME_TIMEZONE=America/New_York
+ZAIK_HOME_LOCATION_NAME=Home
+ZAIK_HOME_LATITUDE=40.71
+ZAIK_HOME_LONGITUDE=-74.01
+```
+
+When `ZAIK_HOME_UTC_OFFSET_MINUTES` is omitted, production uses the host's current local UTC offset. The host timezone should therefore match `ZAIK_HOME_TIMEZONE`.
 
 ### Telegram
 
-Zaik can also run as a Telegram bot using Bot API polling. This requires no public webhook.
-
-Create a bot:
-
-1. Open Telegram and message `@BotFather`.
-2. Run `/newbot` and follow the prompts.
-3. Save the bot token.
-4. Start a private chat with the bot and send any message.
-
-The systemd service also loads this optional Telegram env file:
-
-```text
-~/.config/zaik/telegram.env
-```
-
-Example:
-
 ```sh
 ZAIK_TELEGRAM_ENABLED=true
-ZAIK_TELEGRAM_BOT_TOKEN=123456:replace_me
+ZAIK_TELEGRAM_BOT_TOKEN=replace-me
 ZAIK_TELEGRAM_BOT_USERNAME=your_bot_username
 ZAIK_TELEGRAM_ALLOWED_USER_IDS=111111111,222222222
 ZAIK_TELEGRAM_ALLOWED_CHAT_IDS=
 ZAIK_TELEGRAM_REQUIRE_DIRECT_ADDRESSING=false
-ZAIK_TELEGRAM_GROUP_TRIGGER=zaik
 ```
 
-Keep it private:
+Allowlisted groups default to ambient mode unless another account is mentioned. Private conversations do not require an addressing prefix.
 
-```bash
-chmod 600 ~/.config/zaik/telegram.env
-```
+### Local models
 
-Find your Telegram user/chat IDs from logs while testing, or use a bot like `@userinfobot`. For groups, add the bot to the group and allowlist the group chat ID.
-
-By default, allowlisted group chats use ambient mode: Zaik responds to normal group messages, but ignores messages that `@-mention` someone else. Directly addressed messages still work and have the addressing prefix stripped:
-
-```text
-zaik how's the nursery?
-@your_bot_username is the nursery cooling?
-```
-
-Set `ZAIK_TELEGRAM_REQUIRE_DIRECT_ADDRESSING=true` to restore the older mode where group messages only trigger Zaik when they start with `zaik`, `/zaik`, `@your_bot_username`, or `/zaik@your_bot_username`.
-
-Private one-on-one Telegram chats do not require a trigger.
-
-### Presence alerts
-
-Zaik can create deterministic presence alerts from explicit commands. These are persistent local rules, not LLM-created automations:
-
-```text
-alert presence until saturday
-watch presence until tomorrow
-alerts
-alert cancel <alert_id>
-```
-
-When any presence-capable home sensor reports `presence=true` or `pir_detection=true` during an active rule window, Zaik sends a Telegram notification to the chat where the rule was created. Each rule has a cooldown/debounce period to prevent spam; the default is 15 minutes.
-
-Supported `until` examples:
-
-```text
-saturday
-tomorrow
-2026-08-30
-2026-08-30 09:00
-```
-
-Alert rules are stored locally as JSON:
-
-```text
-~/.zaik/alerts/rules.json
-```
-
-Optional config:
-
-```sh
-ZAIK_ALERTS_ENABLED=true
-ZAIK_ALERTS_PATH=$HOME/.zaik/alerts/rules.json
-ZAIK_ALERT_DEFAULT_COOLDOWN_SECONDS=900
-```
-
-### Local LLM providers
-
-Zaik supports pluggable local LLM providers. Ollama remains supported; llama.cpp/`llama-server` is also supported through its OpenAI-compatible `/v1/chat/completions` API.
-
-Default Ollama config:
-
-```text
-URL:          http://localhost:11434
-Prompt model: qwen3-coder:30b
-```
-
-llama.cpp example:
+Ollama and llama.cpp are supported behind `Zaik.LLM.Provider`:
 
 ```sh
 ZAIK_LLM_PROVIDER=llama_cpp
@@ -325,335 +249,105 @@ ZAIK_AGENT_MODEL=qwen3:4b-instruct
 ZAIK_AGENT_FALLBACK_MODEL=qwen3.8:27b
 ```
 
-Useful smoke test through Zaik:
+Model output remains untrusted regardless of provider or size.
 
-```bash
-nix develop -c mix run -e 'IO.puts(Zaik.CommandProcessor.process("ask say zaik llm ok"))'
-```
-
-`Zaik.Intent.Parser` is deprecated. It remains temporarily for legacy experiments/tests, but normal free-form chat now routes through `Zaik.ChatRouter` to `Zaik.AgentChat`.
-
-### MQTT / Zigbee2MQTT
-
-Zaik subscribes to Zigbee2MQTT via the Nix-provided Mosquitto CLI tools:
-
-```text
-MQTT broker: localhost:1883
-Base topic:  zigbee2mqtt
-```
-
-Optional environment overrides:
-
-```sh
-ZAIK_MQTT_HOST=localhost
-ZAIK_MQTT_PORT=1883
-ZAIK_ZIGBEE2MQTT_DATA_DIR=$HOME/.local/share/zigbee2mqtt/data
-ZAIK_HOME_HISTORY_DB=$HOME/.zaik/home/home.db
-```
-
-Zaik also bootstraps latest Zigbee2MQTT state from:
-
-```text
-~/.local/share/zigbee2mqtt/data/state.json
-~/.local/share/zigbee2mqtt/data/configuration.yaml
-~/.local/share/zigbee2mqtt/data/database.db
-```
-
-This makes `home`, `presence`, `sensor ...`, and `blinds ...` useful immediately after a Zaik restart even if device state MQTT messages are not retained.
-
-Zaik includes deterministic Zigbee2MQTT blind controls. It only publishes validated payloads to known blinds/window coverings:
-
-```text
-zigbee2mqtt/<friendly_name>/set
-{"position":37}
-{"state":"OPEN"}
-{"state":"CLOSE"}
-{"state":"STOP"}
-```
-
-Named device presets are generic remembered target states stored in SQLite:
-
-```text
-~/.zaik/home/home.db
-home_device_presets(device_name, preset_name, capability, target_json, ...)
-```
-
-For example, a blind stop-point is stored as the same shape Zaik can execute:
-
-```json
-{"device_name":"Lily's bedroom right blind","preset_name":"above AC","capability":"cover","target_json":"{\"position\":71}"}
-```
-
-MQTT subscription handling is configurable. By default, incoming MQTT publishes are sent to the Zigbee2MQTT handler:
+## Public API examples
 
 ```elixir
-config :zaik, :mqtt,
-  handlers: [Zaik.Home.Zigbee2MQTT]
+# Tasks and health
+{:ok, task_id} = Zaik.submit_task(:echo, %{message: "hello"})
+{:ok, result} = Zaik.await_task(task_id)
+Zaik.health()
+Zaik.watchdog_scan()
+
+# One conversational house brain
+Zaik.agent_chat("Is the nursery cooling off?", %{channel: :telegram})
+
+# Canonical home state and action lifecycle
+Zaik.home_devices()
+Zaik.home_action_status(action_id)
+Zaik.home_action_retry_eligibility(action_id)
+Zaik.retry_home_action(action_id)
+
+# Goal evidence and autonomy inspection
+Zaik.home_goal_context("bedtime")
+Zaik.home_desired_states("nursery")
+Zaik.home_action_budget_status(:global)
+
+# Explicit operator controls; physical autonomy modes are rejected
+Zaik.pause_home_autonomy("maintenance", "operator")
+Zaik.set_home_autonomy_mode(:shadow, "operator")
+Zaik.resume_home_autonomy("operator")
 ```
 
-Handlers implement `Zaik.MQTT.Handler` and can also receive per-handler options:
+Normal reads should use typed tools such as `get_home_state`, `get_home_history`, `get_area_context`, and `get_home_goal_context`. Raw SQL is reserved for bounded aggregation and is validated as read-only against allowlisted views.
 
-```elixir
-config :zaik, :mqtt,
-  handlers: [
-    Zaik.Home.Zigbee2MQTT,
-    {MyApp.BlindsMQTTHandler, control_policy: :direct}
-  ]
-```
+## Extending Zaik
 
-This is intended to support future device-specific integrations such as smart blinds while keeping the generic MQTT transport reusable.
+Core extension points are behaviours backed by uncached runtime registries:
 
-### Operational telemetry / conversational SQL memory
+- `Zaik.Tool` — read and action tools.
+- `Zaik.Home.Capability` — canonical state and target validation.
+- `Zaik.Home.Executor` — adapter execution of validated targets.
+- `Zaik.Home.Policy` — immutable context to inert goal candidates.
+- `Zaik.LLM.Provider` — local model providers.
+- `Zaik.MQTT.Handler` — transport fanout consumers.
 
-Zaik records queryable operational telemetry to SQLite:
+Registries retain module identities, not cached function implementations, preserving normal BEAM hot-code loading semantics.
 
-```text
-~/.zaik/zaik.db
-```
+New autonomy behavior is incomplete unless the same change adds temporal mirror coverage and observable safety assertions.
 
-Read-only views exposed to the agent and analytics tools:
-
-```text
-zaik_tasks
-zaik_task_events
-zaik_sessions
-zaik_messages
-zaik_llm_calls
-zaik_watchdog_scans
-```
-
-The model may generate SQL for these views only through `Zaik.Analytics.SQLTool`; Elixir validates SELECT-only access, denies mutating keywords, restricts views, and caps rows. Common operational questions are intentionally handled through the same model-driven tool loop rather than hardcoded answer paths.
-
-Agent prompts include current request identity so SQL can distinguish:
-
-```text
-I/me/my  -> current sender_id
-we/us    -> current chat_id / group conversation
-you      -> Zaik; use role='user' for things users asked Zaik
-```
-
-Live agent evals exercise read planning against temporary production-schema SQLite fixtures and home actions against an isolated deterministic mirror world:
+## Evaluation
 
 ```bash
-# Fast deterministic routing/SQL guards: no LLM, no MQTT publish.
+# Full deterministic test suite
+nix develop -c mix test
+
+# Routing and SQL guards; no model and no MQTT publication
 nix develop -c mix zaik.routing_eval
 
-# Virtual plans, verification, SQLite fixtures, stale/duplicate reports, and conflicts.
+# Virtual-time home behavior with isolated SQLite and no production MQTT
 nix develop -c mix zaik.mirror_eval
 
-# Live model evals with isolated real SQLite queries. No production DB reads or MQTT.
+# Live local-model reads against isolated fixtures
 nix develop -c mix zaik.agent_eval --timeout-ms 120000
 
-# Include live-model home-control planning and full virtual desired-state execution.
-# The mirror executor cannot publish MQTT.
+# Live-model planning with virtual execution only
 nix develop -c mix zaik.agent_eval --include-home-control --timeout-ms 120000
-nix develop -c mix zaik.agent_eval --model qwen3:8b --show-prompts --timeout-ms 120000
 ```
 
-Current eval cases cover:
+Evals assert semantic outcomes and safety invariants—not hidden reasoning or exact prose.
+
+## Local data
 
 ```text
-skill-aware routing: temperature questions must not be hijacked by home-control skills
-home SQL guards: reject sensor_readings, room_name, device/friendly_name on home_readings, and null-masking temperature queries
-what have we asked you today?
-what tasks failed recently?
-Lily room temperature/current/trend questions against production-schema fixtures
-Lily bedtime-with-AC planning through real tools, preflight, presets, verification, and mirror desired-state assertions
-stale, duplicate, out-of-order, and conflicting-action safety scenarios
+~/.zaik/sessions/        inspectable JSONL conversation memory
+~/.zaik/zaik.db          task, session, message, LLM, and proposal telemetry
+~/.zaik/home/home.db     observations, identity, presets, actions, decisions,
+                         modes, overrides, desired states, budgets, and feedback
 ```
 
-Optional environment overrides:
+Zaik's default architecture keeps household state on the operator's machine. Sanitization is required before turning production failures into replay fixtures or training examples.
 
-```sh
-ZAIK_TELEMETRY_ENABLED=true
-ZAIK_TELEMETRY_DB=$HOME/.zaik/zaik.db
-ZAIK_AGENT_CHAT_ENABLED=true
-ZAIK_AGENT_MODEL=qwen3-coder:30b
-ZAIK_AGENT_NUM_PREDICT=900
-ZAIK_AGENT_TEMPERATURE=0
-ZAIK_AGENT_MAX_TOOL_CALLS=3
-```
+## Project status and roadmap
 
-Useful local SQL smoke test:
+The project is being developed in reversible safety slices:
 
-```bash
-nix develop -c mix run -e 'IO.inspect(Zaik.Analytics.SQLTool.run("SELECT status, count(*) AS count FROM zaik_tasks GROUP BY status", db: :ops))'
-```
+1. stable typed contracts and calibration;
+2. derived household context;
+3. declarative goals and policies;
+4. arbitration and reconciliation;
+5. supervised shadow autonomy and durable decisions;
+6. staged causal plans;
+7. generated temporal evaluation and replay;
+8. tightly gated canary promotion and rollback;
+9. broader capabilities such as lighting;
+10. preference learning and safe extension.
 
-### Home telemetry history
+See [`docs/zaik-home-brain-roadmap.md`](docs/zaik-home-brain-roadmap.md) for the detailed milestones. Continuous physical autonomy remains intentionally disabled.
 
-Zaik records structured sensor readings to SQLite:
+## Contributing
 
-```text
-~/.zaik/home/home.db
-```
+Read [`CONTRIBUTING.md`](CONTRIBUTING.md) and [`docs/module-map.md`](docs/module-map.md) before changing boundaries. Preserve the stable `Zaik` facade, keep physical side effects behind supervised validated executors, and include mirror coverage for new temporal behavior.
 
-The `readings` table stores normalized columns for common fields:
-
-```text
-temperature_c, humidity, illuminance, presence, pir_detection,
-battery, voltage, linkquality, target_distance, payload_json
-```
-
-Read-only views for the agent/analytics layer:
-
-```text
-home_devices
-home_readings
-home_device_presets
-```
-
-Home-control skills are model-readable markdown, not deterministic routines. They live under:
-
-```text
-~/.zaik/home/skills/*.md
-```
-
-A skill can teach household semantics such as "Lily bedtime with AC" while execution still goes through validated tools and generic device presets.
-
-Trend commands use this history, for example:
-
-```text
-sensor nursery trend
-```
-
-Example response once at least two readings exist in the recent window:
-
-```text
-The nursery is cooling. It is now 78.8°F, down 1.8°F over 1 hour. Humidity is steady at 54%. The room is getting brighter at 200 lux, up 100 lux. Based on 2 readings over 1 hour.
-```
-
-Tests use an in-memory SQLite database by default, so test runs do not mutate the real home telemetry database.
-
-## Runtime services
-
-Service templates are tracked in:
-
-```text
-ops/systemd/user/
-```
-
-Installed local units:
-
-```text
-~/.config/systemd/user/zigbee2mqtt.service
-~/.config/systemd/user/zaik.service
-```
-
-Mosquitto runs as a system service. Zaik and Zigbee2MQTT run as user services.
-
-### Install / update service units
-
-```bash
-mkdir -p ~/.config/systemd/user
-cp ops/systemd/user/zigbee2mqtt.service ~/.config/systemd/user/
-cp ops/systemd/user/zaik.service ~/.config/systemd/user/
-systemctl --user daemon-reload
-systemctl --user enable --now zigbee2mqtt.service
-systemctl --user enable --now zaik.service
-```
-
-Start user services at boot before login:
-
-```bash
-sudo loginctl enable-linger "$USER"
-loginctl show-user "$USER" -p Linger
-```
-
-Expected:
-
-```text
-Linger=yes
-```
-
-### Useful commands
-
-Check service status:
-
-```bash
-systemctl --user status zigbee2mqtt.service zaik.service
-systemctl status mosquitto
-```
-
-Follow logs:
-
-```bash
-journalctl --user -u zigbee2mqtt.service -f
-journalctl --user -u zaik.service -f
-journalctl -u mosquitto -f
-```
-
-Restart after code/config changes:
-
-```bash
-systemctl --user restart zaik.service
-systemctl --user restart zigbee2mqtt.service
-```
-
-Stop/start manually:
-
-```bash
-systemctl --user stop zaik.service zigbee2mqtt.service
-systemctl --user start zigbee2mqtt.service zaik.service
-```
-
-Check enabled/active state:
-
-```bash
-systemctl --user is-enabled zigbee2mqtt.service zaik.service
-systemctl --user is-active zigbee2mqtt.service zaik.service
-systemctl is-enabled mosquitto
-systemctl is-active mosquitto
-```
-
-Inspect running processes:
-
-```bash
-ps -ef | grep -E '[m]osquitto|[z]igbee2mqtt|[p]npm start|[b]eam.smp|[m]osquitto_sub'
-```
-
-Zigbee2MQTT frontend URL depends on your local deployment.
-
-MQTT topic watch:
-
-```bash
-mosquitto_sub -t 'zigbee2mqtt/#' -v
-```
-
-## Project layout
-
-For a contributor-focused layer/module classification, see [`docs/module-map.md`](docs/module-map.md).
-
-```text
-lib/zaik.ex                         Public API
-lib/zaik/application.ex             OTP supervision tree
-lib/zaik/task*.ex                   Task model/store/queue/watchdog
-lib/zaik/dispatcher.ex              Dynamic task dispatcher
-lib/zaik/agent/*.ex                 Task runner and workloads
-lib/zaik/session*.ex                Filesystem-backed sessions
-lib/zaik/context_builder.ex         Session context assembly
-lib/zaik/ingress*.ex                Shared normalized message ingress
-lib/zaik/command_processor.ex       Explicit text commands
-lib/zaik/messaging/*.ex             Telegram and optional Signal adapters
-lib/zaik/llm*.ex                    Pluggable LLM facade and providers
-lib/zaik/mqtt/*.ex                  MQTT transport and handler behaviour
-lib/zaik/home/*.ex                  Zigbee2MQTT state parsing/store/bootstrap
-ops/systemd/user/*.service          User service templates
-```
-
-## Git hygiene
-
-Local development/runtime files should stay untracked:
-
-```text
-.envrc
-.direnv/
-~/.config/zaik/*.env
-~/.local/share/zigbee2mqtt/
-
-See `examples/env/*.env.example` for private runtime config templates.
-```
-
-## License
-
-MIT License. See [LICENSE](LICENSE) for more information.
+Zaik is licensed under the [MIT License](LICENSE).
