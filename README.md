@@ -21,7 +21,7 @@ Zaik is not a collection of prompt-triggered routines. It is an agent harness wh
 - **Deterministic control plane** — Elixir validates every target, preset, policy, permission, risk ceiling, and evidence fingerprint.
 - **Physical verification** — broker acceptance is not physical success. Actions remain `accepted` until canonical device reports prove convergence.
 - **Continuous but conservative** — event-driven policies produce inert desired states; arbitration, overrides, freshness, hysteresis, locks, and budgets decide what remains actionable.
-- **A temporal mirror world** — production contracts run against isolated production-schema SQLite databases, virtual time, deterministic devices, and injected faults without publishing production MQTT.
+- **A temporal mirror world** — production contracts run against isolated production-schema SQLite databases, virtual time, deterministic devices, injected faults, and independently declared physical-semantic oracles without publishing production MQTT.
 - **Hot-load-friendly extension points** — tools, capabilities, executors, and policies are discovered at runtime rather than cached as module code.
 
 ## Architecture

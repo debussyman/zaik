@@ -43,6 +43,7 @@ defmodule Zaik.Home.Mirror.Evals do
   def cases do
     [
       %{name: "bedtime_reaches_verified_desired_state", kind: :success},
+      %{name: "inverted_cover_fails_independent_physical_oracle", kind: :physical_oracle},
       %{name: "invalid_plan_has_zero_side_effects", kind: :invalid},
       %{name: "later_executor_failure_reports_partial_completion", kind: :partial},
       %{name: "accepted_non_convergence_is_not_verified", kind: :stalled},
@@ -86,6 +87,59 @@ defmodule Zaik.Home.Mirror.Evals do
       match?({:ok, %{verified: true}}, run.result) and run.report.passed? and
         run.report.side_effect_count == 2
     end)
+  end
+
+  defp run_case(%{kind: :physical_oracle} = definition) do
+    base = Scenarios.lily_bedtime_with_ac(id: definition.name)
+
+    scenario = %{
+      base
+      | desired_state: [
+          %{
+            device: "Lily's bedroom left blind",
+            capability: "cover",
+            target: %{"state" => "CLOSE"}
+          }
+        ],
+        physical_oracles: [
+          %{
+            device: "Lily's bedroom left blind",
+            capability: "cover",
+            kind: "cover_position_linear",
+            source: "independent installation fixture",
+            reported_open: 100,
+            reported_closed: 0
+          }
+        ]
+    }
+
+    finish(
+      definition,
+      Runner.run(scenario, fn _mirror, context ->
+        Zaik.Tools.Executor.run(
+          "control_device",
+          %{
+            "device" => "Lily's bedroom left blind",
+            "capability" => "cover",
+            "target" => %{"state" => "CLOSE"}
+          },
+          Map.merge(context, %{
+            channel: :mirror,
+            chat_id: scenario.id,
+            message_id: "physical-oracle"
+          })
+        )
+      end),
+      fn run ->
+        desired = Enum.find(run.report.checks, &String.starts_with?(&1.name, "desired_state:"))
+
+        physical =
+          Enum.find(run.report.checks, &String.starts_with?(&1.name, "physical_oracle:"))
+
+        match?({:ok, %{verified: true}}, run.result) and desired.passed? and
+          not physical.passed? and not run.report.passed? and run.report.side_effect_count == 1
+      end
+    )
   end
 
   defp run_case(%{kind: :staged_plan_contract} = definition) do

@@ -16,6 +16,7 @@ defmodule Zaik.Home.Mirror.Scenario do
     ops_telemetry: %{},
     events: [],
     desired_state: [],
+    physical_oracles: [],
     faults: %{},
     metadata: %{}
   ]
@@ -35,11 +36,13 @@ defmodule Zaik.Home.Mirror.Scenario do
          :ok <- list_of_maps(scenario.events, :invalid_events),
          :ok <- validate_events(scenario.events),
          :ok <- list_of_maps(scenario.desired_state, :invalid_desired_state),
+         :ok <- list_of_maps(scenario.physical_oracles, :invalid_physical_oracles),
          :ok <- validate_now(scenario.now),
          :ok <- validate_areas(scenario.areas),
          :ok <- validate_entities(scenario.entities),
          :ok <- validate_presets(scenario.presets),
          :ok <- validate_desired_state(scenario.desired_state),
+         :ok <- validate_physical_oracles(scenario.physical_oracles),
          true <- is_map(scenario.faults) do
       {:ok, scenario}
     else
@@ -191,6 +194,18 @@ defmodule Zaik.Home.Mirror.Scenario do
   defp normalize_event_type(:state_report), do: :state_report
   defp normalize_event_type("state_report"), do: :state_report
   defp normalize_event_type(_type), do: :unknown
+
+  defp validate_physical_oracles(fixtures) do
+    case Enum.find_value(fixtures, fn fixture ->
+           case Zaik.Home.Mirror.PhysicalOracle.validate(fixture) do
+             :ok -> nil
+             {:error, reason} -> {fixture, reason}
+           end
+         end) do
+      nil -> :ok
+      {fixture, reason} -> {:error, {:invalid_physical_oracle, fixture, reason}}
+    end
+  end
 
   defp validate_desired_state(desired_state) do
     invalid =

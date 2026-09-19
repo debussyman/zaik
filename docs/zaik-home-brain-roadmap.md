@@ -150,8 +150,10 @@ Goal: remove remaining ambiguity before autonomous decisions depend on it.
   durable trace or an observable telemetry-write failure.
 - [ ] Record stable observation-snapshot IDs so a decision can identify exactly
   which facts it used.
-- [ ] Separate independently declared scenario truth from capability
-  normalization used by production execution.
+- [x] Separate independently declared scenario truth from capability
+  normalization used by production execution. Mirror physical-oracle fixtures
+  carry their own provenance and raw adapter endpoints, and never invoke the
+  production capability, verifier, executor, or calibration store.
 - [ ] Add explicit freshness semantics for state-file bootstrap versus live
   observations.
 - [ ] Document household units and conventions, including the current cover
@@ -159,11 +161,11 @@ Goal: remove remaining ambiguity before autonomous decisions depend on it.
 
 Acceptance:
 
-- A deliberately inverted production implementation fails an independent mirror
-  oracle.
-- Adding capability, time-window, plural, or question words to a lookup does not
-  change the resolved entity set.
-- Missing decision traces fail tests and surface operational alerts.
+- [x] A deliberately inverted production implementation fails an independent
+  mirror oracle.
+- [ ] Adding capability, time-window, plural, or question words to a lookup does
+  not change the resolved entity set.
+- [ ] Missing decision traces fail tests and surface operational alerts.
 
 ## Milestone 1: Derived room and environment context
 

@@ -53,6 +53,68 @@ defmodule Zaik.Home.MirrorTest do
            ]
   end
 
+  test "independent physical semantics catch self-consistent inverted cover reports" do
+    base = bedtime_scenario()
+
+    scenario = %{
+      base
+      | id: "inverted-physical-oracle",
+        desired_state: [
+          %{
+            device: "Lily's bedroom left blind",
+            capability: "cover",
+            target: %{"state" => "CLOSE"}
+          }
+        ],
+        physical_oracles: [
+          %{
+            device: "Lily's bedroom left blind",
+            capability: "cover",
+            kind: "cover_position_linear",
+            source: "independent installation observation",
+            reported_open: 100,
+            reported_closed: 0
+          }
+        ]
+    }
+
+    assert {:ok, run} =
+             Runner.run(scenario, fn _mirror, context ->
+               Zaik.Tools.Executor.run(
+                 "control_device",
+                 %{
+                   "device" => "Lily's bedroom left blind",
+                   "capability" => "cover",
+                   "target" => %{"state" => "CLOSE"}
+                 },
+                 Map.merge(context, %{
+                   channel: :mirror,
+                   chat_id: scenario.id,
+                   message_id: "inverted-oracle"
+                 })
+               )
+             end)
+
+    assert {:ok, %{verified: true}} = run.result
+
+    assert %{passed?: true} =
+             Enum.find(run.report.checks, &String.starts_with?(&1.name, "desired_state:"))
+
+    assert %{
+             passed?: false,
+             expected: 100.0,
+             actual: actual,
+             evidence: %{
+               reported_position: 100.0,
+               oracle_kind: "cover_position_linear",
+               oracle_source: "independent installation observation"
+             }
+           } = Enum.find(run.report.checks, &String.starts_with?(&1.name, "physical_oracle:"))
+
+    assert_in_delta actual, 0.0, 1.0e-12
+    assert run.report.passed? == false
+  end
+
   test "an invalid target fails preflight with zero virtual side effects" do
     scenario = bedtime_scenario()
 

@@ -33,7 +33,7 @@ defmodule Zaik.Home.Mirror.Assertions do
         end
       end)
 
-    checks = desired_checks ++ invariant_checks(mirror)
+    checks = desired_checks ++ physical_oracle_checks(mirror) ++ invariant_checks(mirror)
 
     passed? = Enum.all?(checks, & &1.passed?)
 
@@ -62,6 +62,57 @@ defmodule Zaik.Home.Mirror.Assertions do
     )
   end
 
+  defp physical_oracle_checks(mirror) do
+    Enum.map(mirror.scenario.physical_oracles, fn fixture ->
+      device = value(fixture, :device)
+      capability = value(fixture, :capability)
+
+      desired =
+        Enum.find(mirror.scenario.desired_state, fn candidate ->
+          normalize(value(candidate, :device)) == normalize(device) and
+            normalize(value(candidate, :capability)) == normalize(capability)
+        end)
+
+      with desired when not is_nil(desired) <- desired,
+           {:ok, current} <- Zaik.Home.DeviceStore.find_device(mirror.device_store, device),
+           {:ok, result} <-
+             Zaik.Home.Mirror.PhysicalOracle.evaluate(
+               fixture,
+               value(desired, :target),
+               current.payload
+             ) do
+        %{
+          name: "physical_oracle:#{device}:#{capability}",
+          passed?: result.passed?,
+          expected: result.expected_canonical_position,
+          actual: result.actual_canonical_position,
+          evidence: %{
+            reported_position: result.reported_position,
+            tolerance: result.tolerance,
+            oracle_kind: result.oracle_kind,
+            oracle_source: result.oracle_source
+          }
+        }
+      else
+        nil ->
+          oracle_error(device, capability, :missing_desired_state)
+
+        {:error, reason} ->
+          oracle_error(device, capability, reason)
+      end
+    end)
+  end
+
+  defp oracle_error(device, capability, reason) do
+    %{
+      name: "physical_oracle:#{device}:#{capability}",
+      passed?: false,
+      expected: :independently_declared_physical_state,
+      actual: nil,
+      error: inspect(reason)
+    }
+  end
+
   defp invariant_checks(mirror) do
     max_actions = value(mirror.scenario.metadata, :max_side_effects)
 
@@ -81,6 +132,8 @@ defmodule Zaik.Home.Mirror.Assertions do
     end
   end
 
+  defp normalize(nil), do: ""
+  defp normalize(value), do: value |> to_string() |> String.trim() |> String.downcase()
   defp value(nil, _key), do: nil
   defp value(map, key), do: Map.get(map, key) || Map.get(map, to_string(key))
 end
