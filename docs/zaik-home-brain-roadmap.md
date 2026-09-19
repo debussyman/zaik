@@ -402,7 +402,9 @@ Goal: support decisions where one action changes whether another is necessary.
   and recreates the staged store, action ledger, verifier, and scheduler together,
   proving that checkpoints, diagnostics, and the original claim survive while
   canonical state reconciles lost verifier memory without republishing. Opt-in
-  periodic alert delivery and production execution remain.
+  disabled-by-default periodic alert delivery now runs in bounded supervised
+  tasks with durable cooldown and health counters. Telemetry-write alerts and
+  production execution remain.
 - [x] Do not allow arbitrary model-authored code or predicates; conditions use
   validated scalar comparisons over declared fields from registered canonical
   capabilities, with explicit observation freshness.

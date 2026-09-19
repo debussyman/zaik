@@ -260,6 +260,20 @@ defmodule Zaik do
     )
   end
 
+  @doc "Inspect the optional supervised staged-plan alert monitor."
+  def home_staged_plan_alert_monitor_status do
+    if Process.whereis(Zaik.Home.StagedPlanAlertMonitor),
+      do: Zaik.Home.StagedPlanAlertMonitor.status(),
+      else: {:error, :staged_plan_alert_monitor_disabled}
+  end
+
+  @doc "Request an immediate bounded evaluation from the optional alert monitor."
+  def run_home_staged_plan_alert_monitor do
+    if Process.whereis(Zaik.Home.StagedPlanAlertMonitor),
+      do: Zaik.Home.StagedPlanAlertMonitor.run_now(),
+      else: {:error, :staged_plan_alert_monitor_disabled}
+  end
+
   @doc "Cancel one durable staged plan by exact ID with an operator audit."
   def cancel_home_staged_plan(id, cancelled_by, reason \\ "operator cancellation"),
     do: Zaik.Home.StagedPlanStore.cancel(id, cancelled_by, reason)

@@ -42,6 +42,7 @@ defmodule Zaik.Application do
       domain_child(:home, autonomy_engine_child()),
       domain_child(:home, alerts_rule_store_child()),
       domain_child(:home, alerts_engine_child()),
+      domain_child(:home, staged_plan_alert_monitor_child()),
       domain_adapter_child(:home, :zigbee2mqtt, zigbee2mqtt_bootstrapper_child()),
       adapter_child(:mqtt, mqtt_child()),
       domain_child(:agents, {Registry, keys: :unique, name: Zaik.Agent.Registry}),
@@ -204,6 +205,25 @@ defmodule Zaik.Application do
 
     if config.enabled do
       Zaik.Alerts.Engine
+    end
+  end
+
+  defp staged_plan_alert_monitor_child do
+    config = Zaik.Home.StagedPlanAlertMonitor.config()
+
+    if config.enabled do
+      {Zaik.Home.StagedPlanAlertMonitor,
+       [
+         chat_id: config.chat_id,
+         interval_seconds: config.interval_seconds,
+         cooldown_seconds: config.cooldown_seconds,
+         task_timeout_ms: config.task_timeout_ms,
+         task_supervisor: Zaik.Tools.TaskSupervisor,
+         notifier: Zaik.Messaging.TelegramClient,
+         context: %{staged_plan_store: Zaik.Home.StagedPlanStore, clock: nil},
+         watchdog_opts: [],
+         clock: nil
+       ]}
     end
   end
 
