@@ -224,6 +224,13 @@ defmodule Zaik do
   def mqtt_status, do: Zaik.MQTT.Client.status()
 
   @doc """
+  Fully preflight an inert conditional staged plan. This API never executes,
+  waits, schedules timers, or invokes an adapter.
+  """
+  def preflight_home_staged_plan(goal, stages, context \\ %{}, opts \\ []),
+    do: Zaik.Home.StagedPlan.preflight(goal, stages, context, opts)
+
+  @doc """
   Return runtime verification status for an action correlation ID, falling
   back to its persistent action-ledger entry after verifier retention expires.
   """

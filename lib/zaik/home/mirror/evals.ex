@@ -68,7 +68,8 @@ defmodule Zaik.Home.Mirror.Evals do
       %{name: "stuck_policy_evaluation_is_durably_timed_out", kind: :evaluation_timeout},
       %{name: "occupancy_entry_sequences_remain_advisory", kind: :occupancy_sequences},
       %{name: "scoped_policy_modes_are_inert_and_durable", kind: :scoped_policy_modes},
-      %{name: "autonomy_context_cannot_cross_execution_boundary", kind: :autonomy_boundary}
+      %{name: "autonomy_context_cannot_cross_execution_boundary", kind: :autonomy_boundary},
+      %{name: "staged_plan_conditions_are_typed_and_inert", kind: :staged_plan_contract}
     ]
   end
 
@@ -79,6 +80,64 @@ defmodule Zaik.Home.Mirror.Evals do
       match?({:ok, %{verified: true}}, run.result) and run.report.passed? and
         run.report.side_effect_count == 2
     end)
+  end
+
+  defp run_case(%{kind: :staged_plan_contract} = definition) do
+    scenario = Scenarios.lily_bedtime_with_ac(id: definition.name)
+
+    finish(
+      definition,
+      Runner.run(scenario, fn mirror, context ->
+        stages = [
+          %{
+            id: "close-left",
+            conditions: [
+              %{
+                device: "Lily's room multi-sensor",
+                capability: "temperature",
+                field: "fahrenheit",
+                operator: "gte",
+                value: 70,
+                max_age_seconds: 30
+              }
+            ],
+            wait: %{timeout_seconds: 20, poll_interval_seconds: 2},
+            on_condition_false: "cancel_plan",
+            actions: [
+              %{
+                device: "Lily's bedroom left blind",
+                capability: "cover",
+                target: %{position: 100}
+              }
+            ]
+          }
+        ]
+
+        {:ok, plan} =
+          Zaik.Home.StagedPlan.preflight(
+            "mirror staged contract",
+            stages,
+            context,
+            deadline_seconds: 120
+          )
+
+        condition = plan.stages |> hd() |> Map.fetch!(:conditions) |> hd()
+        initial = Zaik.Home.ActionPlan.Condition.evaluate(condition, context)
+        Zaik.Home.Mirror.advance(mirror, 31_000)
+        stale = Zaik.Home.ActionPlan.Condition.evaluate(condition, context)
+
+        %{plan: Zaik.Home.StagedPlan.public(plan), initial: initial, stale: stale}
+      end),
+      fn run ->
+        match?({:ok, %{matched: true}}, run.result.initial) and
+          match?({:error, {:stale_condition_observation, _}}, run.result.stale) and
+          run.result.plan.status == "prepared" and
+          get_in(run.result.plan, [:stages, Access.at(0), :wait]) == %{
+            timeout_seconds: 20,
+            poll_interval_seconds: 2
+          } and run.report.side_effect_count == 0
+      end
+    )
   end
 
   defp run_case(%{kind: :autonomy_boundary} = definition) do

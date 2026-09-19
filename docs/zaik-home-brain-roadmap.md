@@ -374,11 +374,15 @@ Acceptance:
 Goal: support decisions where one action changes whether another is necessary.
 
 - [ ] Extend action planning with stages, typed conditions, deadlines,
-  observation waits, cancellation, and durable restart recovery.
-- [ ] Do not allow arbitrary model-authored code or predicates; conditions use
-  registered capability comparisons.
+  observation waits, cancellation, and durable restart recovery. An inert
+  `StagedPlan` now fully preflights stages, bounded condition waits, deadlines,
+  and cancel-on-false behavior; supervised execution, persistence, and recovery remain.
+- [x] Do not allow arbitrary model-authored code or predicates; conditions use
+  validated scalar comparisons over declared fields from registered canonical
+  capabilities, with explicit observation freshness.
 - [ ] Re-evaluate canonical state between stages.
-- [ ] Preserve complete preflight for each stage before its first side effect.
+- [x] Preserve complete preflight for each stage before its first side effect;
+  the inert staged contract rejects any invalid later stage and has no execution API.
 - [ ] Define safe behavior for partial completion and expired goals.
 - [ ] Reuse verifier and retry policy for each child action.
 

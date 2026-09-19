@@ -136,6 +136,7 @@ Key invariants include:
 - Canonical temperature, humidity, illuminance, presence, cover, battery, and link-quality capabilities.
 - Generic device presets stored as typed capability targets.
 - Preflighted multi-device plans and structured partial completion.
+- An inert staged-plan contract that fully preflights every stage, typed canonical-state condition, bounded observation wait, and deadline without executing or sleeping.
 - Persistent request-scoped idempotency and policy-gated retries.
 - MQTT-backed action convergence verification.
 - Derived room context with occupancy, freshness, history summaries, season, and sunrise/sunset solar phase.
