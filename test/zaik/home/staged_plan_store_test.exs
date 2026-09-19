@@ -114,6 +114,50 @@ defmodule Zaik.Home.StagedPlanStoreTest do
              Zaik.Home.StagedPlanStore.cancel(plan.id, "parent", "late", [], context.store)
   end
 
+  test "runner ownership, checkpoints, and completion are durable", context do
+    plan = plan!(context)
+    assert {:ok, _} = Zaik.Home.StagedPlanStore.persist(plan, %{}, [], context.store)
+
+    assert {:ok, running} =
+             Zaik.Home.StagedPlanStore.claim_run(plan.id, "mirror-runner", [], context.store)
+
+    assert running.status == "running"
+    assert running.current_stage == 0
+
+    assert {:error, :staged_plan_already_running} =
+             Zaik.Home.StagedPlanStore.claim_run(plan.id, "other-runner", [], context.store)
+
+    assert {:ok, checkpointed} =
+             Zaik.Home.StagedPlanStore.checkpoint(
+               plan.id,
+               "mirror-runner",
+               1,
+               %{stage_id: "close-cover", status: "verified"},
+               :running,
+               [clock: context.context.clock],
+               context.store
+             )
+
+    assert checkpointed.current_stage == 1
+
+    assert [%{"stage_id" => "close-cover", "status" => "verified"}] =
+             Enum.map(checkpointed.stage_results, &Map.drop(&1, ["recorded_at"]))
+
+    assert {:ok, completed} =
+             Zaik.Home.StagedPlanStore.finish(
+               plan.id,
+               "mirror-runner",
+               %{status: "completed"},
+               [clock: context.context.clock],
+               context.store
+             )
+
+    assert completed.status == "completed"
+    assert completed.final_result["status"] == "completed"
+    assert is_binary(completed.completed_at)
+    assert Zaik.Home.StagedPlanStore.active([], context.store) == []
+  end
+
   test "prepared and cancelled lifecycle survives store restart", context do
     db_path =
       Path.join(

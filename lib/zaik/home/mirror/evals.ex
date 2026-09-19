@@ -172,6 +172,103 @@ defmodule Zaik.Home.Mirror.Evals do
             context.staged_plan_store
           )
 
+        execution_stages = [
+          %{
+            id: "close-left",
+            actions: [
+              %{
+                device: "Lily's bedroom left blind",
+                capability: "cover",
+                target: %{position: 100}
+              }
+            ]
+          },
+          %{
+            id: "set-right-after-left-converges",
+            conditions: [
+              %{
+                device: "Lily's bedroom left blind",
+                capability: "cover",
+                field: "position",
+                operator: "eq",
+                value: 100,
+                max_age_seconds: 30
+              }
+            ],
+            actions: [
+              %{
+                device: "Lily's bedroom right blind",
+                capability: "cover",
+                target: %{position: 71}
+              }
+            ]
+          }
+        ]
+
+        {:ok, execution_plan} =
+          Zaik.Home.StagedPlan.preflight(
+            "mirror staged execution",
+            execution_stages,
+            context,
+            deadline_seconds: 120
+          )
+
+        {:ok, _} =
+          Zaik.Home.StagedPlanStore.persist(
+            execution_plan,
+            %{owner: "mirror-operator"},
+            [clock: context.clock],
+            context.staged_plan_store
+          )
+
+        execution = Zaik.Home.StagedPlanCoordinator.run(execution_plan.id, context)
+
+        waiting_stages = [
+          %{
+            id: "wait-for-impossible-light",
+            conditions: [
+              %{
+                device: "Lily's room multi-sensor",
+                capability: "illuminance",
+                field: "value",
+                operator: "lt",
+                value: 0,
+                max_age_seconds: 120
+              }
+            ],
+            wait: %{timeout_seconds: 10, poll_interval_seconds: 1},
+            actions: [
+              %{
+                device: "Lily's bedroom left blind",
+                capability: "cover",
+                target: %{position: 0}
+              }
+            ]
+          }
+        ]
+
+        {:ok, waiting_plan} =
+          Zaik.Home.StagedPlan.preflight(
+            "mirror waiting execution",
+            waiting_stages,
+            context,
+            deadline_seconds: 60
+          )
+
+        {:ok, _} =
+          Zaik.Home.StagedPlanStore.persist(
+            waiting_plan,
+            %{owner: "mirror-operator"},
+            [clock: context.clock],
+            context.staged_plan_store
+          )
+
+        first_wait = Zaik.Home.StagedPlanCoordinator.run(waiting_plan.id, context)
+        Zaik.Home.Mirror.advance(mirror, 9_000)
+        second_wait = Zaik.Home.StagedPlanCoordinator.run(waiting_plan.id, context)
+        Zaik.Home.Mirror.advance(mirror, 1_000)
+        wait_timeout = Zaik.Home.StagedPlanCoordinator.run(waiting_plan.id, context)
+
         %{
           plan: Zaik.Home.StagedPlan.public(plan),
           initial: initial,
@@ -179,7 +276,11 @@ defmodule Zaik.Home.Mirror.Evals do
           stored: stored,
           cancelled: cancelled,
           active: active,
-          expired: expired
+          expired: expired,
+          execution: execution,
+          first_wait: first_wait,
+          second_wait: second_wait,
+          wait_timeout: wait_timeout
         }
       end),
       fn run ->
@@ -191,7 +292,12 @@ defmodule Zaik.Home.Mirror.Evals do
             poll_interval_seconds: 2
           } and run.result.stored.status == "prepared" and
           run.result.cancelled.status == "cancelled" and run.result.active == [] and
-          run.result.expired.status == "expired" and run.report.side_effect_count == 0
+          run.result.expired.status == "expired" and
+          match?({:ok, %{status: "completed", current_stage: 2}}, run.result.execution) and
+          match?({:ok, %{status: "waiting", current_stage: 0}}, run.result.first_wait) and
+          match?({:ok, %{status: "waiting", current_stage: 0}}, run.result.second_wait) and
+          match?({:ok, %{status: "cancelled", current_stage: 0}}, run.result.wait_timeout) and
+          run.report.side_effect_count == 2
       end
     )
   end

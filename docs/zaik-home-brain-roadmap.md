@@ -377,16 +377,21 @@ Goal: support decisions where one action changes whether another is necessary.
   observation waits, cancellation, and durable restart recovery. An inert
   `StagedPlan` now fully preflights stages, bounded condition waits, deadlines,
   and cancel-on-false behavior. Prepared plans now persist with virtual-time
-  expiry, exact-ID audited cancellation, bounded retention, and restart recovery;
-  supervised stage execution and in-flight recovery remain.
+  expiry, exact-ID audited cancellation, bounded retention, and restart recovery.
+  A supervised mirror-only coordinator now checkpoints stages, reobserves typed
+  conditions, resumes waits, cancels at wait timeout, and protects each stage
+  with the action ledger; production execution and stronger in-flight recovery remain.
 - [x] Do not allow arbitrary model-authored code or predicates; conditions use
   validated scalar comparisons over declared fields from registered canonical
   capabilities, with explicit observation freshness.
-- [ ] Re-evaluate canonical state between stages.
+- [x] Re-evaluate canonical state between stages in the mirror-only coordinator;
+  production staged execution remains unavailable.
 - [x] Preserve complete preflight for each stage before its first side effect;
   the inert staged contract rejects any invalid later stage and has no execution API.
 - [ ] Define safe behavior for partial completion and expired goals.
-- [ ] Reuse verifier and retry policy for each child action.
+- [ ] Reuse verifier and retry policy for each child action. Mirror stage actions
+  reuse `ActionPlan`, capability executors, convergence verification, and the
+  action ledger; staged retry policy integration remains.
 
 Initial lighting workflow:
 

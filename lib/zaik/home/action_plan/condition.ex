@@ -42,7 +42,7 @@ defmodule Zaik.Home.ActionPlan.Condition do
     capability = normalize(value(condition, :capability))
     field = normalize(value(condition, :field))
     operator = normalize(value(condition, :operator))
-    expected = value(condition, :value)
+    expected = first_present(condition, [:value, :expected])
     max_age_seconds = value(condition, :max_age_seconds) || @default_max_age_seconds
 
     capability_opts =
@@ -253,6 +253,21 @@ defmodule Zaik.Home.ActionPlan.Condition do
   defp parse_datetime(_value), do: {:error, :invalid_condition_observed_at}
   defp normalize(nil), do: ""
   defp normalize(value), do: value |> to_string() |> String.trim() |> String.downcase()
+
+  defp first_present(map, keys) do
+    Enum.find_value(keys, fn key ->
+      cond do
+        Map.has_key?(map, key) -> {:found, Map.get(map, key)}
+        Map.has_key?(map, to_string(key)) -> {:found, Map.get(map, to_string(key))}
+        true -> nil
+      end
+    end)
+    |> case do
+      {:found, found} -> found
+      nil -> nil
+    end
+  end
+
   defp value(map, key), do: Map.get(map, key) || Map.get(map, to_string(key))
   defp put_if(opts, _key, nil), do: opts
   defp put_if(opts, key, value), do: Keyword.put(opts, key, value)

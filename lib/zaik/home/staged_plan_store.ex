@@ -39,6 +39,22 @@ defmodule Zaik.Home.StagedPlanStore do
       when is_binary(id) and is_binary(cancelled_by) and is_binary(reason),
       do: GenServer.call(server, {:cancel, id, cancelled_by, reason, opts})
 
+  def claim_run(id, runner_id, opts \\ [], server \\ __MODULE__)
+      when is_binary(id) and is_binary(runner_id),
+      do: GenServer.call(server, {:claim_run, id, runner_id, opts})
+
+  def checkpoint(id, runner_id, stage_index, result, status, opts \\ [], server \\ __MODULE__)
+      when is_binary(id) and is_binary(runner_id) and is_integer(stage_index) and is_map(result),
+      do: GenServer.call(server, {:checkpoint, id, runner_id, stage_index, result, status, opts})
+
+  def finish(id, runner_id, result, opts \\ [], server \\ __MODULE__)
+      when is_binary(id) and is_binary(runner_id) and is_map(result),
+      do: GenServer.call(server, {:finish, id, runner_id, result, opts})
+
+  def stop_run(id, runner_id, status, result, opts \\ [], server \\ __MODULE__)
+      when is_binary(id) and is_binary(runner_id) and is_map(result),
+      do: GenServer.call(server, {:stop_run, id, runner_id, status, result, opts})
+
   @impl true
   def init(opts) do
     path = Keyword.get(opts, :db_path, Zaik.Home.HistoryStore.config().db_path) |> expand_path()
@@ -90,7 +106,9 @@ defmodule Zaik.Home.StagedPlanStore do
     rows =
       query(
         state.conn,
-        select_sql("WHERE status = 'prepared' ORDER BY julianday(prepared_at), id"),
+        select_sql(
+          "WHERE status IN ('prepared', 'waiting', 'running') ORDER BY julianday(prepared_at), id"
+        ),
         []
       )
       |> Enum.map(&decode/1)
@@ -113,6 +131,134 @@ defmodule Zaik.Home.StagedPlanStore do
     {:reply, rows, state}
   end
 
+  def handle_call({:claim_run, id, runner_id, opts}, _from, state) do
+    now = Zaik.Time.now(Keyword.get(opts, :clock, state.clock))
+    _ = expire_due(state.conn, now)
+
+    reply =
+      with {:ok, current} <- lookup_row(state.conn, id),
+           :ok <- claimable(current, runner_id),
+           :ok <-
+             execute(
+               state.conn,
+               """
+               UPDATE home_staged_plans
+               SET status = 'running', runner_id = ?,
+                   started_at = COALESCE(started_at, ?), updated_at = ?
+               WHERE id = ? AND status IN ('prepared', 'waiting', 'running')
+               """,
+               [runner_id, DateTime.to_iso8601(now), DateTime.to_iso8601(now), id]
+             ),
+           {:ok, claimed} <- lookup_row(state.conn, id) do
+        {:ok, claimed}
+      end
+
+    {:reply, reply, state}
+  end
+
+  def handle_call({:checkpoint, id, runner_id, stage_index, result, status, opts}, _from, state) do
+    now = Zaik.Time.now(Keyword.get(opts, :clock, state.clock))
+    status = to_string(status)
+
+    reply =
+      with true <- status in ["running", "waiting"],
+           {:ok, current} <- lookup_row(state.conn, id),
+           :ok <- owned_running_plan(current, runner_id),
+           result = Map.put_new(result, :recorded_at, DateTime.to_iso8601(now)),
+           results = current.stage_results ++ [stringify(result)],
+           :ok <-
+             execute(
+               state.conn,
+               """
+               UPDATE home_staged_plans
+               SET status = ?, current_stage = ?, stage_results_json = ?, updated_at = ?
+               WHERE id = ? AND runner_id = ? AND status = 'running'
+               """,
+               [
+                 status,
+                 stage_index,
+                 Jason.encode!(results),
+                 DateTime.to_iso8601(now),
+                 id,
+                 runner_id
+               ]
+             ),
+           {:ok, checkpointed} <- lookup_row(state.conn, id) do
+        {:ok, checkpointed}
+      else
+        false -> {:error, {:invalid_staged_plan_status, status}}
+        error -> error
+      end
+
+    {:reply, reply, state}
+  end
+
+  def handle_call({:finish, id, runner_id, result, opts}, _from, state) do
+    now = Zaik.Time.now(Keyword.get(opts, :clock, state.clock))
+
+    reply =
+      with {:ok, current} <- lookup_row(state.conn, id),
+           :ok <- owned_running_plan(current, runner_id),
+           :ok <-
+             execute(
+               state.conn,
+               """
+               UPDATE home_staged_plans
+               SET status = 'completed', final_result_json = ?, completed_at = ?, updated_at = ?
+               WHERE id = ? AND runner_id = ? AND status = 'running'
+               """,
+               [
+                 Jason.encode!(stringify(result)),
+                 DateTime.to_iso8601(now),
+                 DateTime.to_iso8601(now),
+                 id,
+                 runner_id
+               ]
+             ),
+           {:ok, completed} <- lookup_row(state.conn, id) do
+        _ = prune(state.conn, state.max_terminal_rows)
+        {:ok, completed}
+      end
+
+    {:reply, reply, state}
+  end
+
+  def handle_call({:stop_run, id, runner_id, status, result, opts}, _from, state) do
+    now = Zaik.Time.now(Keyword.get(opts, :clock, state.clock))
+    status = to_string(status)
+
+    reply =
+      with true <- status in ["cancelled", "failed"],
+           {:ok, current} <- lookup_row(state.conn, id),
+           :ok <- owned_running_plan(current, runner_id),
+           :ok <-
+             execute(
+               state.conn,
+               """
+               UPDATE home_staged_plans
+               SET status = ?, final_result_json = ?, completed_at = ?, updated_at = ?
+               WHERE id = ? AND runner_id = ? AND status = 'running'
+               """,
+               [
+                 status,
+                 Jason.encode!(stringify(result)),
+                 DateTime.to_iso8601(now),
+                 DateTime.to_iso8601(now),
+                 id,
+                 runner_id
+               ]
+             ),
+           {:ok, stopped} <- lookup_row(state.conn, id) do
+        _ = prune(state.conn, state.max_terminal_rows)
+        {:ok, stopped}
+      else
+        false -> {:error, {:invalid_staged_plan_terminal_status, status}}
+        error -> error
+      end
+
+    {:reply, reply, state}
+  end
+
   def handle_call({:cancel, id, cancelled_by, reason, opts}, _from, state) do
     now = Zaik.Time.now(Keyword.get(opts, :clock, state.clock))
     cancelled_by = String.trim(cancelled_by)
@@ -131,7 +277,7 @@ defmodule Zaik.Home.StagedPlanStore do
                UPDATE home_staged_plans
                SET status = 'cancelled', cancelled_at = ?, cancelled_by = ?,
                    cancellation_reason = ?, updated_at = ?
-               WHERE id = ? AND status = 'prepared'
+               WHERE id = ? AND status IN ('prepared', 'waiting')
                """,
                [
                  DateTime.to_iso8601(now),
@@ -159,33 +305,48 @@ defmodule Zaik.Home.StagedPlanStore do
   def terminate(_reason, state), do: Sqlite3.close(state.conn)
 
   def migrate(conn) do
-    Sqlite3.execute(conn, """
-    PRAGMA journal_mode = WAL;
-    PRAGMA synchronous = NORMAL;
+    with :ok <-
+           Sqlite3.execute(conn, """
+           PRAGMA journal_mode = WAL;
+           PRAGMA synchronous = NORMAL;
 
-    CREATE TABLE IF NOT EXISTS home_staged_plans (
-      id TEXT PRIMARY KEY,
-      goal TEXT,
-      status TEXT NOT NULL,
-      plan_json TEXT NOT NULL,
-      owner TEXT NOT NULL,
-      source TEXT NOT NULL,
-      reason TEXT NOT NULL,
-      prepared_at TEXT NOT NULL,
-      expires_at TEXT NOT NULL,
-      inserted_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL,
-      cancelled_at TEXT,
-      cancelled_by TEXT,
-      cancellation_reason TEXT,
-      expired_at TEXT
-    );
+           CREATE TABLE IF NOT EXISTS home_staged_plans (
+             id TEXT PRIMARY KEY,
+             goal TEXT,
+             status TEXT NOT NULL,
+             plan_json TEXT NOT NULL,
+             owner TEXT NOT NULL,
+             source TEXT NOT NULL,
+             reason TEXT NOT NULL,
+             prepared_at TEXT NOT NULL,
+             expires_at TEXT NOT NULL,
+             inserted_at TEXT NOT NULL,
+             updated_at TEXT NOT NULL,
+             cancelled_at TEXT,
+             cancelled_by TEXT,
+             cancellation_reason TEXT,
+             expired_at TEXT,
+             runner_id TEXT,
+             current_stage INTEGER NOT NULL DEFAULT 0,
+             stage_results_json TEXT NOT NULL DEFAULT '[]',
+             started_at TEXT,
+             completed_at TEXT,
+             final_result_json TEXT
+           );
 
-    CREATE INDEX IF NOT EXISTS home_staged_plans_status_expiry_idx
-      ON home_staged_plans(status, expires_at);
-    CREATE INDEX IF NOT EXISTS home_staged_plans_updated_idx
-      ON home_staged_plans(updated_at DESC);
-    """)
+           CREATE INDEX IF NOT EXISTS home_staged_plans_status_expiry_idx
+             ON home_staged_plans(status, expires_at);
+           CREATE INDEX IF NOT EXISTS home_staged_plans_updated_idx
+             ON home_staged_plans(updated_at DESC);
+           """),
+         :ok <- ensure_column(conn, "runner_id", "TEXT"),
+         :ok <- ensure_column(conn, "current_stage", "INTEGER NOT NULL DEFAULT 0"),
+         :ok <- ensure_column(conn, "stage_results_json", "TEXT NOT NULL DEFAULT '[]'"),
+         :ok <- ensure_column(conn, "started_at", "TEXT"),
+         :ok <- ensure_column(conn, "completed_at", "TEXT"),
+         :ok <- ensure_column(conn, "final_result_json", "TEXT") do
+      :ok
+    end
   end
 
   defp persist_plan(state, plan, owner, source, reason, now) do
@@ -241,7 +402,7 @@ defmodule Zaik.Home.StagedPlanStore do
       """
       UPDATE home_staged_plans
       SET status = 'expired', expired_at = ?, updated_at = ?
-      WHERE status = 'prepared' AND julianday(expires_at) <= julianday(?)
+      WHERE status IN ('prepared', 'waiting', 'running') AND julianday(expires_at) <= julianday(?)
       """,
       [now, now, now]
     )
@@ -254,8 +415,8 @@ defmodule Zaik.Home.StagedPlanStore do
       conn,
       """
       DELETE FROM home_staged_plans
-      WHERE status != 'prepared' AND id NOT IN (
-        SELECT id FROM home_staged_plans WHERE status != 'prepared'
+      WHERE status NOT IN ('prepared', 'waiting', 'running') AND id NOT IN (
+        SELECT id FROM home_staged_plans WHERE status NOT IN ('prepared', 'waiting', 'running')
         ORDER BY julianday(updated_at) DESC, id DESC LIMIT ?
       )
       """,
@@ -274,7 +435,8 @@ defmodule Zaik.Home.StagedPlanStore do
     """
     SELECT id, goal, status, plan_json, owner, source, reason, prepared_at,
            expires_at, inserted_at, updated_at, cancelled_at, cancelled_by,
-           cancellation_reason, expired_at
+           cancellation_reason, expired_at, runner_id, current_stage,
+           stage_results_json, started_at, completed_at, final_result_json
     FROM home_staged_plans #{suffix}
     """
   end
@@ -294,7 +456,13 @@ defmodule Zaik.Home.StagedPlanStore do
          cancelled_at,
          cancelled_by,
          cancellation_reason,
-         expired_at
+         expired_at,
+         runner_id,
+         current_stage,
+         stage_results_json,
+         started_at,
+         completed_at,
+         final_result_json
        ]) do
     %{
       id: id,
@@ -311,7 +479,13 @@ defmodule Zaik.Home.StagedPlanStore do
       cancelled_at: cancelled_at,
       cancelled_by: cancelled_by,
       cancellation_reason: cancellation_reason,
-      expired_at: expired_at
+      expired_at: expired_at,
+      runner_id: runner_id,
+      current_stage: current_stage,
+      stage_results: Jason.decode!(stage_results_json),
+      started_at: started_at,
+      completed_at: completed_at,
+      final_result: decode_json(final_result_json)
     }
   end
 
@@ -322,8 +496,20 @@ defmodule Zaik.Home.StagedPlanStore do
   defp validate_plan_lifetime(_plan, _now), do: {:error, :invalid_staged_plan_status}
   defp validate_text(field, ""), do: {:error, {:invalid_staged_plan_metadata, field}}
   defp validate_text(_field, _value), do: :ok
-  defp cancellable(%{status: "prepared"}), do: :ok
+  defp cancellable(%{status: status}) when status in ["prepared", "waiting"], do: :ok
   defp cancellable(plan), do: {:error, {:staged_plan_not_cancellable, plan.status}}
+
+  defp claimable(%{status: status}, _runner_id) when status in ["prepared", "waiting"], do: :ok
+  defp claimable(%{status: "running", runner_id: runner_id}, runner_id), do: :ok
+  defp claimable(%{status: "running"}, _runner_id), do: {:error, :staged_plan_already_running}
+  defp claimable(plan, _runner_id), do: {:error, {:staged_plan_not_runnable, plan.status}}
+
+  defp owned_running_plan(%{status: "running", runner_id: runner_id}, runner_id), do: :ok
+
+  defp owned_running_plan(%{status: "running"}, _runner_id),
+    do: {:error, :staged_plan_runner_mismatch}
+
+  defp owned_running_plan(plan, _runner_id), do: {:error, {:staged_plan_not_running, plan.status}}
 
   defp publish(event_bus, _event) when event_bus in [nil, false], do: :ok
 
@@ -337,6 +523,30 @@ defmodule Zaik.Home.StagedPlanStore do
   defp process_available?(pid) when is_pid(pid), do: Process.alive?(pid)
   defp process_available?(name) when is_atom(name), do: not is_nil(Process.whereis(name))
   defp process_available?(_), do: false
+
+  defp ensure_column(conn, column, definition) do
+    columns = query(conn, "PRAGMA table_info(home_staged_plans)", [])
+
+    if Enum.any?(columns, fn [_cid, name | _rest] -> name == column end) do
+      :ok
+    else
+      Sqlite3.execute(conn, "ALTER TABLE home_staged_plans ADD COLUMN #{column} #{definition}")
+    end
+  end
+
+  defp stringify(%DateTime{} = value), do: DateTime.to_iso8601(value)
+
+  defp stringify(value) when is_map(value) do
+    Map.new(value, fn {key, nested} -> {to_string(key), stringify(nested)} end)
+  end
+
+  defp stringify(value) when is_list(value), do: Enum.map(value, &stringify/1)
+  defp stringify(value) when is_boolean(value) or is_nil(value), do: value
+  defp stringify(value) when is_atom(value), do: Atom.to_string(value)
+  defp stringify(value), do: value
+
+  defp decode_json(nil), do: nil
+  defp decode_json(value), do: Jason.decode!(value)
 
   defp query(conn, sql, params) do
     {:ok, statement} = Sqlite3.prepare(conn, sql)
