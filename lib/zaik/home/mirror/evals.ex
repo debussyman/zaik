@@ -73,7 +73,8 @@ defmodule Zaik.Home.Mirror.Evals do
       %{
         name: "staged_plan_non_convergence_blocks_later_stages",
         kind: :staged_verification_timeout
-      }
+      },
+      %{name: "staged_plan_retry_requires_fresh_non_convergence", kind: :staged_retry}
     ]
   end
 
@@ -666,6 +667,126 @@ defmodule Zaik.Home.Mirror.Evals do
           ) and
           Enum.map(run.result.actions, & &1.device) == ["Lily's bedroom left blind"] and
           run.report.side_effect_count == 1
+      end
+    )
+  end
+
+  defp run_case(%{kind: :staged_retry} = definition) do
+    scenario =
+      Scenarios.lily_bedtime_with_ac(
+        id: definition.name,
+        faults: %{
+          "Lily's bedroom left blind" => %{type: :nonconvergent_attempts, attempts: 1}
+        },
+        events: [
+          %{
+            at_ms: 4_000,
+            type: :state_report,
+            device: "Lily's bedroom left blind",
+            payload: %{"position" => 0, "state" => "STOP"},
+            observed_at: ~U[2026-01-01 00:00:04Z]
+          }
+        ],
+        metadata: %{
+          max_side_effects: 3,
+          verification_wait_ms: 0,
+          verification_timeout_ms: 1_000,
+          staged_verification_timeout_seconds: 5,
+          staged_verification_poll_seconds: 1
+        }
+      )
+
+    finish(
+      definition,
+      Runner.run(scenario, fn mirror, context ->
+        {:ok, plan} =
+          Zaik.Home.StagedPlan.preflight(
+            "retry only after deterministic policy approval",
+            [
+              %{
+                id: "close-left",
+                actions: [
+                  %{
+                    device: "Lily's bedroom left blind",
+                    capability: "cover",
+                    target: %{position: 100}
+                  }
+                ]
+              },
+              %{
+                id: "set-right",
+                actions: [
+                  %{
+                    device: "Lily's bedroom right blind",
+                    capability: "cover",
+                    target: %{position: 71}
+                  }
+                ]
+              }
+            ],
+            context,
+            deadline_seconds: 30
+          )
+
+        {:ok, _} =
+          Zaik.Home.StagedPlanStore.persist(
+            plan,
+            %{owner: "mirror-operator"},
+            [clock: context.clock],
+            context.staged_plan_store
+          )
+
+        {:ok, _} = Zaik.Home.StagedPlanScheduler.submit(plan.id, context.staged_plan_scheduler)
+        Zaik.Home.Mirror.advance(mirror, 0)
+
+        {:ok, pending} =
+          Zaik.Home.StagedPlanStore.lookup(
+            plan.id,
+            [clock: context.clock],
+            context.staged_plan_store
+          )
+
+        actions_before_retry = Zaik.Home.Mirror.actions(mirror)
+        Zaik.Home.Mirror.advance(mirror, 5_000)
+
+        {:ok, completed} =
+          Zaik.Home.StagedPlanStore.lookup(
+            plan.id,
+            [clock: context.clock],
+            context.staged_plan_store
+          )
+
+        %{
+          pending: pending,
+          completed: completed,
+          actions_before_retry: actions_before_retry,
+          actions: Zaik.Home.Mirror.actions(mirror),
+          retries:
+            completed.stage_results
+            |> Enum.flat_map(fn result ->
+              case get_in(result, ["retry_result", "result"]) do
+                nil -> []
+                retry -> [retry]
+              end
+            end)
+        }
+      end),
+      fn run ->
+        match?(
+          %{status: "waiting", current_stage: 0, waiting_kind: "verification"},
+          run.result.pending
+        ) and
+          match?(%{status: "completed", current_stage: 2}, run.result.completed) and
+          Enum.map(run.result.actions_before_retry, & &1.device) == [
+            "Lily's bedroom left blind"
+          ] and
+          Enum.map(run.result.actions, & &1.device) == [
+            "Lily's bedroom left blind",
+            "Lily's bedroom left blind",
+            "Lily's bedroom right blind"
+          ] and
+          length(run.result.retries) == 1 and
+          run.report.side_effect_count == 3
       end
     )
   end

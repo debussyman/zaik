@@ -395,8 +395,10 @@ Goal: support decisions where one action changes whether another is necessary.
   verification wait and resume from canonical reports without republishing;
   bounded timeout fails closed before later stages, and repeated wait snapshots
   are durably coalesced.
-  Opt-in periodic alert delivery, policy-gated staged retries, and production
-  execution remain.
+  Staged retries now reuse `ActionRetryPolicy`, require settled fresh post-request
+  non-convergence evidence and retry budget, and execute through the retry tool's
+  own ledger claim; missing evidence still fails closed. Opt-in periodic alert
+  delivery and production execution remain.
 - [x] Do not allow arbitrary model-authored code or predicates; conditions use
   validated scalar comparisons over declared fields from registered canonical
   capabilities, with explicit observation freshness.

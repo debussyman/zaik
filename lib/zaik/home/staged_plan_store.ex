@@ -790,6 +790,7 @@ defmodule Zaik.Home.StagedPlanStore do
     wait = value(result, :wait, %{})
     poll_seconds = value(wait, :poll_interval_seconds, nil)
     waiting_kind = value(result, :waiting_kind, "condition") |> to_string()
+    reset_wait = value(result, :reset_wait, false) == true
 
     cond do
       waiting_kind not in ["condition", "verification"] ->
@@ -800,9 +801,10 @@ defmodule Zaik.Home.StagedPlanStore do
 
       true ->
         waiting_since =
-          if current.waiting_kind == waiting_kind and is_binary(current.waiting_since),
-            do: current.waiting_since,
-            else: DateTime.to_iso8601(now)
+          if not reset_wait and current.waiting_kind == waiting_kind and
+               is_binary(current.waiting_since),
+             do: current.waiting_since,
+             else: DateTime.to_iso8601(now)
 
         next_evaluation_at = now |> DateTime.add(poll_seconds, :second) |> DateTime.to_iso8601()
         {:ok, waiting_since, next_evaluation_at, waiting_kind}

@@ -34,7 +34,8 @@ defmodule Zaik.Home.Mirror.Store do
       trace: [],
       report_trace: [],
       side_effect_count: 0,
-      observer: Keyword.get(opts, :observer)
+      observer: Keyword.get(opts, :observer),
+      attempt_counts: %{}
     }
 
     opts
@@ -54,7 +55,7 @@ defmodule Zaik.Home.Mirror.Store do
 
   @impl true
   def handle_call({:accept, entity, capability, target, action_id}, _from, state) do
-    fault = fault_for(state.faults, entity)
+    {fault, state} = fault_for_attempt(state, entity, capability)
 
     action = %{
       action_id: action_id,
@@ -271,6 +272,23 @@ defmodule Zaik.Home.Mirror.Store do
     Map.new(faults, fn {key, fault} -> {normalize(key), fault} end)
   end
 
+  defp fault_for_attempt(state, entity, capability) do
+    fault = fault_for(state.faults, entity)
+    key = {entity.id, capability}
+    attempt = Map.get(state.attempt_counts, key, 0) + 1
+    state = put_in(state, [:attempt_counts, key], attempt)
+
+    resolved =
+      if fault_type(fault) == :nonconvergent_attempts and
+           attempt <= fault_value(fault, :attempts, 1) do
+        %{type: :never_converges}
+      else
+        if fault_type(fault) == :nonconvergent_attempts, do: :none, else: fault
+      end
+
+    {resolved, state}
+  end
+
   defp fault_for(faults, entity) do
     Map.get(faults, normalize(entity.id)) || Map.get(faults, normalize(entity.name)) || :none
   end
@@ -295,6 +313,7 @@ defmodule Zaik.Home.Mirror.Store do
       "executor_failure" -> :executor_failure
       "never_converges" -> :never_converges
       "delayed_convergence" -> :delayed_convergence
+      "nonconvergent_attempts" -> :nonconvergent_attempts
       "state_report" -> :state_report
       _ -> :none
     end

@@ -167,25 +167,26 @@ defmodule Zaik.Home.StagedPlanCoordinator do
     case result do
       {:ok, report} ->
         if map_value(report, :verified) == true do
-          with {:ok, checkpointed} <-
-                 Zaik.Home.StagedPlanStore.checkpoint(
-                   run.id,
-                   runner_id,
-                   index + 1,
-                   checkpoint_result,
-                   :running,
-                   [clock: setting(context, :clock)],
-                   setting(context, :staged_plan_store)
-                 ) do
-            execute_stages(checkpointed, stages, index + 1, runner_id, context, opts)
-          end
-        else
-          handle_unverified_stage(
+          complete_stage(
             run,
+            stages,
             index,
             checkpoint_result,
             runner_id,
-            context
+            context,
+            opts
+          )
+        else
+          handle_unverified_stage(
+            run,
+            stages,
+            index,
+            args,
+            stage_context,
+            checkpoint_result,
+            runner_id,
+            context,
+            opts
           )
         end
 
@@ -206,43 +207,211 @@ defmodule Zaik.Home.StagedPlanCoordinator do
     end
   end
 
-  defp handle_unverified_stage(run, index, checkpoint_result, runner_id, context) do
-    result =
-      checkpoint_result
-      |> Map.put(:waiting_kind, "verification")
-      |> Map.put(:wait, %{
-        timeout_seconds: verification_timeout_seconds(context),
-        poll_interval_seconds: verification_poll_seconds(context)
-      })
+  defp handle_unverified_stage(
+         run,
+         stages,
+         index,
+         args,
+         stage_context,
+         checkpoint_result,
+         runner_id,
+         context,
+         opts
+       ) do
+    result = verification_wait_result(checkpoint_result, context)
 
-    if verification_wait_expired?(run, context) do
-      terminal = Map.put(result, :reason, "stage_verification_timeout")
+    case retry_assessment(args, stage_context, context) do
+      {:ok, %{reason: "already_converged"}} ->
+        retry_stage(
+          run,
+          stages,
+          index,
+          args,
+          stage_context,
+          result,
+          runner_id,
+          context,
+          opts
+        )
 
-      with {:ok, failed} <-
-             Zaik.Home.StagedPlanStore.stop_run(
-               run.id,
-               runner_id,
-               :failed,
-               terminal,
-               [clock: setting(context, :clock)],
-               setting(context, :staged_plan_store)
-             ) do
-        {:error, {:staged_plan_failed, public_result(failed)}}
-      end
-    else
-      with {:ok, waiting} <-
-             Zaik.Home.StagedPlanStore.checkpoint(
-               run.id,
-               runner_id,
-               index,
-               result,
-               :waiting,
-               [clock: setting(context, :clock)],
-               setting(context, :staged_plan_store)
-             ) do
-        {:ok, public_result(waiting)}
-      end
+      {:ok, %{eligible: true}} when run.waiting_kind == "verification" ->
+        if verification_wait_expired?(run, context) do
+          retry_stage(
+            run,
+            stages,
+            index,
+            args,
+            stage_context,
+            result,
+            runner_id,
+            context,
+            opts
+          )
+        else
+          checkpoint_verification_wait(run, index, result, runner_id, context)
+        end
+
+      {:ok, decision} ->
+        if verification_wait_expired?(run, context) do
+          fail_unverified_stage(run, result, decision, runner_id, context)
+        else
+          checkpoint_verification_wait(run, index, result, runner_id, context)
+        end
+
+      {:error, reason} ->
+        if verification_wait_expired?(run, context) do
+          fail_unverified_stage(
+            run,
+            result,
+            %{eligible: false, reason: inspect(reason)},
+            runner_id,
+            context
+          )
+        else
+          checkpoint_verification_wait(run, index, result, runner_id, context)
+        end
     end
+  end
+
+  defp retry_stage(
+         run,
+         stages,
+         index,
+         args,
+         stage_context,
+         result,
+         runner_id,
+         context,
+         opts
+       ) do
+    original_action_id =
+      Zaik.Home.ActionLedger.idempotency_key("execute_home_plan", args, stage_context)
+
+    attempts =
+      Zaik.Home.ActionLedger.retries_for(original_action_id, setting(context, :action_ledger))
+      |> length()
+
+    retry_context =
+      stage_context
+      |> Map.put(:message_id, "stage-#{index}-retry-#{attempts + 1}")
+      |> Map.put(:retry_policy_opts, setting(context, :retry_policy_opts) || [])
+
+    retry_result =
+      Zaik.Tools.Executor.run(
+        "retry_home_action",
+        %{"action_id" => original_action_id},
+        retry_context,
+        ledger: setting(context, :action_ledger),
+        task_supervisor: setting(context, :task_supervisor)
+      )
+
+    result = Map.put(result, :retry_result, normalize_result(retry_result))
+
+    case retry_result do
+      {:ok, report} ->
+        if map_value(report, :verified) == true do
+          complete_stage(run, stages, index, result, runner_id, context, opts)
+        else
+          checkpoint_verification_wait(
+            run,
+            index,
+            Map.put(result, :reset_wait, true),
+            runner_id,
+            context
+          )
+        end
+
+      {:error, reason} ->
+        terminal =
+          result |> Map.put(:reason, "stage_retry_failed") |> Map.put(:error, inspect(reason))
+
+        with {:ok, failed} <-
+               Zaik.Home.StagedPlanStore.stop_run(
+                 run.id,
+                 runner_id,
+                 :failed,
+                 terminal,
+                 [clock: setting(context, :clock)],
+                 setting(context, :staged_plan_store)
+               ) do
+          {:error, {:staged_plan_failed, public_result(failed)}}
+        end
+    end
+  end
+
+  defp retry_assessment(args, stage_context, context) do
+    ledger = setting(context, :action_ledger)
+    action_id = Zaik.Home.ActionLedger.idempotency_key("execute_home_plan", args, stage_context)
+
+    with {:ok, entry} <- Zaik.Home.ActionLedger.lookup(action_id, ledger) do
+      Zaik.Home.ActionRetryPolicy.evaluate(
+        entry,
+        context,
+        setting(context, :retry_policy_opts) || []
+      )
+    end
+  end
+
+  defp complete_stage(run, stages, index, result, runner_id, context, opts) do
+    with {:ok, checkpointed} <-
+           Zaik.Home.StagedPlanStore.checkpoint(
+             run.id,
+             runner_id,
+             index + 1,
+             result,
+             :running,
+             [clock: setting(context, :clock)],
+             setting(context, :staged_plan_store)
+           ) do
+      execute_stages(checkpointed, stages, index + 1, runner_id, context, opts)
+    end
+  end
+
+  defp checkpoint_verification_wait(run, index, result, runner_id, context) do
+    with {:ok, waiting} <-
+           Zaik.Home.StagedPlanStore.checkpoint(
+             run.id,
+             runner_id,
+             index,
+             result,
+             :waiting,
+             [clock: setting(context, :clock)],
+             setting(context, :staged_plan_store)
+           ) do
+      {:ok, public_result(waiting)}
+    end
+  end
+
+  defp fail_unverified_stage(run, result, decision, runner_id, context) do
+    terminal =
+      result
+      |> Map.put(:reason, "stage_verification_timeout")
+      |> Map.put(:retry_policy, compact_retry_decision(decision))
+
+    with {:ok, failed} <-
+           Zaik.Home.StagedPlanStore.stop_run(
+             run.id,
+             runner_id,
+             :failed,
+             terminal,
+             [clock: setting(context, :clock)],
+             setting(context, :staged_plan_store)
+           ) do
+      {:error, {:staged_plan_failed, public_result(failed)}}
+    end
+  end
+
+  defp verification_wait_result(checkpoint_result, context) do
+    checkpoint_result
+    |> Map.put(:waiting_kind, "verification")
+    |> Map.put(:wait, %{
+      timeout_seconds: verification_timeout_seconds(context),
+      poll_interval_seconds: verification_poll_seconds(context)
+    })
+  end
+
+  defp compact_retry_decision(decision) do
+    Map.take(decision, [:eligible, :reason, :attempts_used, :action_id])
   end
 
   defp handle_unmatched(run, index, stage, conditions, runner_id, context) do
