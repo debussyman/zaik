@@ -252,6 +252,14 @@ defmodule Zaik do
     )
   end
 
+  @doc "Explicitly deliver cooldown-protected staged-plan diagnostics to an operator chat."
+  def send_home_staged_plan_alerts(chat_id, opts \\ []) do
+    Zaik.Home.StagedPlanAlerts.deliver(
+      %{staged_plan_store: Zaik.Home.StagedPlanStore, clock: nil},
+      Keyword.put(opts, :chat_id, chat_id)
+    )
+  end
+
   @doc "Cancel one durable staged plan by exact ID with an operator audit."
   def cancel_home_staged_plan(id, cancelled_by, reason \\ "operator cancellation"),
     do: Zaik.Home.StagedPlanStore.cancel(id, cancelled_by, reason)

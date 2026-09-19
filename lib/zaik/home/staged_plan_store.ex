@@ -12,7 +12,7 @@ defmodule Zaik.Home.StagedPlanStore do
 
   @default_max_terminal_rows 10_000
   @default_max_run_event_rows 10_000
-  @run_event_types ~w(scheduled recovered_waiting recovered_running evaluation_started waiting completed cancelled failed timed_out task_exit observation_wakeup)
+  @run_event_types ~w(scheduled recovered_waiting recovered_running evaluation_started waiting completed cancelled failed timed_out task_exit observation_wakeup alert_emitted)
 
   def start_link(opts \\ []) do
     {server_opts, init_opts} = Keyword.split(opts, [:name])
@@ -68,6 +68,10 @@ defmodule Zaik.Home.StagedPlanStore do
   def run_events(plan_id, limit \\ 50, server \\ __MODULE__)
       when is_binary(plan_id) and is_integer(limit),
       do: GenServer.call(server, {:run_events, plan_id, limit})
+
+  def run_events_by_type(plan_id, event_type, limit \\ 50, server \\ __MODULE__)
+      when is_binary(plan_id) and is_integer(limit),
+      do: GenServer.call(server, {:run_events_by_type, plan_id, to_string(event_type), limit})
 
   @impl true
   def init(opts) do
@@ -135,6 +139,25 @@ defmodule Zaik.Home.StagedPlanStore do
         ORDER BY id DESC LIMIT ?
         """,
         [plan_id, limit]
+      )
+      |> Enum.map(&decode_run_event/1)
+
+    {:reply, events, state}
+  end
+
+  def handle_call({:run_events_by_type, plan_id, event_type, limit}, _from, state) do
+    limit = max(1, min(limit, 200))
+
+    events =
+      query(
+        state.conn,
+        """
+        SELECT id, plan_id, event_type, details_json, recorded_at
+        FROM home_staged_plan_run_events
+        WHERE plan_id = ? AND event_type = ?
+        ORDER BY id DESC LIMIT ?
+        """,
+        [plan_id, event_type, limit]
       )
       |> Enum.map(&decode_run_event/1)
 

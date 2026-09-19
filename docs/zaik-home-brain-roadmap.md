@@ -387,8 +387,9 @@ Goal: support decisions where one action changes whether another is necessary.
   canonical observations. A bounded durable run journal now records scheduler
   recovery, attempts, waits, observation wakeups, timeouts, task exits, and
   terminal outcomes. A read-only watchdog now reports missed wakeups, stuck
-  evaluations, and consecutive failures with code-owned thresholds; operator
-  alert delivery, staged retries, and production execution remain.
+  evaluations, and consecutive failures with code-owned thresholds. Operators
+  can explicitly deliver typed issues through durable fingerprint cooldowns;
+  opt-in periodic delivery, staged retries, and production execution remain.
 - [x] Do not allow arbitrary model-authored code or predicates; conditions use
   validated scalar comparisons over declared fields from registered canonical
   capabilities, with explicit observation freshness.

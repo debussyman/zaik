@@ -308,6 +308,60 @@ defmodule Zaik.Home.StagedPlanStoreTest do
 
     assert MapSet.new(Enum.map(diagnostics.issues, & &1.type)) ==
              MapSet.new(["evaluation_stuck", "repeated_run_failure", "missed_wakeup"])
+
+    test_pid = self()
+
+    notifier = fn chat_id, text ->
+      send(test_pid, {:staged_alert, chat_id, text})
+      {:ok, %{delivered: true}}
+    end
+
+    alert_context = Map.put(context.context, :staged_plan_store, context.store)
+
+    assert {:ok, %{sent: 3, suppressed: 0, errors: 0}} =
+             Zaik.Home.StagedPlanAlerts.deliver(alert_context,
+               chat_id: "operator-chat",
+               notifier: notifier,
+               cooldown_seconds: 30,
+               watchdog_opts: [
+                 running_timeout_seconds: 5,
+                 missed_wakeup_grace_seconds: 1,
+                 consecutive_failure_threshold: 3
+               ]
+             )
+
+    for _index <- 1..3 do
+      assert_receive {:staged_alert, "operator-chat", text}
+      assert text =~ "Zaik staged-plan alert:"
+      refute text =~ "operator-chat"
+    end
+
+    assert {:ok, %{sent: 0, suppressed: 3, errors: 0}} =
+             Zaik.Home.StagedPlanAlerts.deliver(alert_context,
+               chat_id: "operator-chat",
+               notifier: notifier,
+               cooldown_seconds: 30,
+               watchdog_opts: [
+                 running_timeout_seconds: 5,
+                 missed_wakeup_grace_seconds: 1,
+                 consecutive_failure_threshold: 3
+               ]
+             )
+
+    refute_receive {:staged_alert, _, _}
+    Zaik.Home.Mirror.Clock.advance(context.clock, 30_000)
+
+    assert {:ok, %{sent: 3, suppressed: 0, errors: 0}} =
+             Zaik.Home.StagedPlanAlerts.deliver(alert_context,
+               chat_id: "operator-chat",
+               notifier: notifier,
+               cooldown_seconds: 30,
+               watchdog_opts: [
+                 running_timeout_seconds: 5,
+                 missed_wakeup_grace_seconds: 1,
+                 consecutive_failure_threshold: 3
+               ]
+             )
   end
 
   test "prepared and cancelled lifecycle survives store restart", context do
