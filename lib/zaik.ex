@@ -240,6 +240,18 @@ defmodule Zaik do
   @doc "Inspect one durable staged plan by exact ID."
   def home_staged_plan(id), do: Zaik.Home.StagedPlanStore.lookup(id)
 
+  @doc "Inspect the newest durable scheduler events for one staged plan."
+  def home_staged_plan_run_events(id, limit \\ 50),
+    do: Zaik.Home.StagedPlanStore.run_events(id, limit)
+
+  @doc "Evaluate read-only staged-plan watchdog diagnostics."
+  def home_staged_plan_diagnostics(opts \\ []) do
+    Zaik.Home.StagedPlanWatchdog.evaluate(
+      %{staged_plan_store: Zaik.Home.StagedPlanStore, clock: nil},
+      opts
+    )
+  end
+
   @doc "Cancel one durable staged plan by exact ID with an operator audit."
   def cancel_home_staged_plan(id, cancelled_by, reason \\ "operator cancellation"),
     do: Zaik.Home.StagedPlanStore.cancel(id, cancelled_by, reason)

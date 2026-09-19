@@ -249,6 +249,67 @@ defmodule Zaik.Home.StagedPlanStoreTest do
              )
   end
 
+  test "watchdog reports missed wakeups, stuck evaluations, and repeated failures", context do
+    running_plan = plan!(context)
+    waiting_plan = plan_with_goal!(context, "waiting diagnostic plan")
+
+    assert {:ok, _} = Zaik.Home.StagedPlanStore.persist(running_plan, %{}, [], context.store)
+    assert {:ok, _} = Zaik.Home.StagedPlanStore.persist(waiting_plan, %{}, [], context.store)
+
+    assert {:ok, _} =
+             Zaik.Home.StagedPlanStore.claim_run(running_plan.id, "runner", [], context.store)
+
+    for attempt <- 1..3 do
+      assert {:ok, _} =
+               Zaik.Home.StagedPlanStore.record_run_event(
+                 running_plan.id,
+                 :evaluation_started,
+                 %{attempt: attempt},
+                 [clock: context.context.clock],
+                 context.store
+               )
+
+      assert {:ok, _} =
+               Zaik.Home.StagedPlanStore.record_run_event(
+                 running_plan.id,
+                 :timed_out,
+                 %{attempt: attempt},
+                 [clock: context.context.clock],
+                 context.store
+               )
+    end
+
+    assert {:ok, _} =
+             Zaik.Home.StagedPlanStore.claim_run(waiting_plan.id, "waiter", [], context.store)
+
+    assert {:ok, _} =
+             Zaik.Home.StagedPlanStore.checkpoint(
+               waiting_plan.id,
+               "waiter",
+               0,
+               %{stage_id: "close-cover", wait: %{timeout_seconds: 30, poll_interval_seconds: 2}},
+               :waiting,
+               [clock: context.context.clock],
+               context.store
+             )
+
+    Zaik.Home.Mirror.Clock.advance(context.clock, 10_000)
+
+    assert {:ok, diagnostics} =
+             Zaik.Home.StagedPlanWatchdog.evaluate(
+               Map.put(context.context, :staged_plan_store, context.store),
+               running_timeout_seconds: 5,
+               missed_wakeup_grace_seconds: 1,
+               consecutive_failure_threshold: 3
+             )
+
+    assert diagnostics.status == "attention_required"
+    assert diagnostics.issue_count == 3
+
+    assert MapSet.new(Enum.map(diagnostics.issues, & &1.type)) ==
+             MapSet.new(["evaluation_stuck", "repeated_run_failure", "missed_wakeup"])
+  end
+
   test "prepared and cancelled lifecycle survives store restart", context do
     db_path =
       Path.join(
@@ -288,10 +349,12 @@ defmodule Zaik.Home.StagedPlanStoreTest do
     assert id == plan.id
   end
 
-  defp plan!(context, opts \\ []) do
+  defp plan!(context, opts \\ []), do: plan_with_goal!(context, "stored staged plan", opts)
+
+  defp plan_with_goal!(context, goal, opts \\ []) do
     {:ok, plan} =
       Zaik.Home.StagedPlan.preflight(
-        "stored staged plan",
+        goal,
         [
           %{
             id: "close-cover",

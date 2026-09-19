@@ -509,6 +509,7 @@ defmodule Zaik.Home.Mirror.Evals do
             run.result.wait_timeout
           ) and
           run.result.scheduler_status.running == [] and
+          run.result.scheduler_status.watchdog.status == "healthy" and
           not Map.has_key?(run.result.scheduler_status.scheduled, run.result.first_wait.id) and
           run.result.scheduler_status.observation_wakeups[run.result.observation_plan_id] == 1 and
           Enum.map(run.result.observation_run_events, & &1.event_type) == [

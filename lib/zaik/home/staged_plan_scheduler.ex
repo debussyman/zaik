@@ -255,12 +255,19 @@ defmodule Zaik.Home.StagedPlanScheduler do
   end
 
   defp public_status(state) do
+    watchdog =
+      case Zaik.Home.StagedPlanWatchdog.evaluate(state.context) do
+        {:ok, diagnostics} -> diagnostics
+        {:error, reason} -> %{status: "unavailable", reason: inspect(reason)}
+      end
+
     %{
       scheduled: state.scheduled,
       running: state.running |> Map.values() |> Enum.sort(),
       attempts: state.attempts,
       observation_wakeups: state.observation_wakeups,
-      last_results: state.last_results
+      last_results: state.last_results,
+      watchdog: watchdog
     }
   end
 
