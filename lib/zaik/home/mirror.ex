@@ -141,7 +141,7 @@ defmodule Zaik.Home.Mirror do
          {:ok, action_ledger} <-
            start_child(
              supervisor,
-             {Zaik.Home.ActionLedger, name: nil, db_path: ":memory:", clock: clock_provider}
+             {Zaik.Home.ActionLedger, name: nil, db_path: paths.home, clock: clock_provider}
            ),
          {:ok, action_verifier} <-
            start_child(

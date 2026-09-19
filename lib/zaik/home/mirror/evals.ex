@@ -74,7 +74,8 @@ defmodule Zaik.Home.Mirror.Evals do
         name: "staged_plan_non_convergence_blocks_later_stages",
         kind: :staged_verification_timeout
       },
-      %{name: "staged_plan_retry_requires_fresh_non_convergence", kind: :staged_retry}
+      %{name: "staged_plan_retry_requires_fresh_non_convergence", kind: :staged_retry},
+      %{name: "staged_plan_restart_preserves_action_idempotency", kind: :staged_restart}
     ]
   end
 
@@ -787,6 +788,143 @@ defmodule Zaik.Home.Mirror.Evals do
           ] and
           length(run.result.retries) == 1 and
           run.report.side_effect_count == 3
+      end
+    )
+  end
+
+  defp run_case(%{kind: :staged_restart} = definition) do
+    scenario =
+      Scenarios.lily_bedtime_with_ac(
+        id: definition.name,
+        faults: %{
+          "Lily's bedroom left blind" => %{type: :delayed_convergence, delay_ms: 5_000}
+        },
+        metadata: %{
+          verification_wait_ms: 0,
+          verification_timeout_ms: 10_000,
+          staged_verification_timeout_seconds: 10,
+          staged_verification_poll_seconds: 1
+        }
+      )
+
+    finish(
+      definition,
+      Runner.run(scenario, fn mirror, context ->
+        {:ok, plan} =
+          Zaik.Home.StagedPlan.preflight(
+            "restart-safe staged verification",
+            [
+              %{
+                id: "close-left",
+                actions: [
+                  %{
+                    device: "Lily's bedroom left blind",
+                    capability: "cover",
+                    target: %{position: 100}
+                  }
+                ]
+              }
+            ],
+            context,
+            deadline_seconds: 30
+          )
+
+        {:ok, _} =
+          Zaik.Home.StagedPlanStore.persist(
+            plan,
+            %{owner: "mirror-operator"},
+            [clock: context.clock],
+            context.staged_plan_store
+          )
+
+        {:ok, _} = Zaik.Home.StagedPlanScheduler.submit(plan.id, context.staged_plan_scheduler)
+        Zaik.Home.Mirror.advance(mirror, 0)
+
+        {:ok, pending} =
+          Zaik.Home.StagedPlanStore.lookup(
+            plan.id,
+            [clock: context.clock],
+            context.staged_plan_store
+          )
+
+        stage_actions = get_in(pending, [:plan, "stages", Access.at(0), "actions"])
+        args = %{"goal" => pending.goal, "actions" => stage_actions}
+
+        stage_context =
+          context
+          |> Map.put(:channel, :mirror_staged_plan)
+          |> Map.put(:chat_id, plan.id)
+          |> Map.put(:message_id, "stage-0")
+
+        action_id =
+          Zaik.Home.ActionLedger.idempotency_key("execute_home_plan", args, stage_context)
+
+        {:ok, before_restart} =
+          Zaik.Home.ActionLedger.lookup(action_id, context.action_ledger)
+
+        :ok = DynamicSupervisor.terminate_child(mirror.supervisor, context.staged_plan_scheduler)
+        :ok = DynamicSupervisor.terminate_child(mirror.supervisor, context.action_ledger)
+
+        {:ok, recovered_ledger} =
+          DynamicSupervisor.start_child(
+            mirror.supervisor,
+            Supervisor.child_spec(
+              {Zaik.Home.ActionLedger,
+               name: nil, db_path: mirror.home_db_path, clock: context.clock},
+              restart: :temporary
+            )
+          )
+
+        recovered_context = %{context | action_ledger: recovered_ledger}
+
+        {:ok, recovered_scheduler} =
+          DynamicSupervisor.start_child(
+            mirror.supervisor,
+            Supervisor.child_spec(
+              {Zaik.Home.StagedPlanScheduler, name: nil, context: recovered_context},
+              restart: :temporary
+            )
+          )
+
+        recovered_mirror = %{
+          mirror
+          | action_ledger: recovered_ledger,
+            staged_plan_scheduler: recovered_scheduler
+        }
+
+        :ok = Zaik.Home.StagedPlanScheduler.barrier(recovered_scheduler)
+
+        {:ok, after_restart} =
+          Zaik.Home.ActionLedger.lookup(action_id, recovered_ledger)
+
+        Zaik.Home.Mirror.advance(recovered_mirror, 10_000)
+
+        {:ok, completed} =
+          Zaik.Home.StagedPlanStore.lookup(
+            plan.id,
+            [clock: context.clock],
+            context.staged_plan_store
+          )
+
+        %{
+          pending: pending,
+          completed: completed,
+          before_restart: before_restart,
+          after_restart: after_restart,
+          actions: Zaik.Home.Mirror.actions(recovered_mirror)
+        }
+      end),
+      fn run ->
+        match?(
+          %{status: "waiting", current_stage: 0, waiting_kind: "verification"},
+          run.result.pending
+        ) and
+          run.result.before_restart.idempotency_key == run.result.after_restart.idempotency_key and
+          run.result.before_restart.status == "succeeded" and
+          run.result.after_restart.status == "succeeded" and
+          match?(%{status: "completed", current_stage: 1}, run.result.completed) and
+          Enum.map(run.result.actions, & &1.device) == ["Lily's bedroom left blind"] and
+          run.report.side_effect_count == 1
       end
     )
   end

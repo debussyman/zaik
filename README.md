@@ -139,7 +139,7 @@ Key invariants include:
 - An inert staged-plan contract that fully preflights every stage, typed canonical-state condition, bounded observation wait, and deadline without executing or sleeping.
 - Durable staged-plan lifecycle storage with virtual-time expiry, exact-ID operator cancellation, restart recovery, and bounded terminal retention.
 - A supervised, ledger-protected staged coordinator available only with isolated mirror bindings; stages require verified convergence, and retries remain impossible until the existing low-risk retry policy sees settled, fresh post-request evidence of non-convergence and available budget.
-- Exact-ID cooperative cancellation survives restart, while a bounded run journal, watchdog, and cooldown-protected alert path expose unhealthy coordination without gaining execution authority.
+- Exact-ID cooperative cancellation and action idempotency survive coordinator and ledger restarts in the mirror, while a bounded run journal, watchdog, and cooldown-protected alert path expose unhealthy coordination without gaining execution authority.
 - Persistent request-scoped idempotency and policy-gated retries.
 - MQTT-backed action convergence verification.
 - Derived room context with occupancy, freshness, history summaries, season, and sunrise/sunset solar phase.
