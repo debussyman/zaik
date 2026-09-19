@@ -376,7 +376,9 @@ Goal: support decisions where one action changes whether another is necessary.
 - [ ] Extend action planning with stages, typed conditions, deadlines,
   observation waits, cancellation, and durable restart recovery. An inert
   `StagedPlan` now fully preflights stages, bounded condition waits, deadlines,
-  and cancel-on-false behavior; supervised execution, persistence, and recovery remain.
+  and cancel-on-false behavior. Prepared plans now persist with virtual-time
+  expiry, exact-ID audited cancellation, bounded retention, and restart recovery;
+  supervised stage execution and in-flight recovery remain.
 - [x] Do not allow arbitrary model-authored code or predicates; conditions use
   validated scalar comparisons over declared fields from registered canonical
   capabilities, with explicit observation freshness.

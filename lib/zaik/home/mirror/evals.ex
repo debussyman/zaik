@@ -123,10 +123,64 @@ defmodule Zaik.Home.Mirror.Evals do
 
         condition = plan.stages |> hd() |> Map.fetch!(:conditions) |> hd()
         initial = Zaik.Home.ActionPlan.Condition.evaluate(condition, context)
+
+        {:ok, stored} =
+          Zaik.Home.StagedPlanStore.persist(
+            plan,
+            %{owner: "mirror-operator", reason: "mirror persistence"},
+            [clock: context.clock],
+            context.staged_plan_store
+          )
+
+        {:ok, cancelled} =
+          Zaik.Home.StagedPlanStore.cancel(
+            plan.id,
+            "mirror-operator",
+            "mirror cancellation",
+            [clock: context.clock],
+            context.staged_plan_store
+          )
+
         Zaik.Home.Mirror.advance(mirror, 31_000)
         stale = Zaik.Home.ActionPlan.Condition.evaluate(condition, context)
 
-        %{plan: Zaik.Home.StagedPlan.public(plan), initial: initial, stale: stale}
+        {:ok, expiring_plan} =
+          Zaik.Home.StagedPlan.preflight(
+            "mirror expiring contract",
+            stages,
+            context,
+            deadline_seconds: 30
+          )
+
+        {:ok, _} =
+          Zaik.Home.StagedPlanStore.persist(
+            expiring_plan,
+            %{owner: "mirror-operator"},
+            [clock: context.clock],
+            context.staged_plan_store
+          )
+
+        Zaik.Home.Mirror.advance(mirror, 30_000)
+
+        active =
+          Zaik.Home.StagedPlanStore.active([clock: context.clock], context.staged_plan_store)
+
+        {:ok, expired} =
+          Zaik.Home.StagedPlanStore.lookup(
+            expiring_plan.id,
+            [clock: context.clock],
+            context.staged_plan_store
+          )
+
+        %{
+          plan: Zaik.Home.StagedPlan.public(plan),
+          initial: initial,
+          stale: stale,
+          stored: stored,
+          cancelled: cancelled,
+          active: active,
+          expired: expired
+        }
       end),
       fn run ->
         match?({:ok, %{matched: true}}, run.result.initial) and
@@ -135,7 +189,9 @@ defmodule Zaik.Home.Mirror.Evals do
           get_in(run.result.plan, [:stages, Access.at(0), :wait]) == %{
             timeout_seconds: 20,
             poll_interval_seconds: 2
-          } and run.report.side_effect_count == 0
+          } and run.result.stored.status == "prepared" and
+          run.result.cancelled.status == "cancelled" and run.result.active == [] and
+          run.result.expired.status == "expired" and run.report.side_effect_count == 0
       end
     )
   end

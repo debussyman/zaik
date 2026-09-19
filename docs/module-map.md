@@ -154,7 +154,8 @@ Home automation is one optional domain, not the whole harness.
 | `Zaik.Home.ActionRetryPolicy` | Determines retry eligibility from verification state, fresh device state, cooldown, and attempt budget. | Keep as deterministic policy outside the model. |
 | `Zaik.Home.ActionPlan` | Preflights coordinated actions, shares a bounded verification wait, and reports partial completion. | Keep as the multi-action execution boundary. |
 | `Zaik.Home.ActionPlan.Condition` | Validates and evaluates bounded comparisons over declared canonical capability-state fields with explicit freshness. | Keep as the only staged-condition predicate boundary. |
-| `Zaik.Home.StagedPlan` | Inert full-plan preflight for typed stages, conditions, bounded waits, deadlines, and cancel-on-false behavior. | Add durable supervised execution and restart recovery without weakening preflight. |
+| `Zaik.Home.StagedPlan` | Inert full-plan preflight for typed stages, conditions, bounded waits, deadlines, and cancel-on-false behavior. | Add supervised execution without weakening preflight. |
+| `Zaik.Home.StagedPlanStore` | Durable prepared/cancelled/expired staged-plan lifecycle with exact-ID operator audit, restart recovery, and bounded terminal retention. | Remain inert until a separately gated coordinator is introduced. |
 | `Zaik.Home.HistoryStore` | SQLite home readings/history plus persisted areas, aliases, and provenance. | `Zaik.Domains.Home.HistoryStore` |
 | `Zaik.Home.Trends` | Home sensor trend summaries. | `Zaik.Domains.Home.Trends` |
 | `Zaik.Home.Query` | Shared normalization for model-authored entity and area lookup phrases. | Keep in the home-domain query boundary. |

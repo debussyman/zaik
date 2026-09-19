@@ -230,6 +230,20 @@ defmodule Zaik do
   def preflight_home_staged_plan(goal, stages, context \\ %{}, opts \\ []),
     do: Zaik.Home.StagedPlan.preflight(goal, stages, context, opts)
 
+  @doc "Persist one already-preflighted inert staged plan."
+  def persist_home_staged_plan(plan, attrs \\ %{}),
+    do: Zaik.Home.StagedPlanStore.persist(plan, attrs)
+
+  @doc "List active durable staged plans."
+  def home_staged_plans, do: Zaik.Home.StagedPlanStore.active()
+
+  @doc "Inspect one durable staged plan by exact ID."
+  def home_staged_plan(id), do: Zaik.Home.StagedPlanStore.lookup(id)
+
+  @doc "Cancel one durable staged plan by exact ID with an operator audit."
+  def cancel_home_staged_plan(id, cancelled_by, reason \\ "operator cancellation"),
+    do: Zaik.Home.StagedPlanStore.cancel(id, cancelled_by, reason)
+
   @doc """
   Return runtime verification status for an action correlation ID, falling
   back to its persistent action-ledger entry after verifier retention expires.

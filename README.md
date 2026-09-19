@@ -137,6 +137,7 @@ Key invariants include:
 - Generic device presets stored as typed capability targets.
 - Preflighted multi-device plans and structured partial completion.
 - An inert staged-plan contract that fully preflights every stage, typed canonical-state condition, bounded observation wait, and deadline without executing or sleeping.
+- Durable staged-plan lifecycle storage with virtual-time expiry, exact-ID operator cancellation, restart recovery, and bounded terminal retention—still with no staged execution path.
 - Persistent request-scoped idempotency and policy-gated retries.
 - MQTT-backed action convergence verification.
 - Derived room context with occupancy, freshness, history summaries, season, and sunrise/sunset solar phase.
