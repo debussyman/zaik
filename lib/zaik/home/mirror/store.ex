@@ -21,6 +21,7 @@ defmodule Zaik.Home.Mirror.Store do
   def side_effect_count(server), do: GenServer.call(server, :side_effect_count)
   def barrier(server), do: GenServer.call(server, :barrier)
   def set_observer(server, observer), do: GenServer.call(server, {:set_observer, observer})
+  def set_verifier(server, verifier), do: GenServer.call(server, {:set_verifier, verifier})
 
   @impl true
   def init(opts) do
@@ -108,6 +109,14 @@ defmodule Zaik.Home.Mirror.Store do
           _ ->
             {:reply, :ok, converge(state, action_id)}
         end
+    end
+  end
+
+  def handle_call({:set_verifier, verifier}, _from, state) do
+    if is_pid(verifier) and Process.alive?(verifier) do
+      {:reply, :ok, %{state | verifier: verifier}}
+    else
+      {:reply, {:error, :invalid_mirror_verifier}, state}
     end
   end
 

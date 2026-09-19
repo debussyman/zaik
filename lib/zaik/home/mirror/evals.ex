@@ -862,8 +862,23 @@ defmodule Zaik.Home.Mirror.Evals do
         {:ok, before_restart} =
           Zaik.Home.ActionLedger.lookup(action_id, context.action_ledger)
 
+        events_before_restart =
+          Zaik.Home.StagedPlanStore.run_events(plan.id, 20, context.staged_plan_store)
+
         :ok = DynamicSupervisor.terminate_child(mirror.supervisor, context.staged_plan_scheduler)
+        :ok = DynamicSupervisor.terminate_child(mirror.supervisor, context.action_verifier)
         :ok = DynamicSupervisor.terminate_child(mirror.supervisor, context.action_ledger)
+        :ok = DynamicSupervisor.terminate_child(mirror.supervisor, context.staged_plan_store)
+
+        {:ok, recovered_staged_store} =
+          DynamicSupervisor.start_child(
+            mirror.supervisor,
+            Supervisor.child_spec(
+              {Zaik.Home.StagedPlanStore,
+               name: nil, db_path: mirror.home_db_path, clock: context.clock, event_bus: false},
+              restart: :temporary
+            )
+          )
 
         {:ok, recovered_ledger} =
           DynamicSupervisor.start_child(
@@ -875,7 +890,28 @@ defmodule Zaik.Home.Mirror.Evals do
             )
           )
 
-        recovered_context = %{context | action_ledger: recovered_ledger}
+        {:ok, recovered_verifier} =
+          DynamicSupervisor.start_child(
+            mirror.supervisor,
+            Supervisor.child_spec(
+              {Zaik.Home.ActionVerifier,
+               name: nil,
+               timeout_ms: 10_000,
+               wait_ms: 0,
+               retention_ms: 60_000,
+               clock: context.clock},
+              restart: :temporary
+            )
+          )
+
+        :ok = Zaik.Home.Mirror.Store.set_verifier(mirror.store, recovered_verifier)
+
+        recovered_context = %{
+          context
+          | action_ledger: recovered_ledger,
+            action_verifier: recovered_verifier,
+            staged_plan_store: recovered_staged_store
+        }
 
         {:ok, recovered_scheduler} =
           DynamicSupervisor.start_child(
@@ -889,13 +925,25 @@ defmodule Zaik.Home.Mirror.Evals do
         recovered_mirror = %{
           mirror
           | action_ledger: recovered_ledger,
+            action_verifier: recovered_verifier,
+            staged_plan_store: recovered_staged_store,
             staged_plan_scheduler: recovered_scheduler
         }
 
         :ok = Zaik.Home.StagedPlanScheduler.barrier(recovered_scheduler)
 
+        {:ok, recovered_plan} =
+          Zaik.Home.StagedPlanStore.lookup(
+            plan.id,
+            [clock: context.clock],
+            recovered_staged_store
+          )
+
         {:ok, after_restart} =
           Zaik.Home.ActionLedger.lookup(action_id, recovered_ledger)
+
+        events_after_restart =
+          Zaik.Home.StagedPlanStore.run_events(plan.id, 20, recovered_staged_store)
 
         Zaik.Home.Mirror.advance(recovered_mirror, 10_000)
 
@@ -903,14 +951,17 @@ defmodule Zaik.Home.Mirror.Evals do
           Zaik.Home.StagedPlanStore.lookup(
             plan.id,
             [clock: context.clock],
-            context.staged_plan_store
+            recovered_staged_store
           )
 
         %{
           pending: pending,
+          recovered_plan: recovered_plan,
           completed: completed,
           before_restart: before_restart,
           after_restart: after_restart,
+          events_before_restart: events_before_restart,
+          events_after_restart: events_after_restart,
           actions: Zaik.Home.Mirror.actions(recovered_mirror)
         }
       end),
@@ -919,6 +970,15 @@ defmodule Zaik.Home.Mirror.Evals do
           %{status: "waiting", current_stage: 0, waiting_kind: "verification"},
           run.result.pending
         ) and
+          match?(
+            %{status: "waiting", current_stage: 0, waiting_kind: "verification"},
+            run.result.recovered_plan
+          ) and
+          MapSet.subset?(
+            MapSet.new(Enum.map(run.result.events_before_restart, & &1.id)),
+            MapSet.new(Enum.map(run.result.events_after_restart, & &1.id))
+          ) and
+          Enum.any?(run.result.events_after_restart, &(&1.event_type == "recovered_waiting")) and
           run.result.before_restart.idempotency_key == run.result.after_restart.idempotency_key and
           run.result.before_restart.status == "succeeded" and
           run.result.after_restart.status == "succeeded" and

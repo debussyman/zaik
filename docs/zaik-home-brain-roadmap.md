@@ -398,10 +398,11 @@ Goal: support decisions where one action changes whether another is necessary.
   Staged retries now reuse `ActionRetryPolicy`, require settled fresh post-request
   non-convergence evidence and retry budget, and execute through the retry tool's
   own ledger claim; missing evidence still fails closed. The isolated mirror
-  action ledger now uses the production-schema SQLite fixture, and replay proves
-  that scheduler plus ledger restart preserves the original claim and reconciles
-  convergence without republishing. Opt-in periodic alert delivery and production
-  execution remain.
+  action ledger now uses the production-schema SQLite fixture. Replay terminates
+  and recreates the staged store, action ledger, verifier, and scheduler together,
+  proving that checkpoints, diagnostics, and the original claim survive while
+  canonical state reconciles lost verifier memory without republishing. Opt-in
+  periodic alert delivery and production execution remain.
 - [x] Do not allow arbitrary model-authored code or predicates; conditions use
   validated scalar comparisons over declared fields from registered canonical
   capabilities, with explicit observation freshness.
