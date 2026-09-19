@@ -390,8 +390,11 @@ Goal: support decisions where one action changes whether another is necessary.
   evaluations, and consecutive failures with code-owned thresholds. Operators
   can explicitly deliver typed issues through durable fingerprint cooldowns.
   Running plans now accept exact-ID cooperative cancellation requests that
-  survive restart and are checked before stage execution; opt-in periodic alert
-  delivery, staged retries, and production execution remain.
+  survive restart and are checked before stage execution. Stage advancement now
+  requires verified convergence: accepted-but-unverified actions enter a durable
+  verification wait and resume from canonical reports without republishing.
+  Opt-in periodic alert delivery, policy-gated staged retries, and production
+  execution remain.
 - [x] Do not allow arbitrary model-authored code or predicates; conditions use
   validated scalar comparisons over declared fields from registered canonical
   capabilities, with explicit observation freshness.

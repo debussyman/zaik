@@ -254,7 +254,7 @@ defmodule Zaik.Home.StagedPlanStore do
            :ok <- owned_running_plan(current, runner_id),
            result = Map.put_new(result, :recorded_at, DateTime.to_iso8601(now)),
            results = current.stage_results ++ [stringify(result)],
-           {:ok, waiting_since, next_evaluation_at} <-
+           {:ok, waiting_since, next_evaluation_at, waiting_kind} <-
              wait_schedule(status, current, result, now),
            :ok <-
              execute(
@@ -262,7 +262,7 @@ defmodule Zaik.Home.StagedPlanStore do
                """
                UPDATE home_staged_plans
                SET status = ?, current_stage = ?, stage_results_json = ?, updated_at = ?,
-                   waiting_since = ?, next_evaluation_at = ?
+                   waiting_since = ?, next_evaluation_at = ?, waiting_kind = ?
                WHERE id = ? AND runner_id = ? AND status = 'running'
                """,
                [
@@ -272,6 +272,7 @@ defmodule Zaik.Home.StagedPlanStore do
                  DateTime.to_iso8601(now),
                  waiting_since,
                  next_evaluation_at,
+                 waiting_kind,
                  id,
                  runner_id
                ]
@@ -327,7 +328,7 @@ defmodule Zaik.Home.StagedPlanStore do
                """
                UPDATE home_staged_plans
                SET status = 'completed', final_result_json = ?, completed_at = ?, updated_at = ?,
-                   next_evaluation_at = NULL
+                   next_evaluation_at = NULL, waiting_kind = NULL
                WHERE id = ? AND runner_id = ? AND status = 'running'
                """,
                [
@@ -360,7 +361,7 @@ defmodule Zaik.Home.StagedPlanStore do
                """
                UPDATE home_staged_plans
                SET status = ?, final_result_json = ?, completed_at = ?, updated_at = ?,
-                   next_evaluation_at = NULL,
+                   next_evaluation_at = NULL, waiting_kind = NULL,
                    cancelled_at = CASE WHEN ? = 'cancelled' THEN COALESCE(cancelled_at, ?) ELSE cancelled_at END,
                    cancelled_by = CASE WHEN ? = 'cancelled' THEN COALESCE(cancelled_by, cancellation_requested_by, 'coordinator') ELSE cancelled_by END,
                    cancellation_reason = CASE WHEN ? = 'cancelled' THEN COALESCE(cancellation_reason, cancellation_request_reason, 'coordinator cancellation') ELSE cancellation_reason END
@@ -449,6 +450,7 @@ defmodule Zaik.Home.StagedPlanStore do
              final_result_json TEXT,
              waiting_since TEXT,
              next_evaluation_at TEXT,
+             waiting_kind TEXT,
              observation_wakeup_at TEXT,
              observation_wakeup_count INTEGER NOT NULL DEFAULT 0,
              cancellation_requested_at TEXT,
@@ -480,6 +482,7 @@ defmodule Zaik.Home.StagedPlanStore do
          :ok <- ensure_column(conn, "final_result_json", "TEXT"),
          :ok <- ensure_column(conn, "waiting_since", "TEXT"),
          :ok <- ensure_column(conn, "next_evaluation_at", "TEXT"),
+         :ok <- ensure_column(conn, "waiting_kind", "TEXT"),
          :ok <- ensure_column(conn, "observation_wakeup_at", "TEXT"),
          :ok <- ensure_column(conn, "observation_wakeup_count", "INTEGER NOT NULL DEFAULT 0"),
          :ok <- ensure_column(conn, "cancellation_requested_at", "TEXT"),
@@ -541,7 +544,8 @@ defmodule Zaik.Home.StagedPlanStore do
       conn,
       """
       UPDATE home_staged_plans
-      SET status = 'expired', expired_at = ?, updated_at = ?, next_evaluation_at = NULL
+      SET status = 'expired', expired_at = ?, updated_at = ?, next_evaluation_at = NULL,
+          waiting_kind = NULL
       WHERE status IN ('prepared', 'waiting', 'running') AND julianday(expires_at) <= julianday(?)
       """,
       [now, now, now]
@@ -602,7 +606,7 @@ defmodule Zaik.Home.StagedPlanStore do
            expires_at, inserted_at, updated_at, cancelled_at, cancelled_by,
            cancellation_reason, expired_at, runner_id, current_stage,
            stage_results_json, started_at, completed_at, final_result_json,
-           waiting_since, next_evaluation_at, observation_wakeup_at,
+           waiting_since, next_evaluation_at, waiting_kind, observation_wakeup_at,
            observation_wakeup_count, cancellation_requested_at,
            cancellation_requested_by, cancellation_request_reason
     FROM home_staged_plans #{suffix}
@@ -633,6 +637,7 @@ defmodule Zaik.Home.StagedPlanStore do
          final_result_json,
          waiting_since,
          next_evaluation_at,
+         waiting_kind,
          observation_wakeup_at,
          observation_wakeup_count,
          cancellation_requested_at,
@@ -663,6 +668,7 @@ defmodule Zaik.Home.StagedPlanStore do
       final_result: decode_json(final_result_json),
       waiting_since: waiting_since,
       next_evaluation_at: next_evaluation_at,
+      waiting_kind: waiting_kind,
       observation_wakeup_at: observation_wakeup_at,
       observation_wakeup_count: observation_wakeup_count,
       cancellation_requested_at: cancellation_requested_at,
@@ -688,7 +694,8 @@ defmodule Zaik.Home.StagedPlanStore do
       """
       UPDATE home_staged_plans
       SET status = 'cancelled', cancelled_at = ?, cancelled_by = ?,
-          cancellation_reason = ?, updated_at = ?, next_evaluation_at = NULL
+          cancellation_reason = ?, updated_at = ?, next_evaluation_at = NULL,
+          waiting_kind = NULL
       WHERE id = ? AND status IN ('prepared', 'waiting')
       """,
       [now, cancelled_by, reason, now, id]
@@ -762,20 +769,28 @@ defmodule Zaik.Home.StagedPlanStore do
 
   defp claimable(plan, _runner_id, _now), do: {:error, {:staged_plan_not_runnable, plan.status}}
 
-  defp wait_schedule("running", _current, _result, _now), do: {:ok, nil, nil}
+  defp wait_schedule("running", _current, _result, _now), do: {:ok, nil, nil, nil}
 
   defp wait_schedule("waiting", current, result, now) do
-    poll_seconds =
-      result
-      |> value(:wait, %{})
-      |> value(:poll_interval_seconds, nil)
+    wait = value(result, :wait, %{})
+    poll_seconds = value(wait, :poll_interval_seconds, nil)
+    waiting_kind = value(result, :waiting_kind, "condition") |> to_string()
 
-    if is_integer(poll_seconds) and poll_seconds > 0 do
-      waiting_since = current.waiting_since || DateTime.to_iso8601(now)
-      next_evaluation_at = now |> DateTime.add(poll_seconds, :second) |> DateTime.to_iso8601()
-      {:ok, waiting_since, next_evaluation_at}
-    else
-      {:error, :invalid_staged_plan_wait_schedule}
+    cond do
+      waiting_kind not in ["condition", "verification"] ->
+        {:error, :invalid_staged_plan_wait_kind}
+
+      not is_integer(poll_seconds) or poll_seconds < 1 ->
+        {:error, :invalid_staged_plan_wait_schedule}
+
+      true ->
+        waiting_since =
+          if current.waiting_kind == waiting_kind and is_binary(current.waiting_since),
+            do: current.waiting_since,
+            else: DateTime.to_iso8601(now)
+
+        next_evaluation_at = now |> DateTime.add(poll_seconds, :second) |> DateTime.to_iso8601()
+        {:ok, waiting_since, next_evaluation_at, waiting_kind}
     end
   end
 

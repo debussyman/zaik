@@ -220,6 +220,7 @@ defmodule Zaik.Home.StagedPlanStoreTest do
              )
 
     assert waiting.status == "waiting"
+    assert waiting.waiting_kind == "condition"
     assert is_binary(waiting.waiting_since)
     assert is_binary(waiting.next_evaluation_at)
 
@@ -252,6 +253,26 @@ defmodule Zaik.Home.StagedPlanStoreTest do
 
     assert {:ok, %{status: "running"}} =
              Zaik.Home.StagedPlanStore.claim_run(plan.id, "runner", [], context.store)
+
+    Zaik.Home.Mirror.Clock.advance(context.clock, 1_000)
+
+    assert {:ok, verification_wait} =
+             Zaik.Home.StagedPlanStore.checkpoint(
+               plan.id,
+               "runner",
+               0,
+               %{
+                 stage_id: "close-cover",
+                 waiting_kind: "verification",
+                 wait: %{timeout_seconds: 120, poll_interval_seconds: 2}
+               },
+               :waiting,
+               [clock: context.context.clock],
+               context.store
+             )
+
+    assert verification_wait.waiting_kind == "verification"
+    assert verification_wait.waiting_since != waiting.waiting_since
   end
 
   test "run diagnostics are typed, durable, and ordered newest first", context do

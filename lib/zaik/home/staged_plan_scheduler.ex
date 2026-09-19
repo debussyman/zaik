@@ -309,11 +309,16 @@ defmodule Zaik.Home.StagedPlanScheduler do
   end
 
   defp observation_matches?(plan, observation) do
-    stage = Enum.at(get_in(plan, [:plan, "stages"]) || [], plan.current_stage)
+    stage = Enum.at(get_in(plan, [:plan, "stages"]) || [], plan.current_stage) || %{}
 
-    Enum.any?(Map.get(stage || %{}, "conditions", []), fn condition ->
-      same_device?(Map.get(condition, "device"), observation.device) and
-        relevant_payload?(condition, observation.payload)
+    inputs =
+      if plan.waiting_kind == "verification",
+        do: Map.get(stage, "actions", []),
+        else: Map.get(stage, "conditions", [])
+
+    Enum.any?(inputs, fn input ->
+      same_device?(Map.get(input, "device"), observation.device) and
+        relevant_payload?(input, observation.payload)
     end)
   end
 
@@ -324,7 +329,7 @@ defmodule Zaik.Home.StagedPlanScheduler do
 
   defp relevant_payload?(condition, payload) when is_map(payload) do
     capability = Map.get(condition, "capability")
-    field = Map.get(condition, "field")
+    field = Map.get(condition, "field") || verification_field(capability)
 
     keys =
       case {capability, field} do
@@ -359,6 +364,15 @@ defmodule Zaik.Home.StagedPlanScheduler do
   end
 
   defp relevant_payload?(_condition, _payload), do: false
+
+  defp verification_field("temperature"), do: "celsius"
+  defp verification_field("humidity"), do: "percent"
+  defp verification_field("illuminance"), do: "value"
+  defp verification_field("presence"), do: "occupied"
+  defp verification_field("cover"), do: "position"
+  defp verification_field("battery"), do: "percent"
+  defp verification_field("linkquality"), do: "value"
+  defp verification_field(_capability), do: nil
 
   defp result_event_type({:ok, %{status: status}})
        when status in ["waiting", "completed", "cancelled", "failed"],

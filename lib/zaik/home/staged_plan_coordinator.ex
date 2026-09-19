@@ -9,6 +9,8 @@ defmodule Zaik.Home.StagedPlanCoordinator do
   """
 
   @default_timeout_ms 30_000
+  @verification_timeout_seconds 120
+  @verification_poll_seconds 2
 
   def run(plan_id, context, opts \\ []) when is_binary(plan_id) and is_map(context) do
     with :ok <- mirror_binding(context),
@@ -139,7 +141,7 @@ defmodule Zaik.Home.StagedPlanCoordinator do
 
     result =
       Zaik.Tools.Executor.run_action(
-        "staged_plan_stage",
+        "execute_home_plan",
         args,
         stage_context,
         fn action_context ->
@@ -163,18 +165,28 @@ defmodule Zaik.Home.StagedPlanCoordinator do
     }
 
     case result do
-      {:ok, _report} ->
-        with {:ok, checkpointed} <-
-               Zaik.Home.StagedPlanStore.checkpoint(
-                 run.id,
-                 runner_id,
-                 index + 1,
-                 checkpoint_result,
-                 :running,
-                 [clock: setting(context, :clock)],
-                 setting(context, :staged_plan_store)
-               ) do
-          execute_stages(checkpointed, stages, index + 1, runner_id, context, opts)
+      {:ok, report} ->
+        if map_value(report, :verified) == true do
+          with {:ok, checkpointed} <-
+                 Zaik.Home.StagedPlanStore.checkpoint(
+                   run.id,
+                   runner_id,
+                   index + 1,
+                   checkpoint_result,
+                   :running,
+                   [clock: setting(context, :clock)],
+                   setting(context, :staged_plan_store)
+                 ) do
+            execute_stages(checkpointed, stages, index + 1, runner_id, context, opts)
+          end
+        else
+          handle_unverified_stage(
+            run,
+            index,
+            checkpoint_result,
+            runner_id,
+            context
+          )
         end
 
       {:error, reason} ->
@@ -194,12 +206,52 @@ defmodule Zaik.Home.StagedPlanCoordinator do
     end
   end
 
+  defp handle_unverified_stage(run, index, checkpoint_result, runner_id, context) do
+    result =
+      checkpoint_result
+      |> Map.put(:waiting_kind, "verification")
+      |> Map.put(:wait, %{
+        timeout_seconds: @verification_timeout_seconds,
+        poll_interval_seconds: @verification_poll_seconds
+      })
+
+    if verification_wait_expired?(run, context) do
+      terminal = Map.put(result, :reason, "stage_verification_timeout")
+
+      with {:ok, failed} <-
+             Zaik.Home.StagedPlanStore.stop_run(
+               run.id,
+               runner_id,
+               :failed,
+               terminal,
+               [clock: setting(context, :clock)],
+               setting(context, :staged_plan_store)
+             ) do
+        {:error, {:staged_plan_failed, public_result(failed)}}
+      end
+    else
+      with {:ok, waiting} <-
+             Zaik.Home.StagedPlanStore.checkpoint(
+               run.id,
+               runner_id,
+               index,
+               result,
+               :waiting,
+               [clock: setting(context, :clock)],
+               setting(context, :staged_plan_store)
+             ) do
+        {:ok, public_result(waiting)}
+      end
+    end
+  end
+
   defp handle_unmatched(run, index, stage, conditions, runner_id, context) do
     result = %{
       stage_id: Map.get(stage, "id"),
       stage_index: index,
       conditions: conditions,
-      wait: Map.get(stage, "wait")
+      wait: Map.get(stage, "wait"),
+      waiting_kind: "condition"
     }
 
     if is_map(Map.get(stage, "wait")) do
@@ -299,6 +351,18 @@ defmodule Zaik.Home.StagedPlanCoordinator do
     end
   end
 
+  defp verification_wait_expired?(%{waiting_kind: "verification"} = run, context) do
+    with started_at when is_binary(started_at) <- run.waiting_since,
+         {:ok, started_at, _offset} <- DateTime.from_iso8601(started_at) do
+      DateTime.diff(Zaik.Time.now(setting(context, :clock)), started_at, :second) >=
+        @verification_timeout_seconds
+    else
+      _ -> false
+    end
+  end
+
+  defp verification_wait_expired?(_run, _context), do: false
+
   defp wait_expired?(run, _index, stage, context) do
     timeout = get_in(stage, ["wait", "timeout_seconds"])
 
@@ -358,6 +422,8 @@ defmodule Zaik.Home.StagedPlanCoordinator do
       :expires_at,
       :waiting_since,
       :next_evaluation_at,
+      :waiting_kind,
+      :observation_wakeup_count,
       :cancellation_requested_at,
       :cancellation_requested_by,
       :cancellation_request_reason,
@@ -371,6 +437,7 @@ defmodule Zaik.Home.StagedPlanCoordinator do
   defp normalize_result({:error, reason}), do: %{status: "error", reason: inspect(reason)}
   defp normalize_result(value), do: %{status: "invalid", result: inspect(value)}
 
+  defp map_value(map, key), do: Map.get(map, key) || Map.get(map, to_string(key))
   defp setting(map, key), do: Map.get(map, key) || Map.get(map, to_string(key))
   defp alive_pid?(pid) when is_pid(pid), do: Process.alive?(pid)
   defp alive_pid?(_value), do: false

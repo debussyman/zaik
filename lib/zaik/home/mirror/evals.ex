@@ -91,12 +91,21 @@ defmodule Zaik.Home.Mirror.Evals do
           scenario.events ++
             [
               %{
-                at_ms: 66_000,
+                at_ms: 73_000,
                 type: :state_report,
                 device: "Lily's room multi-sensor",
                 payload: %{"illuminance" => 2_000}
               }
-            ]
+            ],
+        faults:
+          Map.put(scenario.faults, "Lily's bedroom right blind", %{
+            type: :delayed_convergence,
+            delay_ms: 5_000
+          }),
+        metadata:
+          scenario.metadata
+          |> Map.put(:verification_wait_ms, 0)
+          |> Map.put(:verification_timeout_ms, 10_000)
     }
 
     finish(
@@ -242,6 +251,15 @@ defmodule Zaik.Home.Mirror.Evals do
           )
 
         Zaik.Home.Mirror.advance(mirror, 0)
+
+        {:ok, execution_pending} =
+          Zaik.Home.StagedPlanStore.lookup(
+            execution_plan.id,
+            [clock: context.clock],
+            context.staged_plan_store
+          )
+
+        Zaik.Home.Mirror.advance(mirror, 7_000)
 
         {:ok, execution} =
           Zaik.Home.StagedPlanStore.lookup(
@@ -474,6 +492,7 @@ defmodule Zaik.Home.Mirror.Evals do
           cancelled: cancelled,
           active: active,
           expired: expired,
+          execution_pending: execution_pending,
           execution: execution,
           first_wait: first_wait,
           immediate_wait: immediate_wait,
@@ -500,6 +519,10 @@ defmodule Zaik.Home.Mirror.Evals do
           } and run.result.stored.status == "prepared" and
           run.result.cancelled.status == "cancelled" and run.result.active == [] and
           run.result.expired.status == "expired" and
+          match?(
+            %{status: "waiting", current_stage: 1, waiting_kind: "verification"},
+            run.result.execution_pending
+          ) and
           match?(%{status: "completed", current_stage: 2}, run.result.execution) and
           match?(%{status: "waiting", current_stage: 0}, run.result.first_wait) and
           match?(
