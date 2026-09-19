@@ -27,6 +27,7 @@ defmodule Zaik.Application do
       domain_child(:home, Zaik.Home.EventBus),
       domain_child(:home, Zaik.Home.DeviceStore),
       domain_child(:home, home_history_child()),
+      domain_child(:home, adapter_calibration_store_child()),
       domain_child(:home, occupancy_tracker_child()),
       domain_child(:home, occupancy_transition_store_child()),
       domain_child(:home, device_preset_store_child()),
@@ -84,6 +85,14 @@ defmodule Zaik.Application do
 
     if config.enabled do
       {Zaik.Home.HistoryStore, Map.to_list(config)}
+    end
+  end
+
+  defp adapter_calibration_store_child do
+    config = Zaik.Home.AdapterCalibrationStore.config()
+
+    if config.enabled do
+      {Zaik.Home.AdapterCalibrationStore, Map.to_list(config)}
     end
   end
 

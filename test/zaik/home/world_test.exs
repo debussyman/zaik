@@ -26,7 +26,9 @@ defmodule Zaik.Home.WorldTest do
   test "world contract is versioned, deterministic, and runtime-discovered", %{store: store} do
     contract = Zaik.Home.WorldContract.public()
 
-    assert contract.schema_version == 1
+    assert contract.schema_version == 2
+    assert contract.calibration_schema.schema_version == 1
+    assert contract.calibration_schema.authority == "inert configuration; no execution authority"
     assert byte_size(contract.fingerprint) == 64
     assert contract.fingerprint == Zaik.Home.WorldContract.fingerprint()
 

@@ -126,7 +126,8 @@ Home automation is one optional domain, not the whole harness.
 | `Zaik.Home.DeviceStore` | In-memory raw current device state with observed/received timestamps, stale/duplicate report rejection, and accepted-event publication. | `Zaik.Domains.Home.DeviceStore` |
 | `Zaik.Home.Entity` | Adapter-neutral identity and typed current-state struct. | Keep as the home-domain entity contract. |
 | `Zaik.Home.World` | Projects adapter payloads into capability-filtered current state carrying a schema version and contract fingerprint. | Keep as the ordinary home reasoning boundary. |
-| `Zaik.Home.WorldContract` | Versioned runtime-discovered canonical entity/capability schemas and stable state-free fingerprints. | Extend with desired-state, confidence, calibration, and provenance contracts under explicit schema versions. |
+| `Zaik.Home.WorldContract` | Versioned runtime-discovered canonical entity/capability and calibration schemas with stable state-free fingerprints. | Extend with desired-state, confidence, and richer provenance contracts under explicit schema versions. |
+| `Zaik.Home.AdapterCalibrationStore` | Durable per-entity/per-capability/per-adapter physical semantics with evidence fingerprints, operator identity, and append-only revisions. | Add additional explicitly typed calibration kinds and independently test consumers before they affect normalization or execution. |
 | `Zaik.Home.Capability` | Behaviour for typed state detection and target validation. | Keep as the semantic capability contract. |
 | `Zaik.Home.Capabilities.Registry` / `Capabilities.Contract` | Uncached discovery, fingerprints, and executable baseline composability validation. | Keep as the hot-load-friendly capability acceptance boundary. |
 | `Zaik.Home.GoalContract` | Validated versioned skill contract for semantic goals, required evidence, constraints, tools, risk, and missing-data policy. | Keep as the declarative goal boundary. |

@@ -133,14 +133,17 @@ Goal: remove remaining ambiguity before autonomous decisions depend on it.
 
 - [ ] Define a versioned home-world contract covering entity identity, areas,
   capability state, desired state, freshness, confidence, and provenance.
-  Schema version 1 now covers canonical entity fields, source/receive timestamps,
-  ordering/missing-state semantics, and runtime-discovered capability state and
-  target schemas; desired-state, confidence, calibration, and richer provenance
-  remain before this item is complete.
-- [ ] Persist per-entity/per-capability adapter calibration where physical
+  Schema version 2 now covers canonical entity fields, source/receive timestamps,
+  ordering/missing-state semantics, runtime-discovered capability state and
+  target schemas, and the typed adapter-calibration boundary; desired-state,
+  confidence, and richer provenance remain before this item is complete.
+- [x] Persist per-entity/per-capability adapter calibration where physical
   orientation or protocol semantics differ; do not rely on one global cover
-  assumption for future adapters.
-- [ ] Add calibration evidence and operator identity to configuration changes.
+  assumption for future adapters. The initial supported kind is a typed linear
+  cover-position calibration; records are inert until a tested consumer opts in.
+- [x] Add calibration evidence and operator identity to configuration changes.
+  Every revision requires independent typed evidence, its stable fingerprint,
+  the calibrating operator, and a reason in an append-only audit trail.
 - [ ] Use one shared entity-query resolver for current state, history, policies,
   skills, and presets, with metamorphic lookup invariants.
 - [ ] Guarantee that every AgentChat attempt and autonomy decision receives a

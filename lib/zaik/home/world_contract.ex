@@ -7,7 +7,7 @@ defmodule Zaik.Home.WorldContract do
   schemas only—never current household state or private device identity.
   """
 
-  @schema_version 1
+  @schema_version 2
 
   def schema_version, do: @schema_version
 
@@ -57,6 +57,19 @@ defmodule Zaik.Home.WorldContract do
         stale_reports: "ignored",
         duplicate_reports: "ignored",
         missing_state: "explicitly absent; never synthesized"
+      },
+      calibration_schema: %{
+        schema_version: 1,
+        scope: "entity + capability + adapter",
+        authority: "inert configuration; no execution authority",
+        required_audit: ["calibrated_by", "reason", "evidence"],
+        supported_kinds: %{
+          cover_position_linear: %{
+            required: ["reported_open", "reported_closed"],
+            canonical_open: 0,
+            canonical_closed: 100
+          }
+        }
       }
     }
   end

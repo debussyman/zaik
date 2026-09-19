@@ -68,6 +68,39 @@ defmodule Zaik do
   def home_world_contract(opts \\ []), do: Zaik.Home.WorldContract.public(opts)
 
   @doc """
+  Persist an evidence-backed adapter calibration for one resolved canonical entity.
+
+  Calibration records are inert configuration. They do not execute an action or
+  rewrite canonical observations.
+  """
+  def configure_home_adapter_calibration(
+        entity_query,
+        capability,
+        adapter,
+        calibration,
+        attrs,
+        opts \\ []
+      ) do
+    world_opts = Keyword.take(opts, [:device_store, :identity_store, :capability_opts])
+    store = Keyword.get(opts, :calibration_store, Zaik.Home.AdapterCalibrationStore)
+
+    with {:ok, entity} <- Zaik.Home.World.get(entity_query, world_opts) do
+      Zaik.Home.AdapterCalibrationStore.put(
+        entity.id,
+        capability,
+        adapter,
+        calibration,
+        attrs,
+        store
+      )
+    end
+  end
+
+  @doc "List current evidence-backed adapter calibrations."
+  def home_adapter_calibrations(opts \\ [], store \\ Zaik.Home.AdapterCalibrationStore),
+    do: Zaik.Home.AdapterCalibrationStore.list(opts, store)
+
+  @doc """
   Find a home device by exact name or unique case-insensitive substring.
   """
   def home_device(query), do: Zaik.Home.DeviceStore.find_device(query)
