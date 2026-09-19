@@ -264,6 +264,7 @@ defmodule Zaik.Home.Mirror.Evals do
           )
 
         first_wait = Zaik.Home.StagedPlanCoordinator.run(waiting_plan.id, context)
+        immediate_wait = Zaik.Home.StagedPlanCoordinator.run(waiting_plan.id, context)
         Zaik.Home.Mirror.advance(mirror, 9_000)
         second_wait = Zaik.Home.StagedPlanCoordinator.run(waiting_plan.id, context)
         Zaik.Home.Mirror.advance(mirror, 1_000)
@@ -279,6 +280,7 @@ defmodule Zaik.Home.Mirror.Evals do
           expired: expired,
           execution: execution,
           first_wait: first_wait,
+          immediate_wait: immediate_wait,
           second_wait: second_wait,
           wait_timeout: wait_timeout
         }
@@ -295,6 +297,10 @@ defmodule Zaik.Home.Mirror.Evals do
           run.result.expired.status == "expired" and
           match?({:ok, %{status: "completed", current_stage: 2}}, run.result.execution) and
           match?({:ok, %{status: "waiting", current_stage: 0}}, run.result.first_wait) and
+          match?(
+            {:error, {:staged_plan_wait_not_ready, %{retry_after_seconds: 1}}},
+            run.result.immediate_wait
+          ) and
           match?({:ok, %{status: "waiting", current_stage: 0}}, run.result.second_wait) and
           match?({:ok, %{status: "cancelled", current_stage: 0}}, run.result.wait_timeout) and
           run.report.side_effect_count == 2

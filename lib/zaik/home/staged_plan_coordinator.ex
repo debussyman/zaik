@@ -232,15 +232,10 @@ defmodule Zaik.Home.StagedPlanCoordinator do
     end
   end
 
-  defp wait_expired?(run, index, stage, context) do
+  defp wait_expired?(run, _index, stage, context) do
     timeout = get_in(stage, ["wait", "timeout_seconds"])
 
-    started_at =
-      run.stage_results
-      |> Enum.find_value(fn result ->
-        if result["stage_index"] == index and is_binary(result["recorded_at"]),
-          do: result["recorded_at"]
-      end)
+    started_at = run.waiting_since
 
     with timeout when is_integer(timeout) <- timeout,
          started_at when is_binary(started_at) <- started_at,
@@ -293,7 +288,9 @@ defmodule Zaik.Home.StagedPlanCoordinator do
       :started_at,
       :completed_at,
       :final_result,
-      :expires_at
+      :expires_at,
+      :waiting_since,
+      :next_evaluation_at
     ])
   end
 

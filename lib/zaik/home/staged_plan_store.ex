@@ -137,7 +137,7 @@ defmodule Zaik.Home.StagedPlanStore do
 
     reply =
       with {:ok, current} <- lookup_row(state.conn, id),
-           :ok <- claimable(current, runner_id),
+           :ok <- claimable(current, runner_id, now),
            :ok <-
              execute(
                state.conn,
@@ -166,12 +166,15 @@ defmodule Zaik.Home.StagedPlanStore do
            :ok <- owned_running_plan(current, runner_id),
            result = Map.put_new(result, :recorded_at, DateTime.to_iso8601(now)),
            results = current.stage_results ++ [stringify(result)],
+           {:ok, waiting_since, next_evaluation_at} <-
+             wait_schedule(status, current, result, now),
            :ok <-
              execute(
                state.conn,
                """
                UPDATE home_staged_plans
-               SET status = ?, current_stage = ?, stage_results_json = ?, updated_at = ?
+               SET status = ?, current_stage = ?, stage_results_json = ?, updated_at = ?,
+                   waiting_since = ?, next_evaluation_at = ?
                WHERE id = ? AND runner_id = ? AND status = 'running'
                """,
                [
@@ -179,6 +182,8 @@ defmodule Zaik.Home.StagedPlanStore do
                  stage_index,
                  Jason.encode!(results),
                  DateTime.to_iso8601(now),
+                 waiting_since,
+                 next_evaluation_at,
                  id,
                  runner_id
                ]
@@ -331,7 +336,9 @@ defmodule Zaik.Home.StagedPlanStore do
              stage_results_json TEXT NOT NULL DEFAULT '[]',
              started_at TEXT,
              completed_at TEXT,
-             final_result_json TEXT
+             final_result_json TEXT,
+             waiting_since TEXT,
+             next_evaluation_at TEXT
            );
 
            CREATE INDEX IF NOT EXISTS home_staged_plans_status_expiry_idx
@@ -344,7 +351,9 @@ defmodule Zaik.Home.StagedPlanStore do
          :ok <- ensure_column(conn, "stage_results_json", "TEXT NOT NULL DEFAULT '[]'"),
          :ok <- ensure_column(conn, "started_at", "TEXT"),
          :ok <- ensure_column(conn, "completed_at", "TEXT"),
-         :ok <- ensure_column(conn, "final_result_json", "TEXT") do
+         :ok <- ensure_column(conn, "final_result_json", "TEXT"),
+         :ok <- ensure_column(conn, "waiting_since", "TEXT"),
+         :ok <- ensure_column(conn, "next_evaluation_at", "TEXT") do
       :ok
     end
   end
@@ -436,7 +445,8 @@ defmodule Zaik.Home.StagedPlanStore do
     SELECT id, goal, status, plan_json, owner, source, reason, prepared_at,
            expires_at, inserted_at, updated_at, cancelled_at, cancelled_by,
            cancellation_reason, expired_at, runner_id, current_stage,
-           stage_results_json, started_at, completed_at, final_result_json
+           stage_results_json, started_at, completed_at, final_result_json,
+           waiting_since, next_evaluation_at
     FROM home_staged_plans #{suffix}
     """
   end
@@ -462,7 +472,9 @@ defmodule Zaik.Home.StagedPlanStore do
          stage_results_json,
          started_at,
          completed_at,
-         final_result_json
+         final_result_json,
+         waiting_since,
+         next_evaluation_at
        ]) do
     %{
       id: id,
@@ -485,7 +497,9 @@ defmodule Zaik.Home.StagedPlanStore do
       stage_results: Jason.decode!(stage_results_json),
       started_at: started_at,
       completed_at: completed_at,
-      final_result: decode_json(final_result_json)
+      final_result: decode_json(final_result_json),
+      waiting_since: waiting_since,
+      next_evaluation_at: next_evaluation_at
     }
   end
 
@@ -499,10 +513,47 @@ defmodule Zaik.Home.StagedPlanStore do
   defp cancellable(%{status: status}) when status in ["prepared", "waiting"], do: :ok
   defp cancellable(plan), do: {:error, {:staged_plan_not_cancellable, plan.status}}
 
-  defp claimable(%{status: status}, _runner_id) when status in ["prepared", "waiting"], do: :ok
-  defp claimable(%{status: "running", runner_id: runner_id}, runner_id), do: :ok
-  defp claimable(%{status: "running"}, _runner_id), do: {:error, :staged_plan_already_running}
-  defp claimable(plan, _runner_id), do: {:error, {:staged_plan_not_runnable, plan.status}}
+  defp claimable(%{status: "prepared"}, _runner_id, _now), do: :ok
+
+  defp claimable(%{status: "waiting", next_evaluation_at: nil}, _runner_id, _now), do: :ok
+
+  defp claimable(%{status: "waiting", next_evaluation_at: value}, _runner_id, now) do
+    with {:ok, next_at, _offset} <- DateTime.from_iso8601(value) do
+      if DateTime.before?(now, next_at) do
+        {:error,
+         {:staged_plan_wait_not_ready,
+          %{next_evaluation_at: value, retry_after_seconds: DateTime.diff(next_at, now, :second)}}}
+      else
+        :ok
+      end
+    else
+      _ -> {:error, :invalid_staged_plan_wait_schedule}
+    end
+  end
+
+  defp claimable(%{status: "running", runner_id: runner_id}, runner_id, _now), do: :ok
+
+  defp claimable(%{status: "running"}, _runner_id, _now),
+    do: {:error, :staged_plan_already_running}
+
+  defp claimable(plan, _runner_id, _now), do: {:error, {:staged_plan_not_runnable, plan.status}}
+
+  defp wait_schedule("running", _current, _result, _now), do: {:ok, nil, nil}
+
+  defp wait_schedule("waiting", current, result, now) do
+    poll_seconds =
+      result
+      |> value(:wait, %{})
+      |> value(:poll_interval_seconds, nil)
+
+    if is_integer(poll_seconds) and poll_seconds > 0 do
+      waiting_since = current.waiting_since || DateTime.to_iso8601(now)
+      next_evaluation_at = now |> DateTime.add(poll_seconds, :second) |> DateTime.to_iso8601()
+      {:ok, waiting_since, next_evaluation_at}
+    else
+      {:error, :invalid_staged_plan_wait_schedule}
+    end
+  end
 
   defp owned_running_plan(%{status: "running", runner_id: runner_id}, runner_id), do: :ok
 

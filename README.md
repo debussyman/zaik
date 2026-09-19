@@ -138,7 +138,7 @@ Key invariants include:
 - Preflighted multi-device plans and structured partial completion.
 - An inert staged-plan contract that fully preflights every stage, typed canonical-state condition, bounded observation wait, and deadline without executing or sleeping.
 - Durable staged-plan lifecycle storage with virtual-time expiry, exact-ID operator cancellation, restart recovery, and bounded terminal retention.
-- A supervised, ledger-protected staged coordinator available only with isolated mirror bindings; production bindings are rejected before worker or executor invocation.
+- A supervised, ledger-protected staged coordinator available only with isolated mirror bindings; durable wait cadence prevents premature re-evaluation, and production bindings are rejected before worker or executor invocation.
 - Persistent request-scoped idempotency and policy-gated retries.
 - MQTT-backed action convergence verification.
 - Derived room context with occupancy, freshness, history summaries, season, and sunrise/sunset solar phase.

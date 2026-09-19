@@ -379,8 +379,10 @@ Goal: support decisions where one action changes whether another is necessary.
   and cancel-on-false behavior. Prepared plans now persist with virtual-time
   expiry, exact-ID audited cancellation, bounded retention, and restart recovery.
   A supervised mirror-only coordinator now checkpoints stages, reobserves typed
-  conditions, resumes waits, cancels at wait timeout, and protects each stage
-  with the action ledger; production execution and stronger in-flight recovery remain.
+  conditions, persists wait start/next-evaluation gates, enforces poll cadence
+  across restarts, cancels at wait timeout, and protects each stage with the
+  action ledger; automatic wakeup scheduling, production execution, and stronger
+  in-flight recovery remain.
 - [x] Do not allow arbitrary model-authored code or predicates; conditions use
   validated scalar comparisons over declared fields from registered canonical
   capabilities, with explicit observation freshness.

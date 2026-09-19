@@ -158,6 +158,37 @@ defmodule Zaik.Home.StagedPlanStoreTest do
     assert Zaik.Home.StagedPlanStore.active([], context.store) == []
   end
 
+  test "waiting plans enforce durable poll cadence across claims", context do
+    plan = plan!(context)
+    assert {:ok, _} = Zaik.Home.StagedPlanStore.persist(plan, %{}, [], context.store)
+    assert {:ok, _} = Zaik.Home.StagedPlanStore.claim_run(plan.id, "runner", [], context.store)
+
+    assert {:ok, waiting} =
+             Zaik.Home.StagedPlanStore.checkpoint(
+               plan.id,
+               "runner",
+               0,
+               %{stage_id: "close-cover", wait: %{timeout_seconds: 30, poll_interval_seconds: 2}},
+               :waiting,
+               [clock: context.context.clock],
+               context.store
+             )
+
+    assert waiting.status == "waiting"
+    assert is_binary(waiting.waiting_since)
+    assert is_binary(waiting.next_evaluation_at)
+
+    assert {:error,
+            {:staged_plan_wait_not_ready, %{next_evaluation_at: next_at, retry_after_seconds: 2}}} =
+             Zaik.Home.StagedPlanStore.claim_run(plan.id, "runner", [], context.store)
+
+    assert next_at == waiting.next_evaluation_at
+    Zaik.Home.Mirror.Clock.advance(context.clock, 2_000)
+
+    assert {:ok, %{status: "running"}} =
+             Zaik.Home.StagedPlanStore.claim_run(plan.id, "runner", [], context.store)
+  end
+
   test "prepared and cancelled lifecycle survives store restart", context do
     db_path =
       Path.join(
