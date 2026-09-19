@@ -443,6 +443,20 @@ defmodule Zaik.Home.Mirror.Evals do
 
         scheduler_status = Zaik.Home.StagedPlanScheduler.status(recovered_scheduler)
 
+        observation_run_events =
+          Zaik.Home.StagedPlanStore.run_events(
+            observation_plan.id,
+            20,
+            context.staged_plan_store
+          )
+
+        interrupted_run_events =
+          Zaik.Home.StagedPlanStore.run_events(
+            interrupted_plan.id,
+            20,
+            context.staged_plan_store
+          )
+
         %{
           plan: Zaik.Home.StagedPlan.public(plan),
           initial: initial,
@@ -461,7 +475,9 @@ defmodule Zaik.Home.Mirror.Evals do
           observation_wakeup: observation_wakeup,
           second_wait: second_wait,
           wait_timeout: wait_timeout,
-          scheduler_status: scheduler_status
+          scheduler_status: scheduler_status,
+          observation_run_events: observation_run_events,
+          interrupted_run_events: interrupted_run_events
         }
       end),
       fn run ->
@@ -495,6 +511,15 @@ defmodule Zaik.Home.Mirror.Evals do
           run.result.scheduler_status.running == [] and
           not Map.has_key?(run.result.scheduler_status.scheduled, run.result.first_wait.id) and
           run.result.scheduler_status.observation_wakeups[run.result.observation_plan_id] == 1 and
+          Enum.map(run.result.observation_run_events, & &1.event_type) == [
+            "completed",
+            "evaluation_started",
+            "observation_wakeup",
+            "waiting",
+            "evaluation_started",
+            "scheduled"
+          ] and
+          Enum.any?(run.result.interrupted_run_events, &(&1.event_type == "recovered_running")) and
           run.report.side_effect_count == 3
       end
     )

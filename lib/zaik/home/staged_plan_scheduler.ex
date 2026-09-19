@@ -55,6 +55,7 @@ defmodule Zaik.Home.StagedPlanScheduler do
          ) do
       {:ok, %{status: status} = plan} when status in ["prepared", "waiting", "running"] ->
         next = schedule_plan(state, plan)
+        record_event(next, plan_id, "scheduled", schedule_status(next, plan_id))
         {:reply, {:ok, schedule_status(next, plan_id)}, next}
 
       {:ok, plan} ->
@@ -81,7 +82,13 @@ defmodule Zaik.Home.StagedPlanScheduler do
     next =
       Zaik.Home.StagedPlanStore.active([clock: state.clock], state.context.staged_plan_store)
       |> Enum.filter(&(&1.status in ["waiting", "running"]))
-      |> Enum.reduce(state, &schedule_plan(&2, &1))
+      |> Enum.reduce(state, fn plan, current ->
+        event_type =
+          if plan.status == "waiting", do: "recovered_waiting", else: "recovered_running"
+
+        record_event(current, plan.id, event_type, %{current_stage: plan.current_stage})
+        schedule_plan(current, plan)
+      end)
 
     {:noreply, next}
   end
@@ -122,6 +129,10 @@ defmodule Zaik.Home.StagedPlanScheduler do
             last_results: Map.put(state.last_results, plan_id, result)
         }
 
+        record_event(state, plan_id, result_event_type(result), %{
+          result: diagnostic_result(result)
+        })
+
         state = maybe_reschedule(state, plan_id, result)
         {:noreply, release_barriers(state)}
     end
@@ -141,11 +152,16 @@ defmodule Zaik.Home.StagedPlanScheduler do
             last_results: Map.put(state.last_results, plan_id, result)
         }
 
+        record_event(state, plan_id, "task_exit", %{reason: inspect(reason)})
         {:noreply, release_barriers(state)}
     end
   end
 
   defp start_run(state, plan_id) do
+    record_event(state, plan_id, "evaluation_started", %{
+      attempt: Map.get(state.attempts, plan_id, 0) + 1
+    })
+
     task =
       Task.Supervisor.async_nolink(state.task_supervisor, fn ->
         Zaik.Home.StagedPlanCoordinator.run(plan_id, state.context)
@@ -265,9 +281,21 @@ defmodule Zaik.Home.StagedPlanScheduler do
              [clock: state.clock],
              state.context.staged_plan_store
            ) do
-      state
-      |> Map.update!(:observation_wakeups, &Map.update(&1, plan_id, 1, fn count -> count + 1 end))
-      |> schedule_plan(awakened)
+      next =
+        state
+        |> Map.update!(
+          :observation_wakeups,
+          &Map.update(&1, plan_id, 1, fn count -> count + 1 end)
+        )
+        |> schedule_plan(awakened)
+
+      record_event(next, plan_id, "observation_wakeup", %{
+        observed_at: DateTime.to_iso8601(observation.observed_at),
+        device: observation.device,
+        wakeup_count: awakened.observation_wakeup_count
+      })
+
+      next
     else
       _ -> state
     end
@@ -324,6 +352,44 @@ defmodule Zaik.Home.StagedPlanScheduler do
   end
 
   defp relevant_payload?(_condition, _payload), do: false
+
+  defp result_event_type({:ok, %{status: status}})
+       when status in ["waiting", "completed", "cancelled", "failed"],
+       do: status
+
+  defp result_event_type({:error, :staged_plan_coordinator_timeout}), do: "timed_out"
+  defp result_event_type({:error, {:staged_plan_failed, _plan}}), do: "failed"
+  defp result_event_type({:error, {:staged_plan_wait_not_ready, _attrs}}), do: "waiting"
+  defp result_event_type(_result), do: "failed"
+
+  defp diagnostic_result({:ok, result}) when is_map(result) do
+    Map.take(result, [
+      :id,
+      :status,
+      :current_stage,
+      :completed_at,
+      :next_evaluation_at,
+      :observation_wakeup_count
+    ])
+  end
+
+  defp diagnostic_result({:error, reason}), do: %{error: inspect(reason)}
+  defp diagnostic_result(result), do: %{result: inspect(result)}
+
+  defp record_event(state, plan_id, event_type, attrs) do
+    _ =
+      Zaik.Home.StagedPlanStore.record_run_event(
+        plan_id,
+        event_type,
+        attrs,
+        [clock: state.clock],
+        state.context.staged_plan_store
+      )
+
+    :ok
+  catch
+    :exit, _reason -> :ok
+  end
 
   defp mirror_context(context) do
     modules = context |> Map.get(:executor_opts, []) |> Keyword.get(:modules, [])

@@ -384,8 +384,9 @@ Goal: support decisions where one action changes whether another is necessary.
   action ledger. A mirror-only virtual-time scheduler now wakes waiting plans
   automatically, reconstructs waiting or interrupted running plans after
   scheduler restart, and advances dependency-matched waits after accepted
-  canonical observations; watchdog diagnostics, staged retries, and production
-  execution remain.
+  canonical observations. A bounded durable run journal now records scheduler
+  recovery, attempts, waits, observation wakeups, timeouts, task exits, and
+  terminal outcomes; alert thresholds, staged retries, and production execution remain.
 - [x] Do not allow arbitrary model-authored code or predicates; conditions use
   validated scalar comparisons over declared fields from registered canonical
   capabilities, with explicit observation freshness.

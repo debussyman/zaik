@@ -209,6 +209,46 @@ defmodule Zaik.Home.StagedPlanStoreTest do
              Zaik.Home.StagedPlanStore.claim_run(plan.id, "runner", [], context.store)
   end
 
+  test "run diagnostics are typed, durable, and ordered newest first", context do
+    plan = plan!(context)
+    assert {:ok, _} = Zaik.Home.StagedPlanStore.persist(plan, %{}, [], context.store)
+
+    assert {:ok, %{event_type: "scheduled"}} =
+             Zaik.Home.StagedPlanStore.record_run_event(
+               plan.id,
+               :scheduled,
+               %{source: "test"},
+               [clock: context.context.clock],
+               context.store
+             )
+
+    assert {:ok, %{event_type: "evaluation_started"}} =
+             Zaik.Home.StagedPlanStore.record_run_event(
+               plan.id,
+               :evaluation_started,
+               %{attempt: 1},
+               [clock: context.context.clock],
+               context.store
+             )
+
+    assert [started, scheduled] =
+             Zaik.Home.StagedPlanStore.run_events(plan.id, 10, context.store)
+
+    assert started.event_type == "evaluation_started"
+    assert started.details == %{"attempt" => 1}
+    assert scheduled.event_type == "scheduled"
+    assert scheduled.details == %{"source" => "test"}
+
+    assert {:error, {:invalid_staged_plan_run_event, "invented"}} =
+             Zaik.Home.StagedPlanStore.record_run_event(
+               plan.id,
+               :invented,
+               %{},
+               [],
+               context.store
+             )
+  end
+
   test "prepared and cancelled lifecycle survives store restart", context do
     db_path =
       Path.join(

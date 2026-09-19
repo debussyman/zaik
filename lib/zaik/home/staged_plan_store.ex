@@ -11,6 +11,8 @@ defmodule Zaik.Home.StagedPlanStore do
   alias Exqlite.Sqlite3
 
   @default_max_terminal_rows 10_000
+  @default_max_run_event_rows 10_000
+  @run_event_types ~w(scheduled recovered_waiting recovered_running evaluation_started waiting completed cancelled failed timed_out task_exit observation_wakeup)
 
   def start_link(opts \\ []) do
     {server_opts, init_opts} = Keyword.split(opts, [:name])
@@ -59,6 +61,14 @@ defmodule Zaik.Home.StagedPlanStore do
       when is_binary(id) and is_binary(runner_id) and is_map(result),
       do: GenServer.call(server, {:stop_run, id, runner_id, status, result, opts})
 
+  def record_run_event(plan_id, event_type, attrs \\ %{}, opts \\ [], server \\ __MODULE__)
+      when is_binary(plan_id) and is_map(attrs),
+      do: GenServer.call(server, {:record_run_event, plan_id, to_string(event_type), attrs, opts})
+
+  def run_events(plan_id, limit \\ 50, server \\ __MODULE__)
+      when is_binary(plan_id) and is_integer(limit),
+      do: GenServer.call(server, {:run_events, plan_id, limit})
+
   @impl true
   def init(opts) do
     path = Keyword.get(opts, :db_path, Zaik.Home.HistoryStore.config().db_path) |> expand_path()
@@ -69,7 +79,8 @@ defmodule Zaik.Home.StagedPlanStore do
         conn: conn,
         clock: Keyword.get(opts, :clock),
         event_bus: Keyword.get(opts, :event_bus, Zaik.Home.EventBus),
-        max_terminal_rows: Keyword.get(opts, :max_terminal_rows, @default_max_terminal_rows)
+        max_terminal_rows: Keyword.get(opts, :max_terminal_rows, @default_max_terminal_rows),
+        max_run_event_rows: Keyword.get(opts, :max_run_event_rows, @default_max_run_event_rows)
       }
 
       _ = expire_due(conn, Zaik.Time.now(state.clock))
@@ -80,6 +91,56 @@ defmodule Zaik.Home.StagedPlanStore do
   end
 
   @impl true
+  def handle_call({:record_run_event, plan_id, event_type, attrs, opts}, _from, state) do
+    now = Zaik.Time.now(Keyword.get(opts, :clock, state.clock))
+
+    reply =
+      with true <- event_type in @run_event_types,
+           {:ok, _plan} <- lookup_row(state.conn, plan_id),
+           :ok <-
+             execute(
+               state.conn,
+               """
+               INSERT INTO home_staged_plan_run_events
+                 (plan_id, event_type, details_json, recorded_at)
+               VALUES (?, ?, ?, ?)
+               """,
+               [
+                 plan_id,
+                 event_type,
+                 Jason.encode!(stringify(attrs)),
+                 DateTime.to_iso8601(now)
+               ]
+             ) do
+        _ = prune_run_events(state.conn, state.max_run_event_rows)
+        {:ok, %{plan_id: plan_id, event_type: event_type, recorded_at: DateTime.to_iso8601(now)}}
+      else
+        false -> {:error, {:invalid_staged_plan_run_event, event_type}}
+        error -> error
+      end
+
+    {:reply, reply, state}
+  end
+
+  def handle_call({:run_events, plan_id, limit}, _from, state) do
+    limit = max(1, min(limit, 200))
+
+    events =
+      query(
+        state.conn,
+        """
+        SELECT id, plan_id, event_type, details_json, recorded_at
+        FROM home_staged_plan_run_events
+        WHERE plan_id = ?
+        ORDER BY id DESC LIMIT ?
+        """,
+        [plan_id, limit]
+      )
+      |> Enum.map(&decode_run_event/1)
+
+    {:reply, events, state}
+  end
+
   def handle_call({:persist, plan, attrs, opts}, _from, state) do
     now = Zaik.Time.now(Keyword.get(opts, :clock, state.clock))
     owner = attrs |> value(:owner, "operator") |> to_string() |> String.trim()
@@ -382,6 +443,17 @@ defmodule Zaik.Home.StagedPlanStore do
              ON home_staged_plans(status, expires_at);
            CREATE INDEX IF NOT EXISTS home_staged_plans_updated_idx
              ON home_staged_plans(updated_at DESC);
+
+           CREATE TABLE IF NOT EXISTS home_staged_plan_run_events (
+             id INTEGER PRIMARY KEY AUTOINCREMENT,
+             plan_id TEXT NOT NULL,
+             event_type TEXT NOT NULL,
+             details_json TEXT NOT NULL,
+             recorded_at TEXT NOT NULL
+           );
+
+           CREATE INDEX IF NOT EXISTS home_staged_plan_run_events_plan_idx
+             ON home_staged_plan_run_events(plan_id, id DESC);
            """),
          :ok <- ensure_column(conn, "runner_id", "TEXT"),
          :ok <- ensure_column(conn, "current_stage", "INTEGER NOT NULL DEFAULT 0"),
@@ -470,6 +542,31 @@ defmodule Zaik.Home.StagedPlanStore do
       """,
       [maximum]
     )
+  end
+
+  defp prune_run_events(_conn, maximum) when not is_integer(maximum) or maximum < 1, do: :ok
+
+  defp prune_run_events(conn, maximum) do
+    execute(
+      conn,
+      """
+      DELETE FROM home_staged_plan_run_events
+      WHERE id NOT IN (
+        SELECT id FROM home_staged_plan_run_events ORDER BY id DESC LIMIT ?
+      )
+      """,
+      [maximum]
+    )
+  end
+
+  defp decode_run_event([id, plan_id, event_type, details_json, recorded_at]) do
+    %{
+      id: id,
+      plan_id: plan_id,
+      event_type: event_type,
+      details: Jason.decode!(details_json),
+      recorded_at: recorded_at
+    }
   end
 
   defp lookup_row(conn, id) do
