@@ -360,7 +360,10 @@ defmodule Zaik.Home.StagedPlanStore do
                """
                UPDATE home_staged_plans
                SET status = ?, final_result_json = ?, completed_at = ?, updated_at = ?,
-                   next_evaluation_at = NULL
+                   next_evaluation_at = NULL,
+                   cancelled_at = CASE WHEN ? = 'cancelled' THEN COALESCE(cancelled_at, ?) ELSE cancelled_at END,
+                   cancelled_by = CASE WHEN ? = 'cancelled' THEN COALESCE(cancelled_by, cancellation_requested_by, 'coordinator') ELSE cancelled_by END,
+                   cancellation_reason = CASE WHEN ? = 'cancelled' THEN COALESCE(cancellation_reason, cancellation_request_reason, 'coordinator cancellation') ELSE cancellation_reason END
                WHERE id = ? AND runner_id = ? AND status = 'running'
                """,
                [
@@ -368,6 +371,10 @@ defmodule Zaik.Home.StagedPlanStore do
                  Jason.encode!(stringify(result)),
                  DateTime.to_iso8601(now),
                  DateTime.to_iso8601(now),
+                 status,
+                 DateTime.to_iso8601(now),
+                 status,
+                 status,
                  id,
                  runner_id
                ]
@@ -393,32 +400,16 @@ defmodule Zaik.Home.StagedPlanStore do
       with :ok <- validate_text(:cancelled_by, cancelled_by),
            :ok <- validate_text(:cancellation_reason, reason),
            {:ok, current} <- lookup_row(state.conn, id),
-           :ok <- cancellable(current),
-           :ok <-
-             execute(
-               state.conn,
-               """
-               UPDATE home_staged_plans
-               SET status = 'cancelled', cancelled_at = ?, cancelled_by = ?,
-                   cancellation_reason = ?, updated_at = ?, next_evaluation_at = NULL
-               WHERE id = ? AND status IN ('prepared', 'waiting')
-               """,
-               [
-                 DateTime.to_iso8601(now),
-                 cancelled_by,
-                 reason,
-                 DateTime.to_iso8601(now),
-                 id
-               ]
-             ),
+           :ok <- cancel_or_request(state.conn, current, cancelled_by, reason, now),
            {:ok, cancelled} <- lookup_row(state.conn, id) do
         publish(state.event_bus, %{
           type: :staged_plan_changed,
           plan_id: id,
-          status: "cancelled"
+          status: cancelled.status,
+          cancellation_requested: cancelled.status == "running"
         })
 
-        _ = prune(state.conn, state.max_terminal_rows)
+        if cancelled.status == "cancelled", do: prune(state.conn, state.max_terminal_rows)
         {:ok, cancelled}
       end
 
@@ -459,7 +450,10 @@ defmodule Zaik.Home.StagedPlanStore do
              waiting_since TEXT,
              next_evaluation_at TEXT,
              observation_wakeup_at TEXT,
-             observation_wakeup_count INTEGER NOT NULL DEFAULT 0
+             observation_wakeup_count INTEGER NOT NULL DEFAULT 0,
+             cancellation_requested_at TEXT,
+             cancellation_requested_by TEXT,
+             cancellation_request_reason TEXT
            );
 
            CREATE INDEX IF NOT EXISTS home_staged_plans_status_expiry_idx
@@ -487,7 +481,10 @@ defmodule Zaik.Home.StagedPlanStore do
          :ok <- ensure_column(conn, "waiting_since", "TEXT"),
          :ok <- ensure_column(conn, "next_evaluation_at", "TEXT"),
          :ok <- ensure_column(conn, "observation_wakeup_at", "TEXT"),
-         :ok <- ensure_column(conn, "observation_wakeup_count", "INTEGER NOT NULL DEFAULT 0") do
+         :ok <- ensure_column(conn, "observation_wakeup_count", "INTEGER NOT NULL DEFAULT 0"),
+         :ok <- ensure_column(conn, "cancellation_requested_at", "TEXT"),
+         :ok <- ensure_column(conn, "cancellation_requested_by", "TEXT"),
+         :ok <- ensure_column(conn, "cancellation_request_reason", "TEXT") do
       :ok
     end
   end
@@ -606,7 +603,8 @@ defmodule Zaik.Home.StagedPlanStore do
            cancellation_reason, expired_at, runner_id, current_stage,
            stage_results_json, started_at, completed_at, final_result_json,
            waiting_since, next_evaluation_at, observation_wakeup_at,
-           observation_wakeup_count
+           observation_wakeup_count, cancellation_requested_at,
+           cancellation_requested_by, cancellation_request_reason
     FROM home_staged_plans #{suffix}
     """
   end
@@ -636,7 +634,10 @@ defmodule Zaik.Home.StagedPlanStore do
          waiting_since,
          next_evaluation_at,
          observation_wakeup_at,
-         observation_wakeup_count
+         observation_wakeup_count,
+         cancellation_requested_at,
+         cancellation_requested_by,
+         cancellation_request_reason
        ]) do
     %{
       id: id,
@@ -663,7 +664,10 @@ defmodule Zaik.Home.StagedPlanStore do
       waiting_since: waiting_since,
       next_evaluation_at: next_evaluation_at,
       observation_wakeup_at: observation_wakeup_at,
-      observation_wakeup_count: observation_wakeup_count
+      observation_wakeup_count: observation_wakeup_count,
+      cancellation_requested_at: cancellation_requested_at,
+      cancellation_requested_by: cancellation_requested_by,
+      cancellation_request_reason: cancellation_request_reason
     }
   end
 
@@ -674,8 +678,50 @@ defmodule Zaik.Home.StagedPlanStore do
   defp validate_plan_lifetime(_plan, _now), do: {:error, :invalid_staged_plan_status}
   defp validate_text(field, ""), do: {:error, {:invalid_staged_plan_metadata, field}}
   defp validate_text(_field, _value), do: :ok
-  defp cancellable(%{status: status}) when status in ["prepared", "waiting"], do: :ok
-  defp cancellable(plan), do: {:error, {:staged_plan_not_cancellable, plan.status}}
+
+  defp cancel_or_request(conn, %{status: status, id: id}, cancelled_by, reason, now)
+       when status in ["prepared", "waiting"] do
+    now = DateTime.to_iso8601(now)
+
+    execute(
+      conn,
+      """
+      UPDATE home_staged_plans
+      SET status = 'cancelled', cancelled_at = ?, cancelled_by = ?,
+          cancellation_reason = ?, updated_at = ?, next_evaluation_at = NULL
+      WHERE id = ? AND status IN ('prepared', 'waiting')
+      """,
+      [now, cancelled_by, reason, now, id]
+    )
+  end
+
+  defp cancel_or_request(
+         _conn,
+         %{status: "running", cancellation_requested_at: requested_at},
+         _cancelled_by,
+         _reason,
+         _now
+       )
+       when is_binary(requested_at),
+       do: {:error, :staged_plan_cancellation_already_requested}
+
+  defp cancel_or_request(conn, %{status: "running", id: id}, cancelled_by, reason, now) do
+    now = DateTime.to_iso8601(now)
+
+    execute(
+      conn,
+      """
+      UPDATE home_staged_plans
+      SET cancellation_requested_at = ?, cancellation_requested_by = ?,
+          cancellation_request_reason = ?, updated_at = ?
+      WHERE id = ? AND status = 'running' AND cancellation_requested_at IS NULL
+      """,
+      [now, cancelled_by, reason, now, id]
+    )
+  end
+
+  defp cancel_or_request(_conn, plan, _cancelled_by, _reason, _now),
+    do: {:error, {:staged_plan_not_cancellable, plan.status}}
 
   defp observation_wakeable(%{status: "waiting", waiting_since: waiting_since}, observed_at)
        when is_binary(waiting_since) do

@@ -158,6 +158,51 @@ defmodule Zaik.Home.StagedPlanStoreTest do
     assert Zaik.Home.StagedPlanStore.active([], context.store) == []
   end
 
+  test "running cancellation is requested durably and completed cooperatively", context do
+    plan = plan!(context)
+    assert {:ok, _} = Zaik.Home.StagedPlanStore.persist(plan, %{}, [], context.store)
+    assert {:ok, _} = Zaik.Home.StagedPlanStore.claim_run(plan.id, "runner", [], context.store)
+
+    assert {:ok, requested} =
+             Zaik.Home.StagedPlanStore.cancel(
+               plan.id,
+               "operator",
+               "unsafe conditions",
+               [clock: context.context.clock],
+               context.store
+             )
+
+    assert requested.status == "running"
+    assert requested.cancellation_requested_by == "operator"
+    assert requested.cancellation_request_reason == "unsafe conditions"
+    assert is_binary(requested.cancellation_requested_at)
+    assert is_nil(requested.cancelled_at)
+
+    assert {:error, :staged_plan_cancellation_already_requested} =
+             Zaik.Home.StagedPlanStore.cancel(
+               plan.id,
+               "other",
+               "replace request",
+               [],
+               context.store
+             )
+
+    assert {:ok, cancelled} =
+             Zaik.Home.StagedPlanStore.stop_run(
+               plan.id,
+               "runner",
+               :cancelled,
+               %{reason: "operator_cancellation_requested"},
+               [clock: context.context.clock],
+               context.store
+             )
+
+    assert cancelled.status == "cancelled"
+    assert cancelled.cancelled_by == "operator"
+    assert cancelled.cancellation_reason == "unsafe conditions"
+    assert is_binary(cancelled.cancelled_at)
+  end
+
   test "waiting plans enforce durable poll cadence across claims", context do
     plan = plan!(context)
     assert {:ok, _} = Zaik.Home.StagedPlanStore.persist(plan, %{}, [], context.store)

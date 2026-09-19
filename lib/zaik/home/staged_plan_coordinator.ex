@@ -41,7 +41,12 @@ defmodule Zaik.Home.StagedPlanCoordinator do
 
     with {:ok, run} <- Zaik.Home.StagedPlanStore.claim_run(plan_id, runner_id, clock_opts, store) do
       stages = get_in(run, [:plan, "stages"]) || []
-      execute_stages(run, stages, run.current_stage, runner_id, context, opts)
+
+      if cancellation_requested?(run) and run.current_stage < length(stages) do
+        cancel_requested_run(run, runner_id, context)
+      else
+        execute_stages(run, stages, run.current_stage, runner_id, context, opts)
+      end
     end
   end
 
@@ -74,17 +79,56 @@ defmodule Zaik.Home.StagedPlanCoordinator do
              [clock: setting(context, :clock)],
              setting(context, :staged_plan_store)
            ),
-         :ok <- still_owned?(latest, runner_id),
-         {:ok, condition_result} <- evaluate_conditions(stage, context) do
-      if condition_result.matched do
-        execute_stage(latest, stages, index, stage, condition_result, runner_id, context, opts)
+         :ok <- still_owned?(latest, runner_id) do
+      if cancellation_requested?(latest) do
+        cancel_requested_run(latest, runner_id, context)
       else
-        handle_unmatched(latest, index, stage, condition_result, runner_id, context)
+        with {:ok, condition_result} <- evaluate_conditions(stage, context) do
+          if condition_result.matched do
+            execute_stage(
+              latest,
+              stages,
+              index,
+              stage,
+              condition_result,
+              runner_id,
+              context,
+              opts
+            )
+          else
+            handle_unmatched(latest, index, stage, condition_result, runner_id, context)
+          end
+        end
       end
     end
   end
 
   defp execute_stage(run, stages, index, stage, condition_result, runner_id, context, opts) do
+    with {:ok, latest} <-
+           Zaik.Home.StagedPlanStore.lookup(
+             run.id,
+             [clock: setting(context, :clock)],
+             setting(context, :staged_plan_store)
+           ),
+         :ok <- still_owned?(latest, runner_id) do
+      if cancellation_requested?(latest) do
+        cancel_requested_run(latest, runner_id, context)
+      else
+        do_execute_stage(
+          latest,
+          stages,
+          index,
+          stage,
+          condition_result,
+          runner_id,
+          context,
+          opts
+        )
+      end
+    end
+  end
+
+  defp do_execute_stage(run, stages, index, stage, condition_result, runner_id, context, opts) do
     args = %{"goal" => run.goal, "actions" => Map.get(stage, "actions", [])}
 
     stage_context =
@@ -200,6 +244,29 @@ defmodule Zaik.Home.StagedPlanCoordinator do
     end
   end
 
+  defp cancel_requested_run(run, runner_id, context) do
+    result = %{
+      reason: "operator_cancellation_requested",
+      cancelled_by: run.cancellation_requested_by,
+      cancellation_reason: run.cancellation_request_reason,
+      current_stage: run.current_stage
+    }
+
+    with {:ok, cancelled} <-
+           Zaik.Home.StagedPlanStore.stop_run(
+             run.id,
+             runner_id,
+             :cancelled,
+             result,
+             [clock: setting(context, :clock)],
+             setting(context, :staged_plan_store)
+           ) do
+      {:ok, public_result(cancelled)}
+    end
+  end
+
+  defp cancellation_requested?(run), do: is_binary(run.cancellation_requested_at)
+
   defp evaluate_conditions(stage, context) do
     inputs = Map.get(stage, "conditions", [])
 
@@ -290,7 +357,13 @@ defmodule Zaik.Home.StagedPlanCoordinator do
       :final_result,
       :expires_at,
       :waiting_since,
-      :next_evaluation_at
+      :next_evaluation_at,
+      :cancellation_requested_at,
+      :cancellation_requested_by,
+      :cancellation_request_reason,
+      :cancelled_at,
+      :cancelled_by,
+      :cancellation_reason
     ])
   end
 

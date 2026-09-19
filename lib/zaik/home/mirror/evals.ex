@@ -351,6 +351,15 @@ defmodule Zaik.Home.Mirror.Evals do
             context.staged_plan_store
           )
 
+        {:ok, cancellation_requested} =
+          Zaik.Home.StagedPlanStore.cancel(
+            interrupted_plan.id,
+            "mirror-operator",
+            "restart cancellation race",
+            [clock: context.clock],
+            context.staged_plan_store
+          )
+
         old_scheduler = context.staged_plan_scheduler
         :ok = DynamicSupervisor.terminate_child(mirror.supervisor, old_scheduler)
 
@@ -470,6 +479,7 @@ defmodule Zaik.Home.Mirror.Evals do
           immediate_wait: immediate_wait,
           recovery: recovery,
           interrupted_plan_id: interrupted_plan.id,
+          cancellation_requested: cancellation_requested,
           interrupted_recovery: interrupted_recovery,
           observation_plan_id: observation_plan.id,
           observation_wakeup: observation_wakeup,
@@ -498,7 +508,20 @@ defmodule Zaik.Home.Mirror.Evals do
           ) and
           Map.has_key?(run.result.recovery.scheduled, run.result.first_wait.id) and
           Map.has_key?(run.result.recovery.scheduled, run.result.interrupted_plan_id) and
-          match?(%{status: "cancelled", current_stage: 0}, run.result.interrupted_recovery) and
+          match?(
+            %{status: "running", cancellation_requested_by: "mirror-operator"},
+            run.result.cancellation_requested
+          ) and
+          match?(
+            %{
+              status: "cancelled",
+              current_stage: 0,
+              cancelled_by: "mirror-operator",
+              cancellation_reason: "restart cancellation race",
+              final_result: %{"reason" => "operator_cancellation_requested"}
+            },
+            run.result.interrupted_recovery
+          ) and
           match?(
             %{status: "completed", current_stage: 1, observation_wakeup_count: 1},
             run.result.observation_wakeup
