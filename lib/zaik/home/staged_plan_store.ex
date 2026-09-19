@@ -253,7 +253,7 @@ defmodule Zaik.Home.StagedPlanStore do
            {:ok, current} <- lookup_row(state.conn, id),
            :ok <- owned_running_plan(current, runner_id),
            result = Map.put_new(result, :recorded_at, DateTime.to_iso8601(now)),
-           results = current.stage_results ++ [stringify(result)],
+           results = checkpoint_results(current.stage_results, stringify(result), status),
            {:ok, waiting_since, next_evaluation_at, waiting_kind} <-
              wait_schedule(status, current, result, now),
            :ok <-
@@ -768,6 +768,21 @@ defmodule Zaik.Home.StagedPlanStore do
     do: {:error, :staged_plan_already_running}
 
   defp claimable(plan, _runner_id, _now), do: {:error, {:staged_plan_not_runnable, plan.status}}
+
+  defp checkpoint_results(results, result, "waiting") do
+    stage_index = result["stage_index"]
+    waiting_kind = result["waiting_kind"]
+
+    case List.pop_at(results, -1) do
+      {%{"stage_index" => ^stage_index, "waiting_kind" => ^waiting_kind}, remaining} ->
+        remaining ++ [result]
+
+      _ ->
+        results ++ [result]
+    end
+  end
+
+  defp checkpoint_results(results, result, _status), do: results ++ [result]
 
   defp wait_schedule("running", _current, _result, _now), do: {:ok, nil, nil, nil}
 

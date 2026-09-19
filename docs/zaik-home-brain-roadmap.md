@@ -392,7 +392,9 @@ Goal: support decisions where one action changes whether another is necessary.
   Running plans now accept exact-ID cooperative cancellation requests that
   survive restart and are checked before stage execution. Stage advancement now
   requires verified convergence: accepted-but-unverified actions enter a durable
-  verification wait and resume from canonical reports without republishing.
+  verification wait and resume from canonical reports without republishing;
+  bounded timeout fails closed before later stages, and repeated wait snapshots
+  are durably coalesced.
   Opt-in periodic alert delivery, policy-gated staged retries, and production
   execution remain.
 - [x] Do not allow arbitrary model-authored code or predicates; conditions use

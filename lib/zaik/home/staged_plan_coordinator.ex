@@ -211,8 +211,8 @@ defmodule Zaik.Home.StagedPlanCoordinator do
       checkpoint_result
       |> Map.put(:waiting_kind, "verification")
       |> Map.put(:wait, %{
-        timeout_seconds: @verification_timeout_seconds,
-        poll_interval_seconds: @verification_poll_seconds
+        timeout_seconds: verification_timeout_seconds(context),
+        poll_interval_seconds: verification_poll_seconds(context)
       })
 
     if verification_wait_expired?(run, context) do
@@ -355,7 +355,7 @@ defmodule Zaik.Home.StagedPlanCoordinator do
     with started_at when is_binary(started_at) <- run.waiting_since,
          {:ok, started_at, _offset} <- DateTime.from_iso8601(started_at) do
       DateTime.diff(Zaik.Time.now(setting(context, :clock)), started_at, :second) >=
-        @verification_timeout_seconds
+        verification_timeout_seconds(context)
     else
       _ -> false
     end
@@ -436,6 +436,28 @@ defmodule Zaik.Home.StagedPlanCoordinator do
   defp normalize_result({:ok, value}), do: %{status: "ok", result: value}
   defp normalize_result({:error, reason}), do: %{status: "error", reason: inspect(reason)}
   defp normalize_result(value), do: %{status: "invalid", result: inspect(value)}
+
+  defp verification_timeout_seconds(context) do
+    bounded_positive_integer(
+      setting(context, :staged_verification_timeout_seconds),
+      @verification_timeout_seconds,
+      3_600
+    )
+  end
+
+  defp verification_poll_seconds(context) do
+    timeout = verification_timeout_seconds(context)
+
+    setting(context, :staged_verification_poll_seconds)
+    |> bounded_positive_integer(@verification_poll_seconds, 60)
+    |> min(timeout)
+  end
+
+  defp bounded_positive_integer(value, _default, maximum)
+       when is_integer(value) and value >= 1 and value <= maximum,
+       do: value
+
+  defp bounded_positive_integer(_value, default, _maximum), do: default
 
   defp map_value(map, key), do: Map.get(map, key) || Map.get(map, to_string(key))
   defp setting(map, key), do: Map.get(map, key) || Map.get(map, to_string(key))

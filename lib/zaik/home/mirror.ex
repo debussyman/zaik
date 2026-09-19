@@ -232,6 +232,10 @@ defmodule Zaik.Home.Mirror do
         executor_opts: [modules: [Zaik.Home.Mirror.Executor]],
         verification_wait_ms: verification_wait(mirror.scenario),
         verification_timeout_ms: verification_timeout(mirror.scenario),
+        staged_verification_timeout_seconds:
+          value(mirror.scenario.metadata, :staged_verification_timeout_seconds) || 120,
+        staged_verification_poll_seconds:
+          value(mirror.scenario.metadata, :staged_verification_poll_seconds) || 2,
         mirror_scenario_id: mirror.scenario.id,
         mirror_scenario_fingerprint: Scenario.fingerprint(mirror.scenario)
       },

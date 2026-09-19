@@ -69,7 +69,11 @@ defmodule Zaik.Home.Mirror.Evals do
       %{name: "occupancy_entry_sequences_remain_advisory", kind: :occupancy_sequences},
       %{name: "scoped_policy_modes_are_inert_and_durable", kind: :scoped_policy_modes},
       %{name: "autonomy_context_cannot_cross_execution_boundary", kind: :autonomy_boundary},
-      %{name: "staged_plan_conditions_are_typed_and_inert", kind: :staged_plan_contract}
+      %{name: "staged_plan_conditions_are_typed_and_inert", kind: :staged_plan_contract},
+      %{
+        name: "staged_plan_non_convergence_blocks_later_stages",
+        kind: :staged_verification_timeout
+      }
     ]
   end
 
@@ -568,6 +572,100 @@ defmodule Zaik.Home.Mirror.Evals do
           ] and
           Enum.any?(run.result.interrupted_run_events, &(&1.event_type == "recovered_running")) and
           run.report.side_effect_count == 3
+      end
+    )
+  end
+
+  defp run_case(%{kind: :staged_verification_timeout} = definition) do
+    scenario =
+      Scenarios.lily_bedtime_with_ac(
+        id: definition.name,
+        faults: %{"Lily's bedroom left blind" => :never_converges},
+        metadata: %{
+          verification_wait_ms: 0,
+          verification_timeout_ms: 1_000,
+          staged_verification_timeout_seconds: 5,
+          staged_verification_poll_seconds: 1
+        }
+      )
+
+    finish(
+      definition,
+      Runner.run(scenario, fn mirror, context ->
+        {:ok, plan} =
+          Zaik.Home.StagedPlan.preflight(
+            "verification must gate later stages",
+            [
+              %{
+                id: "close-left",
+                actions: [
+                  %{
+                    device: "Lily's bedroom left blind",
+                    capability: "cover",
+                    target: %{position: 100}
+                  }
+                ]
+              },
+              %{
+                id: "set-right",
+                actions: [
+                  %{
+                    device: "Lily's bedroom right blind",
+                    capability: "cover",
+                    target: %{position: 71}
+                  }
+                ]
+              }
+            ],
+            context,
+            deadline_seconds: 30
+          )
+
+        {:ok, _} =
+          Zaik.Home.StagedPlanStore.persist(
+            plan,
+            %{owner: "mirror-operator"},
+            [clock: context.clock],
+            context.staged_plan_store
+          )
+
+        {:ok, _} = Zaik.Home.StagedPlanScheduler.submit(plan.id, context.staged_plan_scheduler)
+        Zaik.Home.Mirror.advance(mirror, 0)
+
+        {:ok, pending} =
+          Zaik.Home.StagedPlanStore.lookup(
+            plan.id,
+            [clock: context.clock],
+            context.staged_plan_store
+          )
+
+        Zaik.Home.Mirror.advance(mirror, 5_000)
+
+        {:ok, failed} =
+          Zaik.Home.StagedPlanStore.lookup(
+            plan.id,
+            [clock: context.clock],
+            context.staged_plan_store
+          )
+
+        %{pending: pending, failed: failed, actions: Zaik.Home.Mirror.actions(mirror)}
+      end),
+      fn run ->
+        match?(
+          %{status: "waiting", current_stage: 0, waiting_kind: "verification"},
+          run.result.pending
+        ) and
+          match?(
+            %{
+              status: "failed",
+              current_stage: 0,
+              stage_results: [_latest_verification_wait],
+              final_result: %{"reason" => "stage_verification_timeout"}
+            },
+            run.result.failed
+          ) and
+          Enum.map(run.result.actions, & &1.device) == ["Lily's bedroom left blind"] and
+          run.report.side_effect_count == 1
       end
     )
   end
