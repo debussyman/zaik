@@ -125,7 +125,8 @@ Home automation is one optional domain, not the whole harness.
 | `Zaik.Home.OccupancyTransitionStore` | Bounded durable history of meaningful occupancy transitions and advisory cross-area entry sequences without person-identity claims. | Use as evidence for future advisory dynamics, never as canonical presence. |
 | `Zaik.Home.DeviceStore` | In-memory raw current device state with observed/received timestamps, stale/duplicate report rejection, and accepted-event publication. | `Zaik.Domains.Home.DeviceStore` |
 | `Zaik.Home.Entity` | Adapter-neutral identity and typed current-state struct. | Keep as the home-domain entity contract. |
-| `Zaik.Home.World` | Projects adapter payloads into capability-filtered current state. | Keep as the ordinary home reasoning boundary. |
+| `Zaik.Home.World` | Projects adapter payloads into capability-filtered current state carrying a schema version and contract fingerprint. | Keep as the ordinary home reasoning boundary. |
+| `Zaik.Home.WorldContract` | Versioned runtime-discovered canonical entity/capability schemas and stable state-free fingerprints. | Extend with desired-state, confidence, calibration, and provenance contracts under explicit schema versions. |
 | `Zaik.Home.Capability` | Behaviour for typed state detection and target validation. | Keep as the semantic capability contract. |
 | `Zaik.Home.Capabilities.Registry` / `Capabilities.Contract` | Uncached discovery, fingerprints, and executable baseline composability validation. | Keep as the hot-load-friendly capability acceptance boundary. |
 | `Zaik.Home.GoalContract` | Validated versioned skill contract for semantic goals, required evidence, constraints, tools, risk, and missing-data policy. | Keep as the declarative goal boundary. |

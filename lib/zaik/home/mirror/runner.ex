@@ -21,7 +21,8 @@ defmodule Zaik.Home.Mirror.Runner do
            fingerprints: %{
              scenario: report.scenario_fingerprint,
              tools: report.tool_fingerprint,
-             capabilities: report.capability_fingerprint
+             capabilities: report.capability_fingerprint,
+             world_contract: report.world_contract_fingerprint
            }
          }}
       after

@@ -1,9 +1,48 @@
 defmodule Zaik.Home.WorldTest do
   use ExUnit.Case, async: true
 
+  defmodule TestReadOnlyCapability do
+    @behaviour Zaik.Home.Capability
+
+    def descriptor do
+      %{
+        id: "test_read_only",
+        description: "Test-only world contract capability.",
+        state_schema: %{"value" => "number"},
+        target_schema: nil
+      }
+    end
+
+    def detected?(_device), do: false
+    def state(_device), do: %{}
+    def validate_target(_target), do: {:error, :read_only_capability}
+  end
+
   setup do
     {:ok, store} = start_supervised({Zaik.Home.DeviceStore, name: nil})
     %{store: store}
+  end
+
+  test "world contract is versioned, deterministic, and runtime-discovered", %{store: store} do
+    contract = Zaik.Home.WorldContract.public()
+
+    assert contract.schema_version == 1
+    assert byte_size(contract.fingerprint) == 64
+    assert contract.fingerprint == Zaik.Home.WorldContract.fingerprint()
+
+    assert Enum.map(contract.capabilities, & &1.id) ==
+             Enum.sort(Enum.map(contract.capabilities, & &1.id))
+
+    expanded =
+      Zaik.Home.WorldContract.fingerprint(
+        capability_opts: [additional_modules: [TestReadOnlyCapability]]
+      )
+
+    refute expanded == contract.fingerprint
+
+    snapshot = Zaik.Home.World.snapshot(nil, device_store: store)
+    assert snapshot.world_schema_version == contract.schema_version
+    assert snapshot.world_contract_fingerprint == contract.fingerprint
   end
 
   test "derives typed entity state from adapter payloads", %{store: store} do

@@ -133,6 +133,10 @@ Goal: remove remaining ambiguity before autonomous decisions depend on it.
 
 - [ ] Define a versioned home-world contract covering entity identity, areas,
   capability state, desired state, freshness, confidence, and provenance.
+  Schema version 1 now covers canonical entity fields, source/receive timestamps,
+  ordering/missing-state semantics, and runtime-discovered capability state and
+  target schemas; desired-state, confidence, calibration, and richer provenance
+  remain before this item is complete.
 - [ ] Persist per-entity/per-capability adapter calibration where physical
   orientation or protocol semantics differ; do not rely on one global cover
   assumption for future adapters.

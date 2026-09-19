@@ -41,8 +41,11 @@ defmodule Zaik.Home.World do
 
   def snapshot(query \\ nil, opts \\ []) do
     entities = find(query, opts)
+    contract_opts = [capability_opts: Keyword.get(opts, :capability_opts, [])]
 
     %{
+      world_schema_version: Zaik.Home.WorldContract.schema_version(),
+      world_contract_fingerprint: Zaik.Home.WorldContract.fingerprint(contract_opts),
       entities: Enum.map(entities, &public_entity/1),
       count: length(entities),
       generated_at: Keyword.get(opts, :clock) |> Zaik.Time.now()

@@ -42,6 +42,8 @@ defmodule Zaik.Home.Mirror.Assertions do
       scenario_fingerprint: Zaik.Home.Mirror.Scenario.fingerprint(mirror.scenario),
       tool_fingerprint: Zaik.Tools.Registry.fingerprint(),
       capability_fingerprint: Zaik.Home.Capabilities.Registry.fingerprint(),
+      world_schema_version: Zaik.Home.WorldContract.schema_version(),
+      world_contract_fingerprint: Zaik.Home.WorldContract.fingerprint(),
       passed?: passed?,
       checks: checks,
       actions: Zaik.Home.Mirror.actions(mirror),

@@ -64,6 +64,9 @@ defmodule Zaik do
   """
   def home_devices, do: Zaik.Home.DeviceStore.list_devices()
 
+  @doc "Return the current versioned canonical home-world contract."
+  def home_world_contract(opts \\ []), do: Zaik.Home.WorldContract.public(opts)
+
   @doc """
   Find a home device by exact name or unique case-insensitive substring.
   """
