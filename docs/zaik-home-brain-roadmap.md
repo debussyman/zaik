@@ -356,7 +356,9 @@ Goal: run observation-to-reconciliation continuously under OTP supervision.
   manual suppression leases, desired-state inspection, and recent decisions.
   Durable whole-home, per-area, per-policy, and area-policy off/shadow/advisory
   rules use deterministic precedence and are recorded in every decision;
-  canary/active modes remain impossible.
+  canary/active modes remain impossible, and the generic tool executor rejects
+  action contexts carrying autonomy decision identities before ledger claim or
+  executor invocation.
 - [ ] Add alerts for repeated non-convergence, oscillation prevention, stale
   critical inputs, and telemetry failures, with cooldown/debounce.
 

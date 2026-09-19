@@ -67,7 +67,8 @@ defmodule Zaik.Home.Mirror.Evals do
       %{name: "decision_outcomes_and_feedback_are_durable", kind: :decision_feedback},
       %{name: "stuck_policy_evaluation_is_durably_timed_out", kind: :evaluation_timeout},
       %{name: "occupancy_entry_sequences_remain_advisory", kind: :occupancy_sequences},
-      %{name: "scoped_policy_modes_are_inert_and_durable", kind: :scoped_policy_modes}
+      %{name: "scoped_policy_modes_are_inert_and_durable", kind: :scoped_policy_modes},
+      %{name: "autonomy_context_cannot_cross_execution_boundary", kind: :autonomy_boundary}
     ]
   end
 
@@ -78,6 +79,54 @@ defmodule Zaik.Home.Mirror.Evals do
       match?({:ok, %{verified: true}}, run.result) and run.report.passed? and
         run.report.side_effect_count == 2
     end)
+  end
+
+  defp run_case(%{kind: :autonomy_boundary} = definition) do
+    scenario = Scenarios.lily_bedtime_with_ac(id: definition.name)
+
+    finish(
+      definition,
+      Runner.run(scenario, fn _mirror, context ->
+        execution_context =
+          context
+          |> request_context("autonomy-boundary")
+          |> Map.put(:autonomy_decision_id, "hypothetical-decision")
+
+        result =
+          Zaik.Tools.Executor.run(
+            "control_device",
+            %{
+              "device" => "Lily's bedroom left blind",
+              "capability" => "cover",
+              "target" => %{"position" => 100}
+            },
+            execution_context,
+            task_supervisor: context.task_supervisor,
+            ledger: context.action_ledger
+          )
+
+        ledger_key =
+          Zaik.Home.ActionLedger.idempotency_key(
+            "control_device",
+            %{
+              "device" => "Lily's bedroom left blind",
+              "capability" => "cover",
+              "target" => %{"position" => 100}
+            },
+            execution_context
+          )
+
+        %{
+          result: result,
+          ledger_status: Zaik.Home.ActionLedger.lookup(ledger_key, context.action_ledger)
+        }
+      end),
+      fn run ->
+        run.result.result ==
+          {:error, {:autonomy_execution_not_enabled, "hypothetical-decision"}} and
+          run.result.ledger_status == {:error, :not_found} and run.report.side_effect_count == 0
+      end
+    )
   end
 
   defp run_case(%{kind: :invalid} = definition) do

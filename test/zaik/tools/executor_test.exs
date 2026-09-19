@@ -201,12 +201,17 @@ defmodule Zaik.Tools.ExecutorTest do
       |> Map.put(:message_id, 201)
       |> Map.put(:autonomy_decision_id, "decision")
 
-    assert {:ok, %{status: "accepted"}} =
+    assert {:error, {:autonomy_execution_not_enabled, "decision"}} =
              Zaik.Tools.Executor.run("control_device", args, autonomous,
                registry_opts: [modules: [FakeHomeAction]]
              )
 
     assert length(Zaik.Home.Autonomy.ManualOverrideStore.active("office", [], overrides)) == 1
+
+    autonomous_key =
+      Zaik.Home.ActionLedger.idempotency_key("control_device", args, autonomous)
+
+    assert {:error, :not_found} = Zaik.Home.ActionLedger.lookup(autonomous_key, ledger)
   end
 
   test "bounds action execution time", %{ledger: ledger, supervisor: supervisor} do

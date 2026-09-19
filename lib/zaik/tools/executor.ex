@@ -14,7 +14,8 @@ defmodule Zaik.Tools.Executor do
 
     with {:ok, %{descriptor: descriptor}} <- Zaik.Tools.Registry.fetch(tool, registry_opts),
          :ok <- authorize_active_skills(descriptor, context),
-         :ok <- authorize_versioned_goal(descriptor, context) do
+         :ok <- authorize_versioned_goal(descriptor, context),
+         :ok <- authorize_autonomy_execution(descriptor, context) do
       if descriptor.kind == :action do
         result =
           run_action(
@@ -63,6 +64,16 @@ defmodule Zaik.Tools.Executor do
 
       {:error, reason} ->
         {:error, {:action_claim_failed, reason}}
+    end
+  end
+
+  defp authorize_autonomy_execution(%{kind: kind}, _context) when kind != :action, do: :ok
+
+  defp authorize_autonomy_execution(_descriptor, context) do
+    case context_value(context, :autonomy_decision_id) do
+      nil -> :ok
+      "" -> :ok
+      decision_id -> {:error, {:autonomy_execution_not_enabled, to_string(decision_id)}}
     end
   end
 

@@ -116,7 +116,8 @@ Key invariants include:
 7. Confidence breaks ties only inside the same authority class.
 8. Autonomous action budgets are durable and assessed per device, room, and home.
 9. Model fallback never replays an attempted side effect.
-10. `accepted` means transport accepted the command; `verified` means later canonical state converged.
+10. Any action carrying an autonomy decision identity is rejected at the generic tool executor; shadow/advisory output cannot cross into physical execution.
+11. `accepted` means transport accepted the command; `verified` means later canonical state converged.
 
 ## Current capabilities
 
