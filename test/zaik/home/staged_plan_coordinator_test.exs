@@ -11,4 +11,16 @@ defmodule Zaik.Home.StagedPlanCoordinatorTest do
                executor_opts: [modules: [Zaik.Home.Executors.Cover]]
              })
   end
+
+  test "the automatic scheduler also refuses production-shaped contexts" do
+    Process.flag(:trap_exit, true)
+
+    assert {:error, :staged_plan_scheduler_not_enabled} =
+             Zaik.Home.StagedPlanScheduler.start_link(
+               context: %{
+                 mirror_scenario_id: "forged",
+                 executor_opts: [modules: [Zaik.Home.Executors.Cover]]
+               }
+             )
+  end
 end

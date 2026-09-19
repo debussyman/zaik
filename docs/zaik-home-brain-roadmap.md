@@ -381,8 +381,10 @@ Goal: support decisions where one action changes whether another is necessary.
   A supervised mirror-only coordinator now checkpoints stages, reobserves typed
   conditions, persists wait start/next-evaluation gates, enforces poll cadence
   across restarts, cancels at wait timeout, and protects each stage with the
-  action ledger; automatic wakeup scheduling, production execution, and stronger
-  in-flight recovery remain.
+  action ledger. A mirror-only virtual-time scheduler now wakes waiting plans
+  automatically and reconstructs waiting or interrupted running plans after
+  scheduler restart; observation wakeups, watchdog diagnostics, staged retries,
+  and production execution remain.
 - [x] Do not allow arbitrary model-authored code or predicates; conditions use
   validated scalar comparisons over declared fields from registered canonical
   capabilities, with explicit observation freshness.

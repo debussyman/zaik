@@ -1,10 +1,10 @@
 defmodule Zaik.Home.StagedPlanStore do
   @moduledoc """
-  Durable, audited storage for inert preflighted staged plans.
+  Durable, audited storage for preflighted staged plans.
 
-  Stored plans cannot execute. This store supports inspection, expiry, and
-  explicit exact-ID cancellation so a future supervised coordinator has a
-  durable lifecycle boundary instead of recovering from process memory.
+  The store provides lifecycle, ownership, wait-cadence, and checkpoint
+  boundaries. It never invokes an executor; the only current coordinator is
+  restricted to isolated mirror bindings.
   """
 
   use GenServer
@@ -209,7 +209,8 @@ defmodule Zaik.Home.StagedPlanStore do
                state.conn,
                """
                UPDATE home_staged_plans
-               SET status = 'completed', final_result_json = ?, completed_at = ?, updated_at = ?
+               SET status = 'completed', final_result_json = ?, completed_at = ?, updated_at = ?,
+                   next_evaluation_at = NULL
                WHERE id = ? AND runner_id = ? AND status = 'running'
                """,
                [
@@ -241,7 +242,8 @@ defmodule Zaik.Home.StagedPlanStore do
                state.conn,
                """
                UPDATE home_staged_plans
-               SET status = ?, final_result_json = ?, completed_at = ?, updated_at = ?
+               SET status = ?, final_result_json = ?, completed_at = ?, updated_at = ?,
+                   next_evaluation_at = NULL
                WHERE id = ? AND runner_id = ? AND status = 'running'
                """,
                [
@@ -281,7 +283,7 @@ defmodule Zaik.Home.StagedPlanStore do
                """
                UPDATE home_staged_plans
                SET status = 'cancelled', cancelled_at = ?, cancelled_by = ?,
-                   cancellation_reason = ?, updated_at = ?
+                   cancellation_reason = ?, updated_at = ?, next_evaluation_at = NULL
                WHERE id = ? AND status IN ('prepared', 'waiting')
                """,
                [
@@ -410,7 +412,7 @@ defmodule Zaik.Home.StagedPlanStore do
       conn,
       """
       UPDATE home_staged_plans
-      SET status = 'expired', expired_at = ?, updated_at = ?
+      SET status = 'expired', expired_at = ?, updated_at = ?, next_evaluation_at = NULL
       WHERE status IN ('prepared', 'waiting', 'running') AND julianday(expires_at) <= julianday(?)
       """,
       [now, now, now]

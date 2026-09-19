@@ -221,7 +221,20 @@ defmodule Zaik.Home.Mirror.Evals do
             context.staged_plan_store
           )
 
-        execution = Zaik.Home.StagedPlanCoordinator.run(execution_plan.id, context)
+        {:ok, _scheduled} =
+          Zaik.Home.StagedPlanScheduler.submit(
+            execution_plan.id,
+            context.staged_plan_scheduler
+          )
+
+        Zaik.Home.Mirror.advance(mirror, 0)
+
+        {:ok, execution} =
+          Zaik.Home.StagedPlanStore.lookup(
+            execution_plan.id,
+            [clock: context.clock],
+            context.staged_plan_store
+          )
 
         waiting_stages = [
           %{
@@ -263,12 +276,108 @@ defmodule Zaik.Home.Mirror.Evals do
             context.staged_plan_store
           )
 
-        first_wait = Zaik.Home.StagedPlanCoordinator.run(waiting_plan.id, context)
+        {:ok, _scheduled} =
+          Zaik.Home.StagedPlanScheduler.submit(waiting_plan.id, context.staged_plan_scheduler)
+
+        Zaik.Home.Mirror.advance(mirror, 0)
+
+        {:ok, first_wait} =
+          Zaik.Home.StagedPlanStore.lookup(
+            waiting_plan.id,
+            [clock: context.clock],
+            context.staged_plan_store
+          )
+
         immediate_wait = Zaik.Home.StagedPlanCoordinator.run(waiting_plan.id, context)
-        Zaik.Home.Mirror.advance(mirror, 9_000)
-        second_wait = Zaik.Home.StagedPlanCoordinator.run(waiting_plan.id, context)
-        Zaik.Home.Mirror.advance(mirror, 1_000)
-        wait_timeout = Zaik.Home.StagedPlanCoordinator.run(waiting_plan.id, context)
+
+        {:ok, interrupted_plan} =
+          Zaik.Home.StagedPlan.preflight(
+            "mirror interrupted running execution",
+            [
+              %{
+                id: "cancel-after-recovery",
+                conditions: [
+                  %{
+                    device: "Lily's room multi-sensor",
+                    capability: "illuminance",
+                    field: "value",
+                    operator: "lt",
+                    value: 0,
+                    max_age_seconds: 120
+                  }
+                ],
+                actions: [
+                  %{
+                    device: "Lily's bedroom left blind",
+                    capability: "cover",
+                    target: %{position: 0}
+                  }
+                ]
+              }
+            ],
+            context,
+            deadline_seconds: 60
+          )
+
+        {:ok, _} =
+          Zaik.Home.StagedPlanStore.persist(
+            interrupted_plan,
+            %{owner: "mirror-operator"},
+            [clock: context.clock],
+            context.staged_plan_store
+          )
+
+        runner_id = "mirror:#{context.mirror_scenario_id}:#{interrupted_plan.id}"
+
+        {:ok, %{status: "running"}} =
+          Zaik.Home.StagedPlanStore.claim_run(
+            interrupted_plan.id,
+            runner_id,
+            [clock: context.clock],
+            context.staged_plan_store
+          )
+
+        old_scheduler = context.staged_plan_scheduler
+        :ok = DynamicSupervisor.terminate_child(mirror.supervisor, old_scheduler)
+
+        {:ok, recovered_scheduler} =
+          DynamicSupervisor.start_child(
+            mirror.supervisor,
+            Supervisor.child_spec(
+              {Zaik.Home.StagedPlanScheduler, name: nil, context: context},
+              restart: :temporary
+            )
+          )
+
+        recovered_mirror = %{mirror | staged_plan_scheduler: recovered_scheduler}
+        :ok = Zaik.Home.StagedPlanScheduler.barrier(recovered_scheduler)
+        recovery = Zaik.Home.StagedPlanScheduler.status(recovered_scheduler)
+        Zaik.Home.Mirror.advance(recovered_mirror, 9_000)
+
+        {:ok, second_wait} =
+          Zaik.Home.StagedPlanStore.lookup(
+            waiting_plan.id,
+            [clock: context.clock],
+            context.staged_plan_store
+          )
+
+        Zaik.Home.Mirror.advance(recovered_mirror, 1_000)
+
+        {:ok, wait_timeout} =
+          Zaik.Home.StagedPlanStore.lookup(
+            waiting_plan.id,
+            [clock: context.clock],
+            context.staged_plan_store
+          )
+
+        {:ok, interrupted_recovery} =
+          Zaik.Home.StagedPlanStore.lookup(
+            interrupted_plan.id,
+            [clock: context.clock],
+            context.staged_plan_store
+          )
+
+        scheduler_status = Zaik.Home.StagedPlanScheduler.status(recovered_scheduler)
 
         %{
           plan: Zaik.Home.StagedPlan.public(plan),
@@ -281,8 +390,12 @@ defmodule Zaik.Home.Mirror.Evals do
           execution: execution,
           first_wait: first_wait,
           immediate_wait: immediate_wait,
+          recovery: recovery,
+          interrupted_plan_id: interrupted_plan.id,
+          interrupted_recovery: interrupted_recovery,
           second_wait: second_wait,
-          wait_timeout: wait_timeout
+          wait_timeout: wait_timeout,
+          scheduler_status: scheduler_status
         }
       end),
       fn run ->
@@ -295,14 +408,22 @@ defmodule Zaik.Home.Mirror.Evals do
           } and run.result.stored.status == "prepared" and
           run.result.cancelled.status == "cancelled" and run.result.active == [] and
           run.result.expired.status == "expired" and
-          match?({:ok, %{status: "completed", current_stage: 2}}, run.result.execution) and
-          match?({:ok, %{status: "waiting", current_stage: 0}}, run.result.first_wait) and
+          match?(%{status: "completed", current_stage: 2}, run.result.execution) and
+          match?(%{status: "waiting", current_stage: 0}, run.result.first_wait) and
           match?(
             {:error, {:staged_plan_wait_not_ready, %{retry_after_seconds: 1}}},
             run.result.immediate_wait
           ) and
-          match?({:ok, %{status: "waiting", current_stage: 0}}, run.result.second_wait) and
-          match?({:ok, %{status: "cancelled", current_stage: 0}}, run.result.wait_timeout) and
+          Map.has_key?(run.result.recovery.scheduled, run.result.first_wait.id) and
+          Map.has_key?(run.result.recovery.scheduled, run.result.interrupted_plan_id) and
+          match?(%{status: "cancelled", current_stage: 0}, run.result.interrupted_recovery) and
+          match?(%{status: "waiting", current_stage: 0}, run.result.second_wait) and
+          match?(
+            %{status: "cancelled", current_stage: 0, next_evaluation_at: nil},
+            run.result.wait_timeout
+          ) and
+          run.result.scheduler_status.running == [] and
+          not Map.has_key?(run.result.scheduler_status.scheduled, run.result.first_wait.id) and
           run.report.side_effect_count == 2
       end
     )

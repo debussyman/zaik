@@ -27,6 +27,7 @@ defmodule Zaik.Home.Mirror do
     :action_budget_store,
     :scope_mode_store,
     :staged_plan_store,
+    :staged_plan_scheduler,
     :action_verifier,
     :action_ledger,
     :task_supervisor,
@@ -171,31 +172,36 @@ defmodule Zaik.Home.Mirror do
               clock: clock_provider,
               faults: scenario.faults,
               events: scenario.events}
+           ),
+         mirror = %__MODULE__{
+           scenario: scenario,
+           supervisor: supervisor,
+           temp_dir: temp_dir,
+           clock: clock,
+           device_store: device_store,
+           occupancy_tracker: occupancy_tracker,
+           history_store: history_store,
+           telemetry_store: telemetry_store,
+           home_db_path: paths.home,
+           ops_db_path: paths.ops,
+           preset_store: preset_store,
+           manual_override_store: manual_override_store,
+           mode_store: mode_store,
+           desired_state_store: desired_state_store,
+           action_budget_store: action_budget_store,
+           scope_mode_store: scope_mode_store,
+           staged_plan_store: staged_plan_store,
+           action_verifier: action_verifier,
+           action_ledger: action_ledger,
+           task_supervisor: task_supervisor,
+           store: store
+         },
+         {:ok, staged_plan_scheduler} <-
+           start_child(
+             supervisor,
+             {Zaik.Home.StagedPlanScheduler, name: nil, context: context(mirror)}
            ) do
-      {:ok,
-       %__MODULE__{
-         scenario: scenario,
-         supervisor: supervisor,
-         temp_dir: temp_dir,
-         clock: clock,
-         device_store: device_store,
-         occupancy_tracker: occupancy_tracker,
-         history_store: history_store,
-         telemetry_store: telemetry_store,
-         home_db_path: paths.home,
-         ops_db_path: paths.ops,
-         preset_store: preset_store,
-         manual_override_store: manual_override_store,
-         mode_store: mode_store,
-         desired_state_store: desired_state_store,
-         action_budget_store: action_budget_store,
-         scope_mode_store: scope_mode_store,
-         staged_plan_store: staged_plan_store,
-         action_verifier: action_verifier,
-         action_ledger: action_ledger,
-         task_supervisor: task_supervisor,
-         store: store
-       }}
+      {:ok, %{mirror | staged_plan_scheduler: staged_plan_scheduler}}
     end
   end
 
@@ -212,6 +218,7 @@ defmodule Zaik.Home.Mirror do
         action_budget_store: mirror.action_budget_store,
         scope_mode_store: mirror.scope_mode_store,
         staged_plan_store: mirror.staged_plan_store,
+        staged_plan_scheduler: mirror.staged_plan_scheduler,
         history_store: mirror.history_store,
         telemetry_store: mirror.telemetry_store,
         sql_tool_opts: [
@@ -323,6 +330,7 @@ defmodule Zaik.Home.Mirror do
     step = Zaik.Home.Mirror.Clock.advance(mirror.clock, next_due_ms - current_ms)
     :ok = Zaik.Home.Mirror.Store.barrier(mirror.store)
     :ok = Zaik.Home.ActionVerifier.barrier(mirror.action_verifier)
+    :ok = Zaik.Home.StagedPlanScheduler.barrier(mirror.staged_plan_scheduler)
     total_fired = fired + step.fired
 
     if next_due_ms < target_ms do
