@@ -18,13 +18,15 @@ defmodule Zaik.Home.StagedPlanScheduler do
     do: GenServer.call(server, {:submit, plan_id})
 
   def status(server), do: GenServer.call(server, :status)
+  def sync_observations(server), do: GenServer.call(server, :sync_observations)
   def barrier(server, timeout \\ 5_000), do: GenServer.call(server, :barrier, timeout)
 
   @impl true
   def init(opts) do
     context = Keyword.fetch!(opts, :context)
 
-    with :ok <- mirror_context(context) do
+    with :ok <- mirror_context(context),
+         :ok <- Zaik.Home.Mirror.Store.set_observer(context.mirror_store, self()) do
       send(self(), :recover)
 
       {:ok,
@@ -36,6 +38,7 @@ defmodule Zaik.Home.StagedPlanScheduler do
          running: %{},
          last_results: %{},
          attempts: %{},
+         observation_wakeups: %{},
          barrier_waiters: []
        }}
     else
@@ -63,6 +66,7 @@ defmodule Zaik.Home.StagedPlanScheduler do
   end
 
   def handle_call(:status, _from, state), do: {:reply, public_status(state), state}
+  def handle_call(:sync_observations, _from, state), do: {:reply, :ok, state}
 
   def handle_call(:barrier, from, state) do
     if map_size(state.running) == 0 do
@@ -78,6 +82,17 @@ defmodule Zaik.Home.StagedPlanScheduler do
       Zaik.Home.StagedPlanStore.active([clock: state.clock], state.context.staged_plan_store)
       |> Enum.filter(&(&1.status in ["waiting", "running"]))
       |> Enum.reduce(state, &schedule_plan(&2, &1))
+
+    {:noreply, next}
+  end
+
+  def handle_info({:canonical_observation, observation}, state) do
+    next =
+      state.scheduled
+      |> Map.keys()
+      |> Enum.reduce(state, fn plan_id, current ->
+        maybe_wake_for_observation(current, plan_id, observation)
+      end)
 
     {:noreply, next}
   end
@@ -228,11 +243,87 @@ defmodule Zaik.Home.StagedPlanScheduler do
       scheduled: state.scheduled,
       running: state.running |> Map.values() |> Enum.sort(),
       attempts: state.attempts,
+      observation_wakeups: state.observation_wakeups,
       last_results: state.last_results
     }
   end
 
   defp running?(state, plan_id), do: plan_id in Map.values(state.running)
+
+  defp maybe_wake_for_observation(state, plan_id, observation) do
+    with {:ok, %{status: "waiting"} = plan} <-
+           Zaik.Home.StagedPlanStore.lookup(
+             plan_id,
+             [clock: state.clock],
+             state.context.staged_plan_store
+           ),
+         true <- observation_matches?(plan, observation),
+         {:ok, awakened} <-
+           Zaik.Home.StagedPlanStore.wake_waiting(
+             plan_id,
+             observation.observed_at,
+             [clock: state.clock],
+             state.context.staged_plan_store
+           ) do
+      state
+      |> Map.update!(:observation_wakeups, &Map.update(&1, plan_id, 1, fn count -> count + 1 end))
+      |> schedule_plan(awakened)
+    else
+      _ -> state
+    end
+  end
+
+  defp observation_matches?(plan, observation) do
+    stage = Enum.at(get_in(plan, [:plan, "stages"]) || [], plan.current_stage)
+
+    Enum.any?(Map.get(stage || %{}, "conditions", []), fn condition ->
+      same_device?(Map.get(condition, "device"), observation.device) and
+        relevant_payload?(condition, observation.payload)
+    end)
+  end
+
+  defp same_device?(left, right) when is_binary(left) and is_binary(right),
+    do: String.downcase(String.trim(left)) == String.downcase(String.trim(right))
+
+  defp same_device?(_left, _right), do: false
+
+  defp relevant_payload?(condition, payload) when is_map(payload) do
+    capability = Map.get(condition, "capability")
+    field = Map.get(condition, "field")
+
+    keys =
+      case {capability, field} do
+        {"temperature", value} when value in ["celsius", "fahrenheit"] ->
+          [{"temperature", :temperature}]
+
+        {"humidity", "percent"} ->
+          [{"humidity", :humidity}]
+
+        {"illuminance", "value"} ->
+          [{"illuminance", :illuminance}]
+
+        {"presence", "occupied"} ->
+          [{"presence", :presence}, {"occupancy", :occupancy}]
+
+        {"cover", "position"} ->
+          [{"position", :position}]
+
+        {"battery", "percent"} ->
+          [{"battery", :battery}]
+
+        {"linkquality", "value"} ->
+          [{"linkquality", :linkquality}]
+
+        _ ->
+          []
+      end
+
+    Enum.any?(keys, fn {string_key, atom_key} ->
+      Map.has_key?(payload, string_key) or Map.has_key?(payload, atom_key)
+    end)
+  end
+
+  defp relevant_payload?(_condition, _payload), do: false
 
   defp mirror_context(context) do
     modules = context |> Map.get(:executor_opts, []) |> Keyword.get(:modules, [])

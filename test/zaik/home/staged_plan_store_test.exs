@@ -183,7 +183,27 @@ defmodule Zaik.Home.StagedPlanStoreTest do
              Zaik.Home.StagedPlanStore.claim_run(plan.id, "runner", [], context.store)
 
     assert next_at == waiting.next_evaluation_at
-    Zaik.Home.Mirror.Clock.advance(context.clock, 2_000)
+    now = Zaik.Home.Mirror.Clock.now(context.clock)
+
+    assert {:error, :staged_plan_observation_before_wait} =
+             Zaik.Home.StagedPlanStore.wake_waiting(
+               plan.id,
+               DateTime.add(now, -1, :second),
+               [clock: context.context.clock],
+               context.store
+             )
+
+    assert {:ok, awakened} =
+             Zaik.Home.StagedPlanStore.wake_waiting(
+               plan.id,
+               now,
+               [clock: context.context.clock],
+               context.store
+             )
+
+    assert awakened.observation_wakeup_count == 1
+    assert awakened.observation_wakeup_at == DateTime.to_iso8601(now)
+    assert awakened.next_evaluation_at == DateTime.to_iso8601(now)
 
     assert {:ok, %{status: "running"}} =
              Zaik.Home.StagedPlanStore.claim_run(plan.id, "runner", [], context.store)

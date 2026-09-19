@@ -85,6 +85,20 @@ defmodule Zaik.Home.Mirror.Evals do
   defp run_case(%{kind: :staged_plan_contract} = definition) do
     scenario = Scenarios.lily_bedtime_with_ac(id: definition.name)
 
+    scenario = %{
+      scenario
+      | events:
+          scenario.events ++
+            [
+              %{
+                at_ms: 66_000,
+                type: :state_report,
+                device: "Lily's room multi-sensor",
+                payload: %{"illuminance" => 2_000}
+              }
+            ]
+    }
+
     finish(
       definition,
       Runner.run(scenario, fn mirror, context ->
@@ -352,7 +366,57 @@ defmodule Zaik.Home.Mirror.Evals do
         recovered_mirror = %{mirror | staged_plan_scheduler: recovered_scheduler}
         :ok = Zaik.Home.StagedPlanScheduler.barrier(recovered_scheduler)
         recovery = Zaik.Home.StagedPlanScheduler.status(recovered_scheduler)
+
+        {:ok, observation_plan} =
+          Zaik.Home.StagedPlan.preflight(
+            "mirror observation wakeup",
+            [
+              %{
+                id: "open-after-bright-report",
+                conditions: [
+                  %{
+                    device: "Lily's room multi-sensor",
+                    capability: "illuminance",
+                    field: "value",
+                    operator: "gte",
+                    value: 1_000,
+                    max_age_seconds: 120
+                  }
+                ],
+                wait: %{timeout_seconds: 20, poll_interval_seconds: 10},
+                actions: [
+                  %{
+                    device: "Lily's bedroom left blind",
+                    capability: "cover",
+                    target: %{position: 0}
+                  }
+                ]
+              }
+            ],
+            context,
+            deadline_seconds: 60
+          )
+
+        {:ok, _} =
+          Zaik.Home.StagedPlanStore.persist(
+            observation_plan,
+            %{owner: "mirror-operator"},
+            [clock: context.clock],
+            context.staged_plan_store
+          )
+
+        {:ok, _} =
+          Zaik.Home.StagedPlanScheduler.submit(observation_plan.id, recovered_scheduler)
+
+        Zaik.Home.Mirror.advance(recovered_mirror, 0)
         Zaik.Home.Mirror.advance(recovered_mirror, 9_000)
+
+        {:ok, observation_wakeup} =
+          Zaik.Home.StagedPlanStore.lookup(
+            observation_plan.id,
+            [clock: context.clock],
+            context.staged_plan_store
+          )
 
         {:ok, second_wait} =
           Zaik.Home.StagedPlanStore.lookup(
@@ -393,6 +457,8 @@ defmodule Zaik.Home.Mirror.Evals do
           recovery: recovery,
           interrupted_plan_id: interrupted_plan.id,
           interrupted_recovery: interrupted_recovery,
+          observation_plan_id: observation_plan.id,
+          observation_wakeup: observation_wakeup,
           second_wait: second_wait,
           wait_timeout: wait_timeout,
           scheduler_status: scheduler_status
@@ -417,6 +483,10 @@ defmodule Zaik.Home.Mirror.Evals do
           Map.has_key?(run.result.recovery.scheduled, run.result.first_wait.id) and
           Map.has_key?(run.result.recovery.scheduled, run.result.interrupted_plan_id) and
           match?(%{status: "cancelled", current_stage: 0}, run.result.interrupted_recovery) and
+          match?(
+            %{status: "completed", current_stage: 1, observation_wakeup_count: 1},
+            run.result.observation_wakeup
+          ) and
           match?(%{status: "waiting", current_stage: 0}, run.result.second_wait) and
           match?(
             %{status: "cancelled", current_stage: 0, next_evaluation_at: nil},
@@ -424,7 +494,8 @@ defmodule Zaik.Home.Mirror.Evals do
           ) and
           run.result.scheduler_status.running == [] and
           not Map.has_key?(run.result.scheduler_status.scheduled, run.result.first_wait.id) and
-          run.report.side_effect_count == 2
+          run.result.scheduler_status.observation_wakeups[run.result.observation_plan_id] == 1 and
+          run.report.side_effect_count == 3
       end
     )
   end

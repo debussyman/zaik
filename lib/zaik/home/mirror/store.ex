@@ -20,6 +20,7 @@ defmodule Zaik.Home.Mirror.Store do
   def reports(server), do: GenServer.call(server, :reports)
   def side_effect_count(server), do: GenServer.call(server, :side_effect_count)
   def barrier(server), do: GenServer.call(server, :barrier)
+  def set_observer(server, observer), do: GenServer.call(server, {:set_observer, observer})
 
   @impl true
   def init(opts) do
@@ -32,7 +33,8 @@ defmodule Zaik.Home.Mirror.Store do
       actions: %{},
       trace: [],
       report_trace: [],
-      side_effect_count: 0
+      side_effect_count: 0,
+      observer: Keyword.get(opts, :observer)
     }
 
     opts
@@ -108,7 +110,22 @@ defmodule Zaik.Home.Mirror.Store do
     end
   end
 
-  def handle_call(:barrier, _from, state), do: {:reply, :ok, state}
+  def handle_call({:set_observer, observer}, _from, state) do
+    if is_pid(observer) and Process.alive?(observer) do
+      {:reply, :ok, %{state | observer: observer}}
+    else
+      {:reply, {:error, :invalid_mirror_observer}, state}
+    end
+  end
+
+  def handle_call(:barrier, _from, state) do
+    if is_pid(state.observer) and Process.alive?(state.observer) do
+      :ok = Zaik.Home.StagedPlanScheduler.sync_observations(state.observer)
+    end
+
+    {:reply, :ok, state}
+  end
+
   def handle_call(:actions, _from, state), do: {:reply, state.trace, state}
   def handle_call(:reports, _from, state), do: {:reply, state.report_trace, state}
   def handle_call(:side_effect_count, _from, state), do: {:reply, state.side_effect_count, state}
@@ -177,6 +194,7 @@ defmodule Zaik.Home.Mirror.Store do
             server: state.verifier
           )
 
+          notify_observer(state.observer, device, payload, observed_at)
           :accepted
 
         {:ignored, reason} ->
@@ -196,6 +214,20 @@ defmodule Zaik.Home.Mirror.Store do
 
     {%{state | report_trace: state.report_trace ++ [trace]}, disposition}
   end
+
+  defp notify_observer(observer, device, payload, observed_at)
+       when is_pid(observer) do
+    if Process.alive?(observer) do
+      send(
+        observer,
+        {:canonical_observation, %{device: device, payload: payload, observed_at: observed_at}}
+      )
+    end
+
+    :ok
+  end
+
+  defp notify_observer(_observer, _device, _payload, _observed_at), do: :ok
 
   defp record_history(nil, _device, _observed_at), do: :ok
 

@@ -47,6 +47,10 @@ defmodule Zaik.Home.StagedPlanStore do
       when is_binary(id) and is_binary(runner_id) and is_integer(stage_index) and is_map(result),
       do: GenServer.call(server, {:checkpoint, id, runner_id, stage_index, result, status, opts})
 
+  def wake_waiting(id, observed_at, opts \\ [], server \\ __MODULE__)
+      when is_binary(id) and is_struct(observed_at, DateTime),
+      do: GenServer.call(server, {:wake_waiting, id, observed_at, opts})
+
   def finish(id, runner_id, result, opts \\ [], server \\ __MODULE__)
       when is_binary(id) and is_binary(runner_id) and is_map(result),
       do: GenServer.call(server, {:finish, id, runner_id, result, opts})
@@ -198,6 +202,35 @@ defmodule Zaik.Home.StagedPlanStore do
     {:reply, reply, state}
   end
 
+  def handle_call({:wake_waiting, id, observed_at, opts}, _from, state) do
+    now = Zaik.Time.now(Keyword.get(opts, :clock, state.clock))
+
+    reply =
+      with {:ok, current} <- lookup_row(state.conn, id),
+           :ok <- observation_wakeable(current, observed_at),
+           :ok <-
+             execute(
+               state.conn,
+               """
+               UPDATE home_staged_plans
+               SET next_evaluation_at = ?, observation_wakeup_at = ?,
+                   observation_wakeup_count = observation_wakeup_count + 1, updated_at = ?
+               WHERE id = ? AND status = 'waiting'
+               """,
+               [
+                 DateTime.to_iso8601(now),
+                 DateTime.to_iso8601(observed_at),
+                 DateTime.to_iso8601(now),
+                 id
+               ]
+             ),
+           {:ok, awakened} <- lookup_row(state.conn, id) do
+        {:ok, awakened}
+      end
+
+    {:reply, reply, state}
+  end
+
   def handle_call({:finish, id, runner_id, result, opts}, _from, state) do
     now = Zaik.Time.now(Keyword.get(opts, :clock, state.clock))
 
@@ -340,7 +373,9 @@ defmodule Zaik.Home.StagedPlanStore do
              completed_at TEXT,
              final_result_json TEXT,
              waiting_since TEXT,
-             next_evaluation_at TEXT
+             next_evaluation_at TEXT,
+             observation_wakeup_at TEXT,
+             observation_wakeup_count INTEGER NOT NULL DEFAULT 0
            );
 
            CREATE INDEX IF NOT EXISTS home_staged_plans_status_expiry_idx
@@ -355,7 +390,9 @@ defmodule Zaik.Home.StagedPlanStore do
          :ok <- ensure_column(conn, "completed_at", "TEXT"),
          :ok <- ensure_column(conn, "final_result_json", "TEXT"),
          :ok <- ensure_column(conn, "waiting_since", "TEXT"),
-         :ok <- ensure_column(conn, "next_evaluation_at", "TEXT") do
+         :ok <- ensure_column(conn, "next_evaluation_at", "TEXT"),
+         :ok <- ensure_column(conn, "observation_wakeup_at", "TEXT"),
+         :ok <- ensure_column(conn, "observation_wakeup_count", "INTEGER NOT NULL DEFAULT 0") do
       :ok
     end
   end
@@ -448,7 +485,8 @@ defmodule Zaik.Home.StagedPlanStore do
            expires_at, inserted_at, updated_at, cancelled_at, cancelled_by,
            cancellation_reason, expired_at, runner_id, current_stage,
            stage_results_json, started_at, completed_at, final_result_json,
-           waiting_since, next_evaluation_at
+           waiting_since, next_evaluation_at, observation_wakeup_at,
+           observation_wakeup_count
     FROM home_staged_plans #{suffix}
     """
   end
@@ -476,7 +514,9 @@ defmodule Zaik.Home.StagedPlanStore do
          completed_at,
          final_result_json,
          waiting_since,
-         next_evaluation_at
+         next_evaluation_at,
+         observation_wakeup_at,
+         observation_wakeup_count
        ]) do
     %{
       id: id,
@@ -501,7 +541,9 @@ defmodule Zaik.Home.StagedPlanStore do
       completed_at: completed_at,
       final_result: decode_json(final_result_json),
       waiting_since: waiting_since,
-      next_evaluation_at: next_evaluation_at
+      next_evaluation_at: next_evaluation_at,
+      observation_wakeup_at: observation_wakeup_at,
+      observation_wakeup_count: observation_wakeup_count
     }
   end
 
@@ -514,6 +556,20 @@ defmodule Zaik.Home.StagedPlanStore do
   defp validate_text(_field, _value), do: :ok
   defp cancellable(%{status: status}) when status in ["prepared", "waiting"], do: :ok
   defp cancellable(plan), do: {:error, {:staged_plan_not_cancellable, plan.status}}
+
+  defp observation_wakeable(%{status: "waiting", waiting_since: waiting_since}, observed_at)
+       when is_binary(waiting_since) do
+    with {:ok, started_at, _offset} <- DateTime.from_iso8601(waiting_since) do
+      if DateTime.before?(observed_at, started_at),
+        do: {:error, :staged_plan_observation_before_wait},
+        else: :ok
+    else
+      _ -> {:error, :invalid_staged_plan_wait_schedule}
+    end
+  end
+
+  defp observation_wakeable(plan, _observed_at),
+    do: {:error, {:staged_plan_not_waiting, plan.status}}
 
   defp claimable(%{status: "prepared"}, _runner_id, _now), do: :ok
 
