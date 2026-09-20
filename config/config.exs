@@ -174,6 +174,17 @@ config :zaik, :home_autonomy,
   subscribe_events: true,
   decision_db_path: if(config_env() == :test, do: ":memory:", else: "~/.zaik/home/home.db")
 
+# Eligibility for an operator-controlled physical trial. This records evidence
+# and approval only; it does not enable canary/active modes or execution.
+config :zaik, :home_canary_rollout,
+  allowed_policies: ["daylight_harvesting", "solar_heat_avoidance"],
+  allowed_scopes: ["lily_bedroom"],
+  allowed_capabilities: ["cover"],
+  minimum_shadow_seconds: 259_200,
+  minimum_shadow_decisions: 10,
+  mirror_repeats: 3,
+  minimum_mirror_pass_rate: 1.0
+
 config :zaik, :tool_execution, action_timeout_ms: 30_000
 config :zaik, :home_action_plans, max_actions: 10
 

@@ -20,6 +20,10 @@ defmodule Zaik.Home.Autonomy.DecisionStore do
   def recent(limit \\ 20, server \\ __MODULE__) when is_integer(limit),
     do: GenServer.call(server, {:recent, limit})
 
+  def shadow_evidence(policy_id, scope, server \\ __MODULE__)
+      when is_binary(policy_id) and is_binary(scope),
+      do: GenServer.call(server, {:shadow_evidence, policy_id, scope})
+
   def record_outcome(id, outcome, server \\ __MODULE__)
       when is_binary(id) and is_map(outcome),
       do: GenServer.call(server, {:record_outcome, id, outcome})
@@ -121,6 +125,19 @@ defmodule Zaik.Home.Autonomy.DecisionStore do
      state.conn
      |> query(select_sql("ORDER BY created_at DESC LIMIT ?"), [limit])
      |> Enum.map(&decode/1), state}
+  end
+
+  def handle_call({:shadow_evidence, policy_id, scope}, _from, state) do
+    decisions =
+      state.conn
+      |> query(
+        select_sql("WHERE query = ? AND mode IN ('shadow', 'advisory') ORDER BY created_at ASC"),
+        [scope]
+      )
+      |> Enum.map(&decode/1)
+      |> Enum.filter(&decision_contains_policy?(&1, policy_id))
+
+    {:reply, summarize_shadow_evidence(decisions, policy_id, scope), state}
   end
 
   def handle_call({:record_outcome, id, outcome}, _from, state) do
@@ -335,6 +352,64 @@ defmodule Zaik.Home.Autonomy.DecisionStore do
         end
     end
   end
+
+  defp decision_contains_policy?(decision, policy_id) do
+    decision
+    |> Map.get(:candidates, [])
+    |> Enum.any?(&(to_string(value(&1, :policy_id)) == policy_id))
+  end
+
+  defp summarize_shadow_evidence(decisions, policy_id, scope) do
+    capabilities =
+      decisions
+      |> Enum.flat_map(&Map.get(&1, :candidates, []))
+      |> Enum.flat_map(&List.wrap(value(&1, :desired_state)))
+      |> Enum.map(&(value(&1, :capability) |> to_string()))
+      |> Enum.reject(&(&1 == ""))
+      |> Enum.uniq()
+      |> Enum.sort()
+
+    safety_statuses = ~w(failed timed_out non_converged)
+
+    safety_failures =
+      decisions
+      |> Enum.flat_map(&Map.get(&1, :outcomes, []))
+      |> Enum.count(&(to_string(value(&1, :status)) in safety_statuses))
+
+    first_at = decisions |> List.first() |> decision_time()
+    last_at = decisions |> List.last() |> decision_time()
+
+    %{
+      policy_id: policy_id,
+      scope: scope,
+      decision_count: length(decisions),
+      proposed_count: Enum.count(decisions, &(&1.status == "proposed")),
+      blocked_count: Enum.count(decisions, &(&1.status == "blocked")),
+      satisfied_count: Enum.count(decisions, &(&1.status == "satisfied")),
+      safety_failures: safety_failures,
+      capabilities: capabilities,
+      first_decision_at: format_optional_time(first_at),
+      last_decision_at: format_optional_time(last_at),
+      duration_seconds: shadow_duration(first_at, last_at),
+      decision_ids: decisions |> Enum.map(& &1.id) |> Enum.take(-100)
+    }
+  end
+
+  defp decision_time(nil), do: nil
+
+  defp decision_time(decision) do
+    case DateTime.from_iso8601(to_string(Map.get(decision, :created_at))) do
+      {:ok, datetime, _offset} -> datetime
+      _ -> nil
+    end
+  end
+
+  defp shadow_duration(%DateTime{} = first, %DateTime{} = last),
+    do: max(0, DateTime.diff(last, first, :second))
+
+  defp shadow_duration(_first, _last), do: 0
+  defp format_optional_time(%DateTime{} = value), do: DateTime.to_iso8601(value)
+  defp format_optional_time(_value), do: nil
 
   defp append_unique(entries, %{"event_id" => event_id} = entry)
        when is_binary(event_id) and event_id != "" do

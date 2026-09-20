@@ -191,6 +191,64 @@ defmodule Zaik do
     )
   end
 
+  @doc "Assess mirror, shadow-duration, safety, and allowlist readiness for a physical trial."
+  def assess_home_canary_readiness(policy_id, scope, opts \\ []),
+    do: Zaik.Home.Autonomy.RolloutGate.assess(policy_id, scope, opts)
+
+  @doc """
+  Re-run all rollout gates and durably approve eligibility for an operator-controlled trial.
+
+  This does not enable autonomous execution or change an autonomy mode.
+  """
+  def approve_home_canary_eligibility(policy_id, scope, approved_by, reason, opts \\ []) do
+    store = Keyword.get(opts, :rollout_store, Zaik.Home.Autonomy.RolloutStore)
+    decision_store = Keyword.get(opts, :decision_store, Zaik.Home.Autonomy.DecisionStore)
+
+    if is_binary(approved_by) and String.trim(approved_by) != "" and is_binary(reason) and
+         String.trim(reason) != "" do
+      with {:ok, report} <-
+             Zaik.Home.Autonomy.RolloutGate.assess(policy_id, scope,
+               decision_store: decision_store
+             ),
+           true <- report.eligible_for_operator_trial do
+        Zaik.Home.Autonomy.RolloutStore.approve(
+          report,
+          approved_by,
+          reason,
+          [clock: Keyword.get(opts, :clock)],
+          store
+        )
+      else
+        false -> {:error, {:rollout_not_eligible, :readiness_gate_failed}}
+        {:error, reason} -> {:error, reason}
+      end
+    else
+      {:error, :operator_identity_and_reason_required}
+    end
+  end
+
+  @doc "Return active durable physical-trial eligibility approvals."
+  def home_canary_eligibility(scope \\ nil),
+    do: Zaik.Home.Autonomy.RolloutStore.active(scope)
+
+  @doc "Immediately roll back one eligibility approval without changing adapters."
+  def rollback_home_canary_eligibility(id, rolled_back_by, reason) do
+    if is_binary(rolled_back_by) and String.trim(rolled_back_by) != "" and is_binary(reason) and
+         String.trim(reason) != "" do
+      Zaik.Home.Autonomy.RolloutStore.rollback(id, rolled_back_by, reason)
+    else
+      {:error, :operator_identity_and_reason_required}
+    end
+  end
+
+  @doc "Create an inert proposal for exactly one operator-controlled low-risk trial action."
+  def propose_home_canary_trial(rollout_id, selector, created_by, reason),
+    do: Zaik.Home.Autonomy.CanaryTrial.propose(rollout_id, selector, created_by, reason)
+
+  @doc "Confirm and execute one exact operator-controlled trial proposal."
+  def confirm_home_canary_trial(proposal_id, approved_by),
+    do: Zaik.Home.Autonomy.CanaryTrial.confirm(proposal_id, approved_by)
+
   @doc """
   Append a structured execution outcome to a durable autonomy decision.
   """

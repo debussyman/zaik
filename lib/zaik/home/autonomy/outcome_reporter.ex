@@ -12,17 +12,28 @@ defmodule Zaik.Home.Autonomy.OutcomeReporter do
   @required ~w(decision_id goal_id policy_id snapshot_id)a
 
   def causality(context) when is_map(context) do
-    decision_id = value(context, :autonomy_decision_id)
+    case value(context, :operator_trial_causality) do
+      causality when is_map(causality) ->
+        %{
+          decision_id: normalize(value(causality, :decision_id)),
+          goal_id: normalize(value(causality, :goal_id)),
+          policy_id: normalize(value(causality, :policy_id)),
+          snapshot_id: normalize(value(causality, :snapshot_id))
+        }
 
-    if blank?(decision_id) do
-      %{}
-    else
-      %{
-        decision_id: normalize(decision_id),
-        goal_id: normalize(value(context, :autonomy_goal_id)),
-        policy_id: normalize(value(context, :autonomy_policy_id)),
-        snapshot_id: normalize(value(context, :autonomy_snapshot_id))
-      }
+      _ ->
+        decision_id = value(context, :autonomy_decision_id)
+
+        if blank?(decision_id) do
+          %{}
+        else
+          %{
+            decision_id: normalize(decision_id),
+            goal_id: normalize(value(context, :autonomy_goal_id)),
+            policy_id: normalize(value(context, :autonomy_policy_id)),
+            snapshot_id: normalize(value(context, :autonomy_snapshot_id))
+          }
+        end
     end
   end
 

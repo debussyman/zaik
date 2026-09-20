@@ -139,6 +139,43 @@ defmodule Zaik.Home.AutonomyOutcomeReporterTest do
     assert Enum.count(recorded, &(&1 == "non_converged")) == 1
   end
 
+  test "operator-controlled trial provenance correlates without enabling autonomy context", ctx do
+    args = %{"device" => "blind", "target" => %{"position" => 0}}
+
+    trial_context =
+      ctx.context
+      |> Map.drop([
+        :autonomy_decision_id,
+        :autonomy_goal_id,
+        :autonomy_policy_id,
+        :autonomy_snapshot_id
+      ])
+      |> Map.put(:message_id, "operator-trial")
+      |> Map.put(:operator_trial_causality, %{
+        decision_id: "decision-outcomes",
+        goal_id: "goal-daylight",
+        policy_id: "daylight_harvesting",
+        snapshot_id: "snapshot-outcomes"
+      })
+
+    refute Map.has_key?(trial_context, :autonomy_decision_id)
+
+    assert {:ok, key} =
+             Zaik.Home.ActionLedger.claim("control_device", args, trial_context, ctx.ledger)
+
+    assert :ok =
+             Zaik.Home.ActionLedger.complete(
+               key,
+               {:ok, %{action_id: "trial-action", status: "accepted"}},
+               ctx.ledger
+             )
+
+    assert {:ok, decision} =
+             Zaik.Home.Autonomy.DecisionStore.lookup("decision-outcomes", ctx.decisions)
+
+    assert Enum.any?(decision.outcomes, &(&1["action_id"] == "trial-action"))
+  end
+
   test "rejects incomplete or mismatched provenance before ledger claim", ctx do
     args = %{"device" => "blind", "target" => %{"position" => 0}}
 

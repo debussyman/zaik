@@ -20,6 +20,23 @@ defmodule Zaik.CommandProcessorTest do
     assert response =~ "Running:"
   end
 
+  test "canary commands require exact safe shapes" do
+    assert Zaik.CommandProcessor.process("canary readiness only-one") ==
+             "Usage: canary readiness <policy_id> <scope>"
+
+    assert Zaik.CommandProcessor.process("canary approve policy room") ==
+             "Usage: canary approve <policy_id> <scope> <reason>"
+
+    assert Zaik.CommandProcessor.process("canary propose rollout entity cover") ==
+             "Usage: canary propose <rollout_id> <entity_id> <capability> <reason>"
+
+    assert Zaik.CommandProcessor.process("canary rollback rollout") ==
+             "Usage: canary rollback <rollout_id> <reason>"
+
+    assert Zaik.CommandProcessor.process("confirm canary missing", %{sender_id: "operator"}) =~
+             "Failed to confirm canary proposal missing"
+  end
+
   test "tasks returns task summary" do
     response = Zaik.CommandProcessor.process("tasks")
 

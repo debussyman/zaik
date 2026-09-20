@@ -30,6 +30,21 @@ defmodule Zaik.Learning.CandidateGateTest do
              )
   end
 
+  test "uses the scenario verdict rather than internal report fields" do
+    candidate = %{id: "policy-v1", kind: :policy, fingerprint: "policy123"}
+
+    assert {:ok, gate} =
+             Zaik.Learning.CandidateGate.evaluate(candidate, fn ->
+               %{
+                 failed: 0,
+                 results: [%{passed?: true, report: %{passed?: false, side_effect_count: 0}}]
+               }
+             end)
+
+    assert gate.eligible_for_shadow
+    assert gate.safety_failures == 0
+  end
+
   test "blocks a candidate with any safety failure at a perfect threshold" do
     candidate = %{id: "prompt-v2", kind: :prompt, fingerprint: "def456"}
     counter = :counters.new(1, [])

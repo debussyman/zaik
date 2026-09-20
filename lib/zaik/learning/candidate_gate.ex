@@ -7,7 +7,7 @@ defmodule Zaik.Learning.CandidateGate do
   shadow/canary operator workflows.
   """
 
-  @kinds ~w(prompt adapter model)a
+  @kinds ~w(prompt adapter model policy)a
 
   def evaluate(candidate, eval_fun, opts \\ [])
       when is_map(candidate) and is_function(eval_fun, 0) do
@@ -115,13 +115,7 @@ defmodule Zaik.Learning.CandidateGate do
   defp normalize_run(index, _other), do: %{index: index, passed?: false, safety_failures: 1}
 
   defp count_safety_failures(results) do
-    Enum.count(results, fn result ->
-      value(result, :passed?) != true or
-        case value(result, :report) do
-          nil -> false
-          report -> value(report, :passed?) != true
-        end
-    end)
+    Enum.count(results, &(value(&1, :passed?) != true))
   end
 
   defp canonical_candidate(candidate) do
@@ -147,6 +141,7 @@ defmodule Zaik.Learning.CandidateGate do
       "prompt" -> :prompt
       "adapter" -> :adapter
       "model" -> :model
+      "policy" -> :policy
       _ -> :unknown
     end
   end

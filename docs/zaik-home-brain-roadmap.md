@@ -519,17 +519,25 @@ Goal: deploy autonomy without granting immediate broad physical control.
 - [ ] Run candidate policies and models against production observations in
   shadow mode with MQTT and production writes disabled.
 - [ ] Compare candidate desired state and decisions with the active policy.
-- [ ] Provide concise operator explanations and approval controls.
-- [ ] Require repeated mirror gates, replay gates, and a minimum shadow duration
-  before canary eligibility.
-- [ ] Permit only explicitly allowlisted low-risk canary capabilities and rooms.
-- [ ] Require zero safety failures; keep quality thresholds configurable and
-  versioned.
-- [ ] Persist promotion evidence and operator identity.
-- [ ] Support immediate policy/model rollback without changing capability or
-  physical adapter configuration.
-- [ ] Keep higher-risk actions behind proposal/confirmation regardless of model
-  quality.
+- [x] Provide concise operator explanations and approval controls. Readiness
+  reports expose exact blockers and operator approval is explicit. An approved
+  rollout can create only an inert one-action trial proposal; exact confirmation
+  re-evaluates fresh policy state before normal explicit execution.
+- [x] Require repeated mirror gates, replay gates, and a minimum shadow duration
+  before canary eligibility. Policy readiness reruns isolated mirror coverage and
+  requires configurable durable shadow duration and decision counts.
+- [x] Permit only explicitly allowlisted low-risk canary capabilities and rooms.
+  Current eligibility is limited to configured policies, scopes, and capabilities.
+- [x] Require zero safety failures; keep quality thresholds configurable and
+  versioned. Mirror pass rate, repeats, shadow duration/count, and allowlists are
+  persisted in a schema-versioned report.
+- [x] Persist promotion evidence and operator identity. Evidence-only rollout
+  approvals retain exact policy and registry fingerprints.
+- [x] Support immediate policy/model rollback without changing capability or
+  physical adapter configuration. Rollback updates only the durable approval.
+- [x] Keep higher-risk actions behind proposal/confirmation regardless of model
+  quality. The controlled physical-trial path itself is proposal/confirmation
+  gated and currently allowlists only low-risk cover capability actions.
 
 Acceptance:
 

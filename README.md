@@ -11,7 +11,7 @@ Observe -> derive context -> generate goals -> arbitrate -> reconcile -> execute
 Zaik is not a collection of prompt-triggered routines. It is an agent harness where models propose semantic goals and typed plans, while Elixir owns identity, permissions, evidence, priorities, execution, verification, retries, and rollout policy.
 
 > [!IMPORTANT]
-> Zaik is experimental. Explicit, validated user actions can control configured devices. Continuous autonomy currently runs only in `shadow` or `advisory` mode; physical `canary` and `active` modes are deliberately rejected until promotion and rollback gates are complete.
+> Zaik is experimental. Explicit, validated user actions can control configured devices. Continuous autonomy runs only in `shadow` or `advisory`; `canary` and `active` modes remain rejected. Real-home policy testing requires durable readiness approval, an inert one-action proposal, and exact operator confirmation.
 
 ## What makes Zaik different?
 
@@ -142,11 +142,28 @@ Key invariants include:
 - Exact-ID cooperative cancellation and action idempotency survive staged-store, scheduler, verifier, and ledger restarts in the mirror, while canonical observations reconcile lost in-memory verifier state without republishing.
 - A bounded run journal, read-only watchdog, explicit alert API, and disabled-by-default supervised periodic delivery expose unhealthy staged coordination without gaining execution authority.
 - A separate read-only autonomy watchdog detects repeated non-convergence, stale critical inputs, oscillation prevention, and required telemetry-write failures; explicit operator delivery uses durable cooldown claims and stores only a destination fingerprint.
+- Physical-trial readiness is independently gated by repeated isolated mirror passes, minimum durable production-shadow duration/count, zero safety failures, exact policy fingerprints, and explicit policy/room/capability allowlists. Operator approval and rollback are durable and cannot enable `:canary` or `:active`.
+- A real-home trial remains explicit user authority: an approved rollout may create an inert proposal for exactly one allowlisted action; exact-ID confirmation re-evaluates fresh policy state and executes only if the same semantic action is still proposed. It uses the normal idempotency, verifier, outcome, and manual-override boundaries and never carries `autonomy_decision_id`.
 - Persistent request-scoped idempotency and policy-gated retries.
 - Autonomy-correlated action claims fail closed unless decision, candidate goal, policy, and observation snapshot match the durable decision; accepted, verified, failed, cancelled, timed-out, and non-converged outcomes append idempotently to that causal record.
 - MQTT-backed action convergence verification.
 - Derived room context with occupancy, freshness, history summaries, season, and sunrise/sunset solar phase.
 - Versioned goal contracts with independently gathered evidence.
+
+### Controlled real-home policy trial
+
+The deterministic operator flow is deliberately separate from continuous autonomy:
+
+```text
+canary readiness <policy_id> <scope>
+canary approve <policy_id> <scope> <reason>
+canary propose <rollout_id> <entity_id> <capability> <reason>
+proposal <proposal_id>
+confirm canary <proposal_id>
+canary rollback <rollout_id> <reason>
+```
+
+Readiness and approval cannot move the runtime into `canary` or `active`. Only the exact confirmation command may execute the one action shown in the inspected proposal, and it is revalidated against a fresh policy decision first.
 
 ### Continuous home brain
 

@@ -128,6 +128,21 @@ defmodule Zaik.CommandProcessor do
       String.starts_with?(downcase(text), "confirm skill ") ->
         text |> rest_after("confirm skill") |> confirm_home_skill(context)
 
+      String.starts_with?(downcase(text), "confirm canary ") ->
+        text |> rest_after("confirm canary") |> confirm_home_canary(context)
+
+      String.starts_with?(downcase(text), "canary readiness ") ->
+        text |> rest_after("canary readiness") |> home_canary_readiness()
+
+      String.starts_with?(downcase(text), "canary approve ") ->
+        text |> rest_after("canary approve") |> approve_home_canary(context)
+
+      String.starts_with?(downcase(text), "canary propose ") ->
+        text |> rest_after("canary propose") |> propose_home_canary(context)
+
+      String.starts_with?(downcase(text), "canary rollback ") ->
+        text |> rest_after("canary rollback") |> rollback_home_canary(context)
+
       String.starts_with?(downcase(text), "approve ") ->
         text |> rest_after("approve") |> decide_proposal(:approve, context)
 
@@ -205,6 +220,11 @@ defmodule Zaik.CommandProcessor do
     approve <proposal_id>
     reject <proposal_id>
     confirm skill <proposal_id>
+    canary readiness <policy_id> <scope>
+    canary approve <policy_id> <scope> <reason>
+    canary propose <rollout_id> <entity_id> <capability> <reason>
+    confirm canary <proposal_id>
+    canary rollback <rollout_id> <reason>
     ask <prompt>
     submit llm <prompt>
     submit echo <message>
@@ -790,6 +810,99 @@ defmodule Zaik.CommandProcessor do
       {:error, reason} ->
         "Failed to confirm home skill #{id}: #{format_value(reason)}"
     end
+  end
+
+  defp confirm_home_canary(id, context) do
+    id = String.trim(id)
+    actor = actor_from_context(context)
+
+    case Zaik.confirm_home_canary_trial(id, actor) do
+      {:ok, result} ->
+        action = result.result
+        status = Map.get(action, :status) || Map.get(action, "status") || "accepted"
+        action_id = Map.get(action, :action_id) || Map.get(action, "action_id")
+
+        "Confirmed operator canary proposal #{result.proposal_id}: #{status}, action #{action_id}."
+
+      {:error, reason} ->
+        "Failed to confirm canary proposal #{id}: #{format_value(reason)}"
+    end
+  end
+
+  defp home_canary_readiness(text) do
+    case String.split(String.trim(text), ~r/\s+/, parts: 2) do
+      [policy_id, scope] ->
+        case Zaik.assess_home_canary_readiness(policy_id, scope) do
+          {:ok, report} -> format_canary_readiness(report)
+          {:error, reason} -> "Failed to assess canary readiness: #{format_value(reason)}"
+        end
+
+      _ ->
+        "Usage: canary readiness <policy_id> <scope>"
+    end
+  end
+
+  defp approve_home_canary(text, context) do
+    case String.split(String.trim(text), ~r/\s+/, parts: 3) do
+      [policy_id, scope, reason] ->
+        actor = actor_from_context(context)
+
+        case Zaik.approve_home_canary_eligibility(policy_id, scope, actor, reason) do
+          {:ok, rollout} ->
+            "Approved canary eligibility #{rollout.id} for #{policy_id} in #{scope}. Physical execution remains proposal-confirmed only."
+
+          {:error, reason} ->
+            "Failed to approve canary eligibility: #{format_value(reason)}"
+        end
+
+      _ ->
+        "Usage: canary approve <policy_id> <scope> <reason>"
+    end
+  end
+
+  defp propose_home_canary(text, context) do
+    case String.split(String.trim(text), ~r/\s+/, parts: 4) do
+      [rollout_id, entity_id, capability, reason] ->
+        actor = actor_from_context(context)
+
+        case Zaik.propose_home_canary_trial(
+               rollout_id,
+               %{entity_id: entity_id, capability: capability},
+               actor,
+               reason
+             ) do
+          {:ok, proposal} ->
+            "Created inert canary proposal #{proposal.id}. Inspect it, then use: confirm canary #{proposal.id}"
+
+          {:error, reason} ->
+            "Failed to propose canary trial: #{format_value(reason)}"
+        end
+
+      _ ->
+        "Usage: canary propose <rollout_id> <entity_id> <capability> <reason>"
+    end
+  end
+
+  defp rollback_home_canary(text, context) do
+    case String.split(String.trim(text), ~r/\s+/, parts: 2) do
+      [rollout_id, reason] ->
+        actor = actor_from_context(context)
+
+        case Zaik.rollback_home_canary_eligibility(rollout_id, actor, reason) do
+          {:ok, rollout} -> "Rolled back canary eligibility #{rollout.id}."
+          {:error, reason} -> "Failed to roll back canary eligibility: #{format_value(reason)}"
+        end
+
+      _ ->
+        "Usage: canary rollback <rollout_id> <reason>"
+    end
+  end
+
+  defp format_canary_readiness(report) do
+    status = if report.eligible_for_operator_trial, do: "eligible", else: "blocked"
+    blockers = if report.blockers == [], do: "none", else: Enum.join(report.blockers, ", ")
+
+    "Canary readiness #{status}: policy=#{report.policy_id}, scope=#{report.scope}, mirror=#{report.mirror_gate.passed}/#{report.mirror_gate.repeats}, shadow_decisions=#{report.shadow_evidence.decision_count}, shadow_seconds=#{report.shadow_evidence.duration_seconds}, safety_failures=#{report.mirror_gate.safety_failures + report.shadow_evidence.safety_failures}, blockers=#{blockers}, execution_enabled=false."
   end
 
   defp decide_proposal(id, decision, context) do
