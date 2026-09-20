@@ -9,7 +9,6 @@ defmodule Zaik.Home.RoomContext do
   def build(query, opts \\ []) when is_binary(query) do
     clock = Keyword.get(opts, :clock)
     now = Zaik.Time.now(clock)
-    lookup = Zaik.Home.Query.entity_lookup(query)
 
     world_opts =
       []
@@ -18,7 +17,7 @@ defmodule Zaik.Home.RoomContext do
       |> put_if(:capability_opts, Keyword.get(opts, :capability_opts))
       |> put_if(:clock, clock)
 
-    snapshot = Zaik.Home.World.snapshot(lookup, world_opts)
+    snapshot = Zaik.Home.World.snapshot(query, world_opts)
 
     if snapshot.count == 0 do
       {:error, :not_found}

@@ -6,17 +6,22 @@ defmodule Zaik.Home.Query do
   words describe what to read, not which entity to match.
   """
 
+  @version 1
+
   @lookup_noise MapSet.new(~w(
-                  a an are at battery batteries blind blinds can celsius change changed changes
+                  a ago an are at battery batteries blind blinds can celsius change changed changes
                   changing closed cooler cooling cover covers current currently day days degree
-                  degrees device devices do does fahrenheit for fully get getting give historical
-                  history hour hours how humidity humidities illuminance in is last latest
-                  linkquality me minute minutes month months now of open opened over partially past
-                  please position positions presence reading readings recent recently shade shades
-                  show state status tell temp temperature temperatures the today tonight trend
-                  trending value values warm warmer warming week weeks what where which window
-                  windows you
+                  degrees device devices do does fahrenheit for from fully get getting give historical
+                  eight eleven five four history hour hours how humidity humidities illuminance in is
+                  last latest linkquality me minute minutes month months nine now of one open opened over
+                  partially past
+                  please position positions presence reading readings recent recently second seconds
+                  sensor sensors seven shade shades show six state status tell temp temperature
+                  temperatures ten the three today tonight trend trending twelve two value values warm
+                  warmer warming week weeks were what where which window windows yesterday you
                 ))
+
+  def version, do: @version
 
   def entity_lookup(query) when is_binary(query) do
     meaningful =

@@ -7,7 +7,7 @@ defmodule Zaik.Home.WorldContract do
   schemas only—never current household state or private device identity.
   """
 
-  @schema_version 3
+  @schema_version 4
 
   def schema_version, do: @schema_version
 
@@ -53,6 +53,12 @@ defmodule Zaik.Home.WorldContract do
       ordering: %{
         entities: "case-insensitive name ascending",
         capabilities: "capability id ascending"
+      },
+      entity_query_schema: %{
+        resolver_version: Zaik.Home.EntityResolver.version(),
+        normalizer_version: Zaik.Home.Query.version(),
+        identity_fields: ["id", "name", "area_id", "aliases"],
+        invariant: "capability, plural, time-window, and question words do not alter entity set"
       },
       observation_semantics: %{
         classifications: ["source_observation", "bootstrap_recovery", "unobserved"],

@@ -133,11 +133,12 @@ Goal: remove remaining ambiguity before autonomous decisions depend on it.
 
 - [ ] Define a versioned home-world contract covering entity identity, areas,
   capability state, desired state, freshness, confidence, and provenance.
-  Schema version 3 now covers canonical entity fields, source/receive timestamps,
-  explicit freshness classes, exact-fact snapshot identity, ordering/missing-state
-  semantics, runtime-discovered capability state and target schemas, and the
-  typed adapter-calibration boundary; desired-state, confidence, and richer
-  provenance remain before this item is complete.
+  Schema version 4 now covers canonical entity fields, source/receive timestamps,
+  explicit freshness classes, exact-fact snapshot identity, versioned entity
+  resolution, ordering/missing-state semantics, runtime-discovered capability
+  state and target schemas, and the typed adapter-calibration boundary;
+  desired-state, confidence, and richer provenance remain before this item is
+  complete.
 - [x] Persist per-entity/per-capability adapter calibration where physical
   orientation or protocol semantics differ; do not rely on one global cover
   assumption for future adapters. The initial supported kind is a typed linear
@@ -145,8 +146,10 @@ Goal: remove remaining ambiguity before autonomous decisions depend on it.
 - [x] Add calibration evidence and operator identity to configuration changes.
   Every revision requires independent typed evidence, its stable fingerprint,
   the calibrating operator, and a reason in an append-only audit trail.
-- [ ] Use one shared entity-query resolver for current state, history, policies,
-  skills, and presets, with metamorphic lookup invariants.
+- [x] Use one shared entity-query resolver for current state, history, policies,
+  skills, and presets, with metamorphic lookup invariants. Current and historical
+  reads resolve through the same ID/name/area/alias matcher; room context,
+  policies, goal skills, and preset flows inherit that world boundary.
 - [ ] Guarantee that every AgentChat attempt and autonomy decision receives a
   durable trace or an observable telemetry-write failure.
 - [x] Record stable observation-snapshot IDs so a decision can identify exactly
@@ -168,7 +171,7 @@ Acceptance:
 
 - [x] A deliberately inverted production implementation fails an independent
   mirror oracle.
-- [ ] Adding capability, time-window, plural, or question words to a lookup does
+- [x] Adding capability, time-window, plural, or question words to a lookup does
   not change the resolved entity set.
 - [ ] Missing decision traces fail tests and surface operational alerts.
 

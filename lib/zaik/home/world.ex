@@ -157,25 +157,7 @@ defmodule Zaik.Home.World do
     end
   end
 
-  defp filter_query(entities, query) when query in [nil, ""], do: entities
-
-  defp filter_query(entities, query) do
-    normalized_query = normalize(query)
-    lookup_query = normalize_lookup(query)
-
-    Enum.filter(entities, fn entity ->
-      normalize(entity.id) == normalized_query or
-        normalize_lookup(entity.name) == lookup_query or
-        String.contains?(normalize_lookup(entity.name), lookup_query) or
-        fuzzy_tokens_match?(lookup_query, normalize_lookup(entity.name)) or
-        Enum.any?(entity.aliases, fn alias_name ->
-          normalize_lookup(alias_name) == lookup_query or
-            String.contains?(normalize_lookup(alias_name), lookup_query)
-        end) or
-        String.contains?(normalize_lookup(entity.area_id || ""), lookup_query) or
-        fuzzy_tokens_match?(lookup_query, normalize_lookup(entity.area_id || ""))
-    end)
-  end
+  defp filter_query(entities, query), do: Zaik.Home.EntityResolver.select(entities, query)
 
   defp identity_index(opts) do
     store = Keyword.get(opts, :identity_store, Zaik.Home.HistoryStore)
@@ -232,29 +214,6 @@ defmodule Zaik.Home.World do
   defp canonical(value) when is_list(value), do: Enum.map(value, &canonical/1)
   defp canonical(value) when is_atom(value), do: Atom.to_string(value)
   defp canonical(value), do: value
-
-  defp fuzzy_tokens_match?(query, candidate) do
-    query_tokens = String.split(query, " ", trim: true)
-    candidate_tokens = String.split(candidate, " ", trim: true)
-
-    query_tokens != [] and
-      Enum.all?(query_tokens, fn query_token ->
-        Enum.any?(candidate_tokens, fn candidate_token ->
-          query_token == candidate_token or String.starts_with?(candidate_token, query_token) or
-            String.starts_with?(query_token, candidate_token)
-        end)
-      end)
-  end
-
-  defp normalize_lookup(value) do
-    value
-    |> to_string()
-    |> String.trim()
-    |> String.downcase()
-    |> String.replace(~r/['’]/, "")
-    |> String.replace(~r/[^a-z0-9]+/, " ")
-    |> String.replace(~r/\s+/, " ")
-  end
 
   defp normalize(value) do
     value

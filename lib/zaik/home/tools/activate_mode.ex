@@ -51,7 +51,7 @@ defmodule Zaik.Home.Tools.ActivateMode do
   defp resolve_scope(scope, context) do
     snapshot =
       Zaik.Home.World.snapshot(
-        Zaik.Home.Query.entity_lookup(scope),
+        scope,
         device_store: value(context, :device_store) || Zaik.Home.DeviceStore,
         identity_store: value(context, :history_store) || Zaik.Home.HistoryStore,
         clock: value(context, :clock)

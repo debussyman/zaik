@@ -90,6 +90,25 @@ defmodule Zaik.Home.HistoryStoreTest do
     assert reading.value.celsius == 26.0
     assert reading.value.fahrenheit == 78.8
     assert reading.provenance == "observed"
+
+    variants = [
+      "lily bedroom",
+      "temperature lily bedroom",
+      "temperature readings for lily bedroom over the last 2 hours",
+      "what were the temperatures from lily bedroom sensors?"
+    ]
+
+    assert Enum.all?(variants, fn query ->
+             {:ok, readings} =
+               Zaik.Home.HistoryStore.capability_history(
+                 query,
+                 "temperature",
+                 [limit: 10],
+                 history
+               )
+
+             Enum.map(readings, & &1.device_id) == ["0xlily", "0xlily"]
+           end)
   end
 
   test "queries readings since a timestamp", %{history: history} do

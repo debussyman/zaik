@@ -34,7 +34,7 @@ defmodule Zaik.Home.Tools.GetState do
           |> put_if(:capability, value(args, :capability))
           |> put_if(:capability_opts, value(context, :capability_opts))
 
-        snapshot = Zaik.Home.World.snapshot(Zaik.Home.Query.entity_lookup(query), opts)
+        snapshot = Zaik.Home.World.snapshot(query, opts)
         if snapshot.count == 0, do: {:error, :not_found}, else: {:ok, snapshot}
 
       _ ->

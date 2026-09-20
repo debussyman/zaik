@@ -646,33 +646,36 @@ defmodule Zaik.Home.HistoryStore do
         from = Keyword.get(opts, :from)
         until_time = Keyword.get(opts, :until)
         {time_sql, time_params} = history_time_filter(from, until_time)
-        like_query = "%#{entity_query}%"
+
+        entity_ids =
+          conn
+          |> query_devices()
+          |> Zaik.Home.EntityResolver.select(entity_query)
+          |> Enum.map(& &1.id)
 
         rows =
-          query(
-            conn,
-            """
-            SELECT d.id, d.friendly_name, d.area_id, r.observed_at, r.#{column}, r.provenance
-            FROM readings r
-            JOIN devices d ON d.id = r.device_id
-            WHERE (
-              lower(d.id) = lower(?) OR
-              lower(d.friendly_name) = lower(?) OR
-              lower(d.friendly_name) LIKE lower(?) OR
-              lower(COALESCE(d.area_id, '')) = lower(?) OR
-              EXISTS (
-                SELECT 1 FROM home_entity_aliases a
-                WHERE a.device_id = d.id AND lower(a.alias) = lower(?)
+          case entity_ids do
+            [] ->
+              []
+
+            ids ->
+              placeholders = Enum.map_join(ids, ", ", fn _id -> "?" end)
+
+              query(
+                conn,
+                """
+                SELECT d.id, d.friendly_name, d.area_id, r.observed_at, r.#{column}, r.provenance
+                FROM readings r
+                JOIN devices d ON d.id = r.device_id
+                WHERE d.id IN (#{placeholders})
+                  AND r.#{column} IS NOT NULL
+                  #{time_sql}
+                ORDER BY r.observed_at ASC
+                LIMIT ?
+                """,
+                ids ++ time_params ++ [limit]
               )
-            )
-              AND r.#{column} IS NOT NULL
-              #{time_sql}
-            ORDER BY r.observed_at ASC
-            LIMIT ?
-            """,
-            [entity_query, entity_query, like_query, entity_query, entity_query] ++
-              time_params ++ [limit]
-          )
+          end
           |> Enum.map(fn [device_id, name, area_id, observed_at, value, provenance] ->
             %{
               device_id: device_id,
