@@ -384,8 +384,11 @@ Goal: run observation-to-reconciliation continuously under OTP supervision.
   canary/active modes remain impossible, and the generic tool executor rejects
   action contexts carrying autonomy decision identities before ledger claim or
   executor invocation.
-- [ ] Add alerts for repeated non-convergence, oscillation prevention, stale
-  critical inputs, and telemetry failures, with cooldown/debounce.
+- [x] Add alerts for repeated non-convergence, oscillation prevention, stale
+  critical inputs, and telemetry failures, with cooldown/debounce. A read-only
+  watchdog uses bounded recent decisions and required-write health; explicit
+  operator delivery uses atomic durable claims, releases failed sends, persists
+  cooldown across restart, and stores only a destination fingerprint.
 
 Acceptance:
 

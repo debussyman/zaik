@@ -179,6 +179,18 @@ defmodule Zaik do
   def home_autonomy_decisions(limit \\ 20),
     do: Zaik.Home.Autonomy.DecisionStore.recent(limit)
 
+  @doc "Return read-only diagnostics for autonomy and required telemetry health."
+  def home_autonomy_diagnostics(opts \\ []),
+    do: Zaik.Home.Autonomy.Watchdog.evaluate(%{}, opts)
+
+  @doc "Explicitly deliver cooldown-protected autonomy diagnostics to an operator chat."
+  def send_home_autonomy_alerts(chat_id, opts \\ []) do
+    Zaik.Home.Autonomy.Alerts.deliver(
+      %{},
+      Keyword.put(opts, :chat_id, chat_id)
+    )
+  end
+
   @doc """
   Append a structured execution outcome to a durable autonomy decision.
   """

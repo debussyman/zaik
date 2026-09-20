@@ -28,6 +28,18 @@ defmodule Zaik.Home.Autonomy.DecisionStore do
       when is_binary(id) and is_map(feedback),
       do: GenServer.call(server, {:record_feedback, id, feedback})
 
+  def claim_alert_delivery(fingerprint, attrs, opts \\ [], server \\ __MODULE__)
+      when is_binary(fingerprint) and is_map(attrs) and is_list(opts),
+      do: GenServer.call(server, {:claim_alert_delivery, fingerprint, attrs, opts})
+
+  def complete_alert_delivery(fingerprint, token, server \\ __MODULE__)
+      when is_binary(fingerprint) and is_binary(token),
+      do: GenServer.call(server, {:complete_alert_delivery, fingerprint, token})
+
+  def release_alert_delivery(fingerprint, token, server \\ __MODULE__)
+      when is_binary(fingerprint) and is_binary(token),
+      do: GenServer.call(server, {:release_alert_delivery, fingerprint, token})
+
   def reset(server \\ __MODULE__), do: GenServer.call(server, :reset)
 
   @impl true
@@ -121,8 +133,50 @@ defmodule Zaik.Home.Autonomy.DecisionStore do
     {:reply, reply, state}
   end
 
+  def handle_call({:claim_alert_delivery, fingerprint, attrs, opts}, _from, state) do
+    now = Zaik.Time.now(Keyword.get(opts, :clock, state.clock))
+    cooldown_seconds = Keyword.get(opts, :cooldown_seconds, 900)
+    claim_timeout_seconds = Keyword.get(opts, :claim_timeout_seconds, 60)
+
+    reply =
+      with :ok <-
+             validate_alert_claim(fingerprint, attrs, cooldown_seconds, claim_timeout_seconds) do
+        claim_alert(
+          state.conn,
+          fingerprint,
+          attrs,
+          now,
+          cooldown_seconds,
+          claim_timeout_seconds
+        )
+      end
+
+    {:reply, reply, state}
+  end
+
+  def handle_call({:complete_alert_delivery, fingerprint, token}, _from, state) do
+    reply = update_alert_claim(state.conn, fingerprint, token, "completed")
+    {:reply, reply, state}
+  end
+
+  def handle_call({:release_alert_delivery, fingerprint, token}, _from, state) do
+    reply =
+      execute(
+        state.conn,
+        "DELETE FROM home_autonomy_alert_deliveries WHERE fingerprint = ? AND claim_token = ? AND status = 'claimed'",
+        [fingerprint, token]
+      )
+
+    {:reply, reply, state}
+  end
+
   def handle_call(:reset, _from, state) do
-    {:reply, Sqlite3.execute(state.conn, "DELETE FROM home_autonomy_decisions"), state}
+    reply =
+      with :ok <- Sqlite3.execute(state.conn, "DELETE FROM home_autonomy_decisions") do
+        Sqlite3.execute(state.conn, "DELETE FROM home_autonomy_alert_deliveries")
+      end
+
+    {:reply, reply, state}
   end
 
   @impl true
@@ -158,6 +212,19 @@ defmodule Zaik.Home.Autonomy.DecisionStore do
 
            CREATE INDEX IF NOT EXISTS home_autonomy_decisions_created_idx
              ON home_autonomy_decisions(created_at DESC);
+
+           CREATE TABLE IF NOT EXISTS home_autonomy_alert_deliveries (
+             fingerprint TEXT PRIMARY KEY,
+             issue_type TEXT NOT NULL,
+             details_json TEXT NOT NULL,
+             destination_fingerprint TEXT NOT NULL,
+             status TEXT NOT NULL,
+             claim_token TEXT NOT NULL,
+             delivered_at TEXT NOT NULL
+           );
+
+           CREATE INDEX IF NOT EXISTS home_autonomy_alert_deliveries_time_idx
+             ON home_autonomy_alert_deliveries(delivered_at DESC);
            """),
          :ok <- ensure_json_column(conn, "policy_modes_json", "[]"),
          :ok <- ensure_json_column(conn, "conflict_locks_json", "{}"),
@@ -303,6 +370,143 @@ defmodule Zaik.Home.Autonomy.DecisionStore do
        |> Map.put("owner", String.trim(owner))}
     else
       {:error, {:invalid_autonomy_feedback, :rating_or_owner}}
+    end
+  end
+
+  defp validate_alert_claim(fingerprint, attrs, cooldown_seconds, claim_timeout_seconds) do
+    issue_type = value(attrs, :issue_type)
+    destination = value(attrs, :destination_fingerprint)
+    details = Jason.encode!(json_safe(value(attrs, :details) || %{}))
+
+    cond do
+      String.trim(fingerprint) == "" or byte_size(fingerprint) > 128 ->
+        {:error, :invalid_alert_fingerprint}
+
+      not is_binary(issue_type) or String.trim(issue_type) == "" or byte_size(issue_type) > 100 ->
+        {:error, :invalid_alert_type}
+
+      not is_binary(destination) or String.trim(destination) == "" or
+          byte_size(destination) > 128 ->
+        {:error, :invalid_alert_destination}
+
+      byte_size(details) > 4_096 ->
+        {:error, :alert_details_too_large}
+
+      not is_integer(cooldown_seconds) or cooldown_seconds < 1 ->
+        {:error, :invalid_alert_cooldown}
+
+      not is_integer(claim_timeout_seconds) or claim_timeout_seconds < 1 ->
+        {:error, :invalid_alert_claim_timeout}
+
+      true ->
+        :ok
+    end
+  end
+
+  defp claim_alert(conn, fingerprint, attrs, now, cooldown_seconds, claim_timeout_seconds) do
+    existing =
+      query(
+        conn,
+        "SELECT status, claim_token, delivered_at FROM home_autonomy_alert_deliveries WHERE fingerprint = ?",
+        [fingerprint]
+      )
+
+    suppressed_at =
+      case existing do
+        [[status, _token, delivered_at]] ->
+          case DateTime.from_iso8601(delivered_at) do
+            {:ok, recorded_at, _offset} ->
+              age = max(0, DateTime.diff(now, recorded_at, :second))
+
+              if (status == "completed" and age < cooldown_seconds) or
+                   (status == "claimed" and age < claim_timeout_seconds),
+                 do: delivered_at
+
+            _ ->
+              nil
+          end
+
+        _ ->
+          nil
+      end
+
+    if suppressed_at do
+      {:suppressed, suppressed_at}
+    else
+      token = :crypto.strong_rand_bytes(12) |> Base.url_encode64(padding: false)
+      delivered_at = DateTime.to_iso8601(now)
+
+      result =
+        execute(
+          conn,
+          """
+          INSERT INTO home_autonomy_alert_deliveries
+            (fingerprint, issue_type, details_json, destination_fingerprint,
+             status, claim_token, delivered_at)
+          VALUES (?, ?, ?, ?, 'claimed', ?, ?)
+          ON CONFLICT(fingerprint) DO UPDATE SET
+            issue_type = excluded.issue_type,
+            details_json = excluded.details_json,
+            destination_fingerprint = excluded.destination_fingerprint,
+            status = 'claimed',
+            claim_token = excluded.claim_token,
+            delivered_at = excluded.delivered_at
+          """,
+          [
+            fingerprint,
+            to_string(value(attrs, :issue_type)),
+            Jason.encode!(json_safe(value(attrs, :details) || %{})),
+            to_string(value(attrs, :destination_fingerprint)),
+            token,
+            delivered_at
+          ]
+        )
+
+      case result do
+        :ok ->
+          case prune_alert_deliveries(conn, 1_000) do
+            :ok -> {:ok, token}
+            error -> error
+          end
+
+        error ->
+          error
+      end
+    end
+  end
+
+  defp prune_alert_deliveries(conn, max_rows) do
+    execute(
+      conn,
+      """
+      DELETE FROM home_autonomy_alert_deliveries
+      WHERE fingerprint IN (
+        SELECT fingerprint FROM home_autonomy_alert_deliveries
+        ORDER BY delivered_at DESC
+        LIMIT -1 OFFSET ?
+      )
+      """,
+      [max_rows]
+    )
+  end
+
+  defp update_alert_claim(conn, fingerprint, token, status) do
+    with [["claimed"]] <-
+           query(
+             conn,
+             "SELECT status FROM home_autonomy_alert_deliveries WHERE fingerprint = ? AND claim_token = ?",
+             [fingerprint, token]
+           ),
+         :ok <-
+           execute(
+             conn,
+             "UPDATE home_autonomy_alert_deliveries SET status = ? WHERE fingerprint = ? AND claim_token = ?",
+             [status, fingerprint, token]
+           ) do
+      :ok
+    else
+      [] -> {:error, :alert_claim_not_found}
+      _ -> {:error, :alert_claim_not_active}
     end
   end
 

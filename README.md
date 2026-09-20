@@ -140,7 +140,8 @@ Key invariants include:
 - Durable staged-plan lifecycle storage with virtual-time expiry, exact-ID operator cancellation, restart recovery, and bounded terminal retention.
 - A supervised, ledger-protected staged coordinator available only with isolated mirror bindings; stages require verified convergence, and retries remain impossible until the existing low-risk retry policy sees settled, fresh post-request evidence of non-convergence and available budget.
 - Exact-ID cooperative cancellation and action idempotency survive staged-store, scheduler, verifier, and ledger restarts in the mirror, while canonical observations reconcile lost in-memory verifier state without republishing.
-- A bounded run journal, read-only watchdog, explicit alert API, and disabled-by-default supervised periodic delivery expose unhealthy coordination without gaining execution authority.
+- A bounded run journal, read-only watchdog, explicit alert API, and disabled-by-default supervised periodic delivery expose unhealthy staged coordination without gaining execution authority.
+- A separate read-only autonomy watchdog detects repeated non-convergence, stale critical inputs, oscillation prevention, and required telemetry-write failures; explicit operator delivery uses durable cooldown claims and stores only a destination fingerprint.
 - Persistent request-scoped idempotency and policy-gated retries.
 - Autonomy-correlated action claims fail closed unless decision, candidate goal, policy, and observation snapshot match the durable decision; accepted, verified, failed, cancelled, timed-out, and non-converged outcomes append idempotently to that causal record.
 - MQTT-backed action convergence verification.

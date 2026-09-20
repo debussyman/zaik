@@ -156,6 +156,7 @@ Home automation is one optional domain, not the whole harness.
 | `Zaik.Home.Executors.Registry` | Uncached runtime executor discovery. | Keep as the hot-load-friendly executor registry. |
 | `Zaik.Home.ActionLedger` | SQLite request-scoped action idempotency ledger, including causal autonomy metadata and later verified-result reconciliation. | Keep in the home execution/policy layer. |
 | `Zaik.Home.Autonomy.OutcomeReporter` | Validates decision/goal/policy/snapshot provenance before an autonomous ledger claim and idempotently appends action lifecycle outcomes to the decision. | Keep as inert provenance validation; it never authorizes execution. |
+| `Zaik.Home.Autonomy.Watchdog` / `Alerts` | Read-only diagnostics and explicit durable-cooldown operator delivery for non-convergence, stale critical inputs, oscillation prevention, and required telemetry-write failures. | Keep separate from policy evaluation, scheduling, cancellation, retries, and execution. |
 | `Zaik.Home.ActionVerifier` | Correlates action IDs with ordered adapter reports, validates target convergence, and rejects conflicting pending targets. | Keep in the home execution/policy layer. |
 | `Zaik.Home.ActionRetryPolicy` | Determines retry eligibility from verification state, fresh device state, cooldown, and attempt budget. | Keep as deterministic policy outside the model. |
 | `Zaik.Home.ActionPlan` | Preflights coordinated actions, shares a bounded verification wait, and reports partial completion. | Keep as the multi-action execution boundary. |
