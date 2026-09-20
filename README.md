@@ -142,6 +142,7 @@ Key invariants include:
 - Exact-ID cooperative cancellation and action idempotency survive staged-store, scheduler, verifier, and ledger restarts in the mirror, while canonical observations reconcile lost in-memory verifier state without republishing.
 - A bounded run journal, read-only watchdog, explicit alert API, and disabled-by-default supervised periodic delivery expose unhealthy coordination without gaining execution authority.
 - Persistent request-scoped idempotency and policy-gated retries.
+- Autonomy-correlated action claims fail closed unless decision, candidate goal, policy, and observation snapshot match the durable decision; accepted, verified, failed, cancelled, timed-out, and non-converged outcomes append idempotently to that causal record.
 - MQTT-backed action convergence verification.
 - Derived room context with occupancy, freshness, history summaries, season, and sunrise/sunset solar phase.
 - Versioned goal contracts with independently gathered evidence.

@@ -368,8 +368,11 @@ Goal: run observation-to-reconciliation continuously under OTP supervision.
   stores context, candidates, arbitration, reconciliation, conflict/budget gates,
   append-only structured execution outcomes, and rated operator feedback; staged
   plan records remain.
-- [ ] Correlate every physical action with its originating decision, goal,
-  policy, and observation snapshot.
+- [x] Correlate every physical action with its originating decision, goal,
+  policy, and observation snapshot. Autonomy-tagged ledger claims fail before
+  side effects unless all four references match the durable decision; accepted,
+  verified, failed, cancelled, timed-out, and non-converged lifecycle outcomes
+  append idempotently to that decision and required write failures degrade health.
 - [ ] Add watchdog recovery for stuck evaluations and staged plans. Bounded
   evaluation workers are now brutally terminated at timeout with durable
   diagnostic decisions and operator-visible counters; staged-plan recovery

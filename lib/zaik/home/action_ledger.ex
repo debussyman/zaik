@@ -29,9 +29,20 @@ defmodule Zaik.Home.ActionLedger do
   end
 
   def claim(tool, args, context, server \\ __MODULE__) do
-    case idempotency_key(tool, args, context) do
-      nil -> {:ok, nil}
-      key -> GenServer.call(server, {:claim, key, request_key(context), to_string(tool), args})
+    causality = Zaik.Home.Autonomy.OutcomeReporter.causality(context)
+
+    case {idempotency_key(tool, args, context), map_size(causality)} do
+      {nil, 0} ->
+        {:ok, nil}
+
+      {nil, _autonomy_causality} ->
+        {:error, :autonomy_request_identity_required}
+
+      {key, _size} ->
+        GenServer.call(
+          server,
+          {:claim, key, request_key(context), to_string(tool), args, causality}
+        )
     end
   end
 
@@ -98,26 +109,52 @@ defmodule Zaik.Home.ActionLedger do
   end
 
   @impl true
-  def handle_call({:claim, _key, _request_key, _tool, _args}, _from, %{conn: nil} = state),
-    do: {:reply, {:ok, nil}, state}
-
-  def handle_call({:claim, key, request_key, tool, args}, _from, state) do
+  def handle_call(
+        {:claim, _key, _request_key, _tool, _args, causality},
+        _from,
+        %{conn: nil} = state
+      ) do
     reply =
-      case fetch(state.conn, key) do
-        nil ->
-          now = Zaik.Time.now(state.config.clock) |> DateTime.to_iso8601()
+      if map_size(causality) == 0,
+        do: {:ok, nil},
+        else: {:error, :autonomy_causality_store_unavailable}
 
-          case exec(
-                 state.conn,
-                 "INSERT INTO home_action_ledger (idempotency_key, request_key, tool, args_json, status, inserted_at, updated_at) VALUES (?, ?, ?, ?, 'running', ?, ?)",
-                 [key, request_key, tool, Jason.encode!(args), now, now]
-               ) do
-            :ok -> {:ok, key}
-            {:error, reason} -> {:error, reason}
-          end
+    {:reply, reply, state}
+  end
 
-        entry ->
-          {:duplicate, duplicate_result(entry)}
+  def handle_call({:claim, key, request_key, tool, args, causality}, _from, state) do
+    reporter_opts = reporter_opts(state)
+
+    reply =
+      with :ok <- Zaik.Home.Autonomy.OutcomeReporter.validate_causality(causality, reporter_opts) do
+        case fetch(state.conn, key) do
+          nil ->
+            now = Zaik.Time.now(state.config.clock) |> DateTime.to_iso8601()
+
+            case exec(
+                   state.conn,
+                   "INSERT INTO home_action_ledger (idempotency_key, request_key, tool, args_json, causality_json, status, inserted_at, updated_at) VALUES (?, ?, ?, ?, ?, 'running', ?, ?)",
+                   [
+                     key,
+                     request_key,
+                     tool,
+                     Jason.encode!(args),
+                     Jason.encode!(causality),
+                     now,
+                     now
+                   ]
+                 ) do
+              :ok -> {:ok, key}
+              {:error, reason} -> {:error, reason}
+            end
+
+          entry ->
+            if canonical(entry.causality) == canonical(causality) do
+              {:duplicate, duplicate_result(entry)}
+            else
+              {:error, :autonomy_causality_mismatch}
+            end
+        end
       end
 
     {:reply, reply, state}
@@ -137,6 +174,13 @@ defmodule Zaik.Home.ActionLedger do
         "UPDATE home_action_ledger SET status = ?, result_json = ?, error_json = ?, updated_at = ? WHERE idempotency_key = ?",
         [status, result_json, error_json, now, key]
       )
+
+    if reply == :ok do
+      case fetch(state.conn, key) do
+        nil -> :ok
+        entry -> report_completion(entry, result, state)
+      end
+    end
 
     {:reply, reply, state}
   end
@@ -193,16 +237,18 @@ defmodule Zaik.Home.ActionLedger do
 
   def handle_cast({:mark_verification, key, action_id, verification}, state) do
     case fetch(state.conn, key) do
-      %{status: "succeeded", result: result} when is_map(result) ->
+      %{status: "succeeded", result: result} = entry when is_map(result) ->
         updated = result |> apply_verification(action_id, verification) |> update_plan_status()
         now = Zaik.Time.now(state.config.clock) |> DateTime.to_iso8601()
 
-        _ =
+        write_result =
           exec(
             state.conn,
             "UPDATE home_action_ledger SET result_json = ?, updated_at = ? WHERE idempotency_key = ?",
             [encode(updated), now, key]
           )
+
+        if write_result == :ok, do: report_verification(entry, action_id, verification, state)
 
       _ ->
         :ok
@@ -245,12 +291,29 @@ defmodule Zaik.Home.ActionLedger do
     CREATE INDEX IF NOT EXISTS home_action_retry_resets_action_idx
       ON home_action_retry_resets(action_key, reset_at);
     """)
+    |> case do
+      :ok -> ensure_causality_column(conn)
+      error -> error
+    end
+  end
+
+  defp ensure_causality_column(conn) do
+    columns = query(conn, "PRAGMA table_info(home_action_ledger)", [])
+
+    if Enum.any?(columns, fn [_cid, name | _rest] -> name == "causality_json" end) do
+      :ok
+    else
+      Sqlite3.execute(
+        conn,
+        "ALTER TABLE home_action_ledger ADD COLUMN causality_json TEXT NOT NULL DEFAULT '{}'"
+      )
+    end
   end
 
   defp fetch(conn, key) do
     case query(
            conn,
-           "SELECT idempotency_key, request_key, tool, args_json, status, result_json, error_json, inserted_at, updated_at FROM home_action_ledger WHERE idempotency_key = ?",
+           "SELECT idempotency_key, request_key, tool, args_json, causality_json, status, result_json, error_json, inserted_at, updated_at FROM home_action_ledger WHERE idempotency_key = ?",
            [key]
          ) do
       [] ->
@@ -262,6 +325,7 @@ defmodule Zaik.Home.ActionLedger do
           request_key,
           tool,
           args_json,
+          causality_json,
           status,
           result_json,
           error_json,
@@ -274,6 +338,7 @@ defmodule Zaik.Home.ActionLedger do
           request_key: request_key,
           tool: tool,
           args: decode(args_json),
+          causality: decode(causality_json) || %{},
           status: status,
           result: decode(result_json),
           error: decode(error_json),
@@ -453,6 +518,80 @@ defmodule Zaik.Home.ActionLedger do
       Map.has_key?(map, string_key) -> Map.put(map, string_key, value)
       true -> Map.put(map, key, value)
     end
+  end
+
+  defp report_completion(entry, result, state) do
+    status = completion_status(result)
+
+    attrs = %{
+      ledger_key: entry.idempotency_key,
+      action_id: first_action_id(result),
+      tool: entry.tool
+    }
+
+    Zaik.Home.Autonomy.OutcomeReporter.record(
+      entry.causality,
+      status,
+      attrs,
+      reporter_opts(state)
+    )
+  end
+
+  defp report_verification(entry, action_id, verification, state) do
+    status = verification_outcome_status(verification)
+
+    attrs = %{
+      ledger_key: entry.idempotency_key,
+      action_id: action_id,
+      tool: entry.tool,
+      verification_reason: value(verification, :reason),
+      observed_at: value(verification, :observed_at)
+    }
+
+    Zaik.Home.Autonomy.OutcomeReporter.record(
+      entry.causality,
+      status,
+      attrs,
+      reporter_opts(state)
+    )
+  end
+
+  defp completion_status({:ok, result}) when is_map(result) do
+    case value(result, :status) do
+      "verified" -> "verified"
+      _ -> "accepted"
+    end
+  end
+
+  defp completion_status({:error, reason}) do
+    reason = inspect(reason)
+    if String.contains?(reason, "timeout"), do: "timed_out", else: "failed"
+  end
+
+  defp completion_status(_result), do: "failed"
+
+  defp verification_outcome_status(verification) do
+    status = to_string(value(verification, :status) || "failed")
+    reason = to_string(value(verification, :reason) || "")
+
+    cond do
+      status == "verified" -> "verified"
+      status == "cancelled" -> "cancelled"
+      status == "expired" and String.contains?(reason, "non_converg") -> "non_converged"
+      status == "expired" -> "timed_out"
+      true -> "failed"
+    end
+  end
+
+  defp first_action_id({:ok, result}), do: result |> action_ids() |> List.first()
+  defp first_action_id(_result), do: nil
+
+  defp reporter_opts(state) do
+    [
+      decision_store: Map.get(state.config, :decision_store, Zaik.Home.Autonomy.DecisionStore),
+      telemetry_write_monitor:
+        Map.get(state.config, :telemetry_write_monitor, Zaik.TelemetryWriteMonitor)
+    ]
   end
 
   defp encoded_result({:ok, result}), do: {"succeeded", encode(result), nil}

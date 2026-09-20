@@ -248,7 +248,8 @@ defmodule Zaik.Home.Autonomy.DecisionStore do
         decision = decode(row)
         recorded_at = Zaik.Time.now(state.clock) |> DateTime.to_iso8601()
         entry = entry |> Map.put_new("recorded_at", recorded_at) |> json_safe()
-        entries = (Map.fetch!(decision, field) ++ [entry]) |> Enum.take(-100)
+        current_entries = Map.fetch!(decision, field)
+        entries = append_unique(current_entries, entry) |> Enum.take(-100)
         column = if field == :outcomes, do: "outcomes_json", else: "feedback_json"
 
         case execute(
@@ -267,6 +268,15 @@ defmodule Zaik.Home.Autonomy.DecisionStore do
         end
     end
   end
+
+  defp append_unique(entries, %{"event_id" => event_id} = entry)
+       when is_binary(event_id) and event_id != "" do
+    if Enum.any?(entries, &(Map.get(&1, "event_id") == event_id)),
+      do: entries,
+      else: entries ++ [entry]
+  end
+
+  defp append_unique(entries, entry), do: entries ++ [entry]
 
   defp validate_outcome(outcome) do
     status = value(outcome, :status)
