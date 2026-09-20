@@ -23,7 +23,8 @@ defmodule Zaik.Tools.Registry do
     Zaik.Home.Tools.ApplyDevicePreset,
     Zaik.Home.Tools.CaptureDevicePreset,
     Zaik.Home.Tools.ControlDevice,
-    Zaik.Home.Tools.ControlBlind
+    Zaik.Home.Tools.ControlBlind,
+    Zaik.Tools.ProposeHomeSkill
   ]
 
   def modules(opts \\ []) do

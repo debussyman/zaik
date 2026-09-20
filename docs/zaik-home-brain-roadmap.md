@@ -237,8 +237,10 @@ natural-language invocation.
 - [x] Add generic `apply_device_preset` and `capture_device_preset` tools;
   captured targets come only from fresh canonical capability state and applying
   a preset re-enters normal target validation and supervised execution.
-- [ ] Add proposal/confirmation-based natural-language skill authoring and
-  reject unvalidated direct skill writes.
+- [x] Add proposal/confirmation-based natural-language skill authoring and
+  reject unvalidated direct skill writes. The model-facing tool can only create
+  a validated fingerprinted proposal; exact operator confirmation reloads and
+  revalidates it before an audited atomic write.
 - [x] Define validated missing-data behavior: block by default, optionally ask
   for clarification, or explicitly return a degraded non-executing context.
 

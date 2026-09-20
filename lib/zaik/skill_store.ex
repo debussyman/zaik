@@ -60,16 +60,41 @@ defmodule Zaik.SkillStore do
     end
   end
 
-  def ensure_home_skill!(name, contents, opts \\ [])
-      when is_binary(name) and is_binary(contents) do
-    cfg = Map.merge(config(), Map.new(opts))
-    [path | _] = cfg.paths
-    dir = expand_path(path)
-    File.mkdir_p!(dir)
-    file = Path.join(dir, safe_filename(name) <> ".md")
-    File.write!(file, contents)
-    file
+  @deprecated "Direct skill writes are prohibited; use Zaik.SkillAuthoring proposals"
+  def ensure_home_skill!(_name, _contents, _opts \\ []) do
+    raise ArgumentError,
+          "unvalidated direct skill writes are prohibited; use Zaik.SkillAuthoring.propose/3 and confirm/3"
   end
+
+  @doc false
+  def persist_validated(skill, audit, opts \\ [])
+
+  def persist_validated(skill, audit, opts) when is_map(skill) and is_map(audit) do
+    with {:ok, normalized} <- Zaik.SkillAuthoring.validate(skill, opts),
+         {:ok, proposal_id} <- required_audit(audit, :proposal_id),
+         {:ok, approved_by} <- required_audit(audit, :approved_by),
+         :ok <- Zaik.SkillAuthoring.authorize_persistence(normalized, proposal_id, approved_by) do
+      cfg = Map.merge(config(), Map.new(opts))
+      [path | _] = cfg.paths
+      dir = expand_path(path)
+      File.mkdir_p!(dir)
+      file = Path.join(dir, safe_filename(normalized.name) <> ".md")
+      temporary = file <> ".tmp-" <> Integer.to_string(System.unique_integer([:positive]))
+      contents = Zaik.SkillAuthoring.render(normalized, proposal_id, approved_by)
+
+      with :ok <- File.write(temporary, contents, [:binary, :exclusive]),
+           :ok <- File.rename(temporary, file) do
+        {:ok,
+         %{path: file, skill: normalized, proposal_id: proposal_id, approved_by: approved_by}}
+      else
+        {:error, reason} ->
+          File.rm(temporary)
+          {:error, {:skill_write_failed, reason}}
+      end
+    end
+  end
+
+  def persist_validated(_skill, _audit, _opts), do: {:error, :invalid_skill_definition}
 
   defp read_skill(path) do
     with {:ok, contents} <- File.read(path) do
@@ -218,6 +243,17 @@ defmodule Zaik.SkillStore do
   defp stop_word?(word),
     do:
       word in ~w(the and for with when you your into this that from room home skill use user asks expected plan)
+
+  defp required_audit(audit, key) do
+    case Map.get(audit, key) || Map.get(audit, to_string(key)) do
+      value when is_binary(value) ->
+        value = String.trim(value)
+        if value == "", do: {:error, {:missing_skill_audit, key}}, else: {:ok, value}
+
+      _ ->
+        {:error, {:missing_skill_audit, key}}
+    end
+  end
 
   defp safe_filename(name) do
     name

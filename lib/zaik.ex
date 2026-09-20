@@ -442,6 +442,14 @@ defmodule Zaik do
   """
   def cancel_alert(id), do: Zaik.Alerts.cancel(id)
 
+  @doc "Create a validated home-skill proposal without writing a skill file."
+  def propose_home_skill(skill, created_by, opts \\ []),
+    do: Zaik.SkillAuthoring.propose(skill, created_by, opts)
+
+  @doc "Confirm an exact approved home-skill proposal and atomically install it."
+  def confirm_home_skill_proposal(proposal_id, approved_by, opts \\ []),
+    do: Zaik.SkillAuthoring.confirm(proposal_id, approved_by, opts)
+
   @doc """
   List pending proposals that require human confirmation.
   """

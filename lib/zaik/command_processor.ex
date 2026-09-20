@@ -125,6 +125,9 @@ defmodule Zaik.CommandProcessor do
       String.starts_with?(downcase(text), "watch home until ") ->
         text |> rest_after("watch home until") |> create_presence_alert(context)
 
+      String.starts_with?(downcase(text), "confirm skill ") ->
+        text |> rest_after("confirm skill") |> confirm_home_skill(context)
+
       String.starts_with?(downcase(text), "approve ") ->
         text |> rest_after("approve") |> decide_proposal(:approve, context)
 
@@ -201,6 +204,7 @@ defmodule Zaik.CommandProcessor do
     alert cancel <alert_id>
     approve <proposal_id>
     reject <proposal_id>
+    confirm skill <proposal_id>
     ask <prompt>
     submit llm <prompt>
     submit echo <message>
@@ -772,6 +776,19 @@ defmodule Zaik.CommandProcessor do
 
       {:error, reason} ->
         "Failed to load proposal #{id}: #{format_value(reason)}"
+    end
+  end
+
+  defp confirm_home_skill(id, context) do
+    id = String.trim(id)
+    actor = actor_from_context(context)
+
+    case Zaik.confirm_home_skill_proposal(id, actor) do
+      {:ok, result} ->
+        "Installed confirmed home skill #{result.skill.name} from proposal #{result.proposal_id}."
+
+      {:error, reason} ->
+        "Failed to confirm home skill #{id}: #{format_value(reason)}"
     end
   end
 

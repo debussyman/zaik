@@ -86,7 +86,8 @@ Text routing and explicit deterministic commands.
 | `Zaik.Ingress` | Shared session mapping, memory writes, chat routing, and agent reply memory writes. | Keep as shared ingress flow. |
 | `Zaik.ChatRouter` | Routes explicit commands vs normal free-form chat. | `Zaik.Ingress.ChatRouter` or keep as facade after command split. |
 | `Zaik.CommandProcessor` | Monolithic command handler. | Split into `Zaik.Commands.*` groups. |
-| `Zaik.SkillStore` | Filesystem-backed model-readable skills used as prompt context, not deterministic routines. | `Zaik.Runtime.SkillStore` or domain-scoped skill stores. |
+| `Zaik.SkillStore` | Filesystem-backed model-readable skills used as prompt context, with direct unvalidated writes rejected. | `Zaik.Runtime.SkillStore` or domain-scoped skill stores. |
+| `Zaik.SkillAuthoring` / `Zaik.Tools.ProposeHomeSkill` | Validated fingerprinted home-skill proposals plus exact operator confirmation and audited atomic persistence. | Keep proposal creation inert and confirmation outside model execution authority. |
 | `Zaik.Messaging.SessionMapper` | Maps channel/chat keys to Zaik sessions. | Shared ingress/session utility. |
 
 Telegram and optional legacy Signal now translate updates into `Zaik.Ingress.Message` and call `Zaik.Ingress.handle_message/2`. The pollers still own protocol-specific polling, allowlists, addressing, and sending replies.
