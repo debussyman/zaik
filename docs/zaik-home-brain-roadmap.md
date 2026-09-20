@@ -133,10 +133,11 @@ Goal: remove remaining ambiguity before autonomous decisions depend on it.
 
 - [ ] Define a versioned home-world contract covering entity identity, areas,
   capability state, desired state, freshness, confidence, and provenance.
-  Schema version 2 now covers canonical entity fields, source/receive timestamps,
-  ordering/missing-state semantics, runtime-discovered capability state and
-  target schemas, and the typed adapter-calibration boundary; desired-state,
-  confidence, and richer provenance remain before this item is complete.
+  Schema version 3 now covers canonical entity fields, source/receive timestamps,
+  explicit freshness classes, exact-fact snapshot identity, ordering/missing-state
+  semantics, runtime-discovered capability state and target schemas, and the
+  typed adapter-calibration boundary; desired-state, confidence, and richer
+  provenance remain before this item is complete.
 - [x] Persist per-entity/per-capability adapter calibration where physical
   orientation or protocol semantics differ; do not rely on one global cover
   assumption for future adapters. The initial supported kind is a typed linear
@@ -148,14 +149,18 @@ Goal: remove remaining ambiguity before autonomous decisions depend on it.
   skills, and presets, with metamorphic lookup invariants.
 - [ ] Guarantee that every AgentChat attempt and autonomy decision receives a
   durable trace or an observable telemetry-write failure.
-- [ ] Record stable observation-snapshot IDs so a decision can identify exactly
-  which facts it used.
+- [x] Record stable observation-snapshot IDs so a decision can identify exactly
+  which facts it used. World IDs hash the contract fingerprint and ordered public
+  entity facts while excluding generation time; room/autonomy decisions already
+  persist their derived context snapshot IDs.
 - [x] Separate independently declared scenario truth from capability
   normalization used by production execution. Mirror physical-oracle fixtures
   carry their own provenance and raw adapter endpoints, and never invoke the
   production capability, verifier, executor, or calibration store.
-- [ ] Add explicit freshness semantics for state-file bootstrap versus live
-  observations.
+- [x] Add explicit freshness semantics for state-file bootstrap versus live
+  observations. Bootstrap recovery remains available for reasoning but is never
+  freshness-eligible, and receipt time cannot substitute for source observation
+  time.
 - [ ] Document household units and conventions, including the current cover
   scale (`0=open`, `100=closed`).
 

@@ -40,16 +40,27 @@ defmodule Zaik.Home.World do
   end
 
   def snapshot(query \\ nil, opts \\ []) do
-    entities = find(query, opts)
+    entities = Enum.map(find(query, opts), &public_entity/1)
     contract_opts = [capability_opts: Keyword.get(opts, :capability_opts, [])]
+    contract_fingerprint = Zaik.Home.WorldContract.fingerprint(contract_opts)
 
     %{
+      snapshot_id: snapshot_id(entities, contract_fingerprint),
       world_schema_version: Zaik.Home.WorldContract.schema_version(),
-      world_contract_fingerprint: Zaik.Home.WorldContract.fingerprint(contract_opts),
-      entities: Enum.map(entities, &public_entity/1),
+      world_contract_fingerprint: contract_fingerprint,
+      entities: entities,
       count: length(entities),
       generated_at: Keyword.get(opts, :clock) |> Zaik.Time.now()
     }
+  end
+
+  def snapshot_id(public_entities, contract_fingerprint)
+      when is_list(public_entities) and is_binary(contract_fingerprint) do
+    %{world_contract_fingerprint: contract_fingerprint, entities: public_entities}
+    |> canonical()
+    |> :erlang.term_to_binary()
+    |> then(&:crypto.hash(:sha256, &1))
+    |> Base.encode16(case: :lower)
   end
 
   def public_entity(%Entity{} = entity) do
@@ -61,6 +72,7 @@ defmodule Zaik.Home.World do
       source: entity.source,
       capabilities: entity.capabilities,
       state: entity.state,
+      observation: entity.observation,
       observed_at: format_datetime(entity.observed_at),
       received_at: format_datetime(entity.received_at)
     }
@@ -82,8 +94,44 @@ defmodule Zaik.Home.World do
       capabilities: Enum.map(detected, & &1.descriptor.id),
       state: Map.new(detected, &{&1.descriptor.id, &1.state}),
       observed_at: field_or_fallback(device, :observed_at, :updated_at),
-      received_at: field_or_fallback(device, :received_at, :updated_at)
+      received_at: field_or_fallback(device, :received_at, :updated_at),
+      observation: observation_semantics(device)
     }
+  end
+
+  defp observation_semantics(device) do
+    observed_at = field_or_fallback(device, :observed_at, :updated_at)
+    metadata = Map.get(device, :metadata) || %{}
+
+    bootstrap? =
+      metadata_value(metadata, :source) == "zigbee2mqtt_state_file" or
+        Map.get(metadata, :bootstrap) == true or Map.get(metadata, "bootstrap") == true
+
+    cond do
+      is_struct(observed_at, DateTime) ->
+        %{
+          classification: "source_observation",
+          freshness_eligible: true,
+          freshness_reference: "observed_at",
+          received_at_substitutes_for_observed_at: false
+        }
+
+      bootstrap? ->
+        %{
+          classification: "bootstrap_recovery",
+          freshness_eligible: false,
+          freshness_reference: nil,
+          received_at_substitutes_for_observed_at: false
+        }
+
+      true ->
+        %{
+          classification: "unobserved",
+          freshness_eligible: false,
+          freshness_reference: nil,
+          received_at_substitutes_for_observed_at: false
+        }
+    end
   end
 
   defp field_or_fallback(map, key, fallback_key) do
@@ -172,6 +220,18 @@ defmodule Zaik.Home.World do
 
   defp format_datetime(%DateTime{} = datetime), do: DateTime.to_iso8601(datetime)
   defp format_datetime(value), do: value
+
+  defp canonical(%DateTime{} = value), do: DateTime.to_iso8601(value)
+
+  defp canonical(value) when is_map(value) do
+    value
+    |> Enum.map(fn {key, nested} -> {to_string(key), canonical(nested)} end)
+    |> Enum.sort_by(&elem(&1, 0))
+  end
+
+  defp canonical(value) when is_list(value), do: Enum.map(value, &canonical/1)
+  defp canonical(value) when is_atom(value), do: Atom.to_string(value)
+  defp canonical(value), do: value
 
   defp fuzzy_tokens_match?(query, candidate) do
     query_tokens = String.split(query, " ", trim: true)

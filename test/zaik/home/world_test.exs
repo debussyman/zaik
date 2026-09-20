@@ -26,7 +26,7 @@ defmodule Zaik.Home.WorldTest do
   test "world contract is versioned, deterministic, and runtime-discovered", %{store: store} do
     contract = Zaik.Home.WorldContract.public()
 
-    assert contract.schema_version == 2
+    assert contract.schema_version == 3
     assert contract.calibration_schema.schema_version == 1
     assert contract.calibration_schema.authority == "inert configuration; no execution authority"
     assert byte_size(contract.fingerprint) == 64
@@ -43,8 +43,11 @@ defmodule Zaik.Home.WorldTest do
     refute expanded == contract.fingerprint
 
     snapshot = Zaik.Home.World.snapshot(nil, device_store: store)
+    repeated = Zaik.Home.World.snapshot(nil, device_store: store)
     assert snapshot.world_schema_version == contract.schema_version
     assert snapshot.world_contract_fingerprint == contract.fingerprint
+    assert byte_size(snapshot.snapshot_id) == 64
+    assert repeated.snapshot_id == snapshot.snapshot_id
   end
 
   test "derives typed entity state from adapter payloads", %{store: store} do
@@ -63,6 +66,10 @@ defmodule Zaik.Home.WorldTest do
     assert entity.capabilities == ["humidity", "presence", "temperature"]
     assert_in_delta entity.state["temperature"].fahrenheit, 79.7, 0.01
     assert entity.state["presence"].detected == false
+    assert entity.observation.classification == "source_observation"
+    assert entity.observation.freshness_eligible == true
+    assert entity.observation.freshness_reference == "observed_at"
+    assert entity.observation.received_at_substitutes_for_observed_at == false
 
     assert {:ok, %{count: 1, entities: [state]}} =
              Zaik.Home.Tools.GetState.run(
@@ -185,5 +192,28 @@ defmodule Zaik.Home.WorldTest do
     assert {:ok, entity} = Zaik.Home.World.get("Recovered sensor", device_store: store)
     assert entity.observed_at == nil
     assert %DateTime{} = entity.received_at
+    assert entity.observation.classification == "bootstrap_recovery"
+    assert entity.observation.freshness_eligible == false
+    assert entity.observation.freshness_reference == nil
+    assert entity.observation.received_at_substitutes_for_observed_at == false
+
+    recovered = Zaik.Home.World.snapshot("Recovered sensor", device_store: store)
+    repeated = Zaik.Home.World.snapshot("Recovered sensor", device_store: store)
+    assert recovered.snapshot_id == repeated.snapshot_id
+
+    Zaik.Home.DeviceStore.upsert_device(
+      store,
+      "Recovered sensor",
+      %{"temperature" => 21},
+      %{
+        "source" => "zigbee2mqtt",
+        "observed_at" => ~U[2026-09-05 12:00:00Z]
+      }
+    )
+
+    live = Zaik.Home.World.snapshot("Recovered sensor", device_store: store)
+    refute live.snapshot_id == recovered.snapshot_id
+    assert hd(live.entities).observation.classification == "source_observation"
+    assert hd(live.entities).observation.freshness_eligible == true
   end
 end

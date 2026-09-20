@@ -12,7 +12,8 @@ defmodule Zaik.Home.Entity do
           capabilities: [String.t()],
           state: map(),
           observed_at: DateTime.t() | nil,
-          received_at: DateTime.t() | nil
+          received_at: DateTime.t() | nil,
+          observation: map()
         }
 
   defstruct [
@@ -23,6 +24,7 @@ defmodule Zaik.Home.Entity do
     :observed_at,
     :received_at,
     aliases: [],
+    observation: %{},
     capabilities: [],
     state: %{}
   ]

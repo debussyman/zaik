@@ -7,7 +7,7 @@ defmodule Zaik.Home.WorldContract do
   schemas only—never current household state or private device identity.
   """
 
-  @schema_version 2
+  @schema_version 3
 
   def schema_version, do: @schema_version
 
@@ -39,6 +39,7 @@ defmodule Zaik.Home.WorldContract do
           "name",
           "capabilities",
           "state",
+          "observation",
           "observed_at",
           "received_at"
         ],
@@ -54,9 +55,18 @@ defmodule Zaik.Home.WorldContract do
         capabilities: "capability id ascending"
       },
       observation_semantics: %{
+        classifications: ["source_observation", "bootstrap_recovery", "unobserved"],
+        freshness_reference: "observed_at only",
+        received_at: "delivery provenance; never substitutes for observation time",
+        bootstrap_recovery: "available for recovery reasoning but ineligible as fresh evidence",
         stale_reports: "ignored",
         duplicate_reports: "ignored",
         missing_state: "explicitly absent; never synthesized"
+      },
+      snapshot_semantics: %{
+        id: "sha256 over canonical contract fingerprint and ordered public entities",
+        excludes: ["generated_at"],
+        purpose: "stable identity for the exact canonical observation facts consumed"
       },
       calibration_schema: %{
         schema_version: 1,
