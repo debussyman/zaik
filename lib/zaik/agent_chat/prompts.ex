@@ -14,7 +14,7 @@ defmodule Zaik.AgentChat.Prompts do
     [
       house_identity(domain),
       current_time_context(),
-      domain_policy(domain, text),
+      domain_policy(domain, text, context),
       registry_tool_contracts(domain, text, context),
       planner_request_context(domain, context),
       mode_instruction(domain)
@@ -73,6 +73,9 @@ defmodule Zaik.AgentChat.Prompts do
       home_reading_request?(normalized) ->
         :home_readings
 
+      relevant_home_goal_skill?(text) ->
+        :home_control
+
       home_control_request?(text, normalized, opts) ->
         :home_control
 
@@ -123,6 +126,40 @@ defmodule Zaik.AgentChat.Prompts do
         known_home_device_match?(normalized_text, opts) or relevant_home_skill?(text)
 
     action? and home_target?
+  end
+
+  defp semantic_goal_skill(context, text) do
+    skills =
+      case Map.get(context, :active_skills) || Map.get(context, "active_skills") do
+        skills when is_list(skills) and skills != [] -> skills
+        _ -> Zaik.SkillStore.relevant(text)
+      end
+
+    Enum.find(skills, fn skill ->
+      contract = Map.get(skill, :contract) || Map.get(skill, "contract")
+      domain = Map.get(skill, :domain) || Map.get(skill, "domain")
+
+      goal_id =
+        if is_map(contract), do: Map.get(contract, :goal_id) || Map.get(contract, "goal_id")
+
+      domain == "home" and is_binary(goal_id) and goal_id != ""
+    end)
+  rescue
+    _ -> nil
+  catch
+    :exit, _ -> nil
+  end
+
+  defp relevant_home_goal_skill?(text) do
+    Zaik.SkillStore.relevant(text)
+    |> Enum.any?(fn skill ->
+      Map.get(skill, :domain) == "home" and is_map(Map.get(skill, :contract)) and
+        is_binary(get_in(skill, [:contract, :goal_id]))
+    end)
+  rescue
+    _ -> false
+  catch
+    :exit, _ -> false
   end
 
   defp relevant_home_skill?(text) do
@@ -233,8 +270,8 @@ defmodule Zaik.AgentChat.Prompts do
     |> String.replace(~r/\s+/, " ")
   end
 
-  defp domain_policy(:home_control, text) do
-    required_tool = home_control_required_tool(text)
+  defp domain_policy(:home_control, text, context) do
+    required_tool = home_control_required_tool(text, context)
 
     """
     DOMAIN: home control.
@@ -283,7 +320,7 @@ defmodule Zaik.AgentChat.Prompts do
     |> String.trim()
   end
 
-  defp domain_policy(:home_action_status, _text) do
+  defp domain_policy(:home_action_status, _text, _context) do
     """
     DOMAIN: home action status.
     Required first tool: get_home_action_status
@@ -296,10 +333,10 @@ defmodule Zaik.AgentChat.Prompts do
     |> String.trim()
   end
 
-  defp domain_policy(:home_readings, text), do: home_readings_domain_policy(text)
-  defp domain_policy(domain, _text), do: domain_policy(domain)
+  defp domain_policy(:home_readings, text, _context), do: home_readings_domain_policy(text)
+  defp domain_policy(domain, _text, _context), do: domain_policy(domain)
 
-  defp home_control_required_tool(text) do
+  defp home_control_required_tool(text, context) do
     normalized = normalize_home_name(text)
 
     cond do
@@ -315,7 +352,10 @@ defmodule Zaik.AgentChat.Prompts do
       Regex.match?(~r/\bactivate\b.*\bbedtime\b/, normalized) ->
         "activate_home_mode"
 
-      Regex.match?(~r/\b(set up|setup|prepare|ready|routine|scene|bedtime)\b/, normalized) ->
+      semantic_goal_skill(context, text) != nil ->
+        "get_home_goal_context, then execute_home_plan"
+
+      Regex.match?(~r/\b(set up|setup|prepare|routine|scene)\b/, normalized) ->
         "execute_home_plan"
 
       true ->
@@ -418,7 +458,7 @@ defmodule Zaik.AgentChat.Prompts do
   end
 
   defp registry_tool_contracts(domain, text, context) do
-    names = tool_names_for_domain(domain, text)
+    names = tool_names_for_domain(domain, text, context)
     registry_opts = Map.get(context, :registry_opts) || Map.get(context, "registry_opts") || []
 
     contracts =
@@ -436,11 +476,24 @@ defmodule Zaik.AgentChat.Prompts do
     end
   end
 
-  defp tool_names_for_domain(:general, _text), do: []
-  defp tool_names_for_domain(:home_action_status, _text), do: ["get_home_action_status"]
-  defp tool_names_for_domain(:home_readings, text), do: [home_read_mode(text)]
-  defp tool_names_for_domain(:home_control, text), do: [home_control_required_tool(text)]
-  defp tool_names_for_domain(_domain, _text), do: ["sql_query"]
+  defp tool_names_for_domain(:general, _text, _context), do: []
+
+  defp tool_names_for_domain(:home_action_status, _text, _context),
+    do: ["get_home_action_status"]
+
+  defp tool_names_for_domain(:home_readings, text, _context), do: [home_read_mode(text)]
+
+  defp tool_names_for_domain(:home_control, text, context) do
+    case home_control_required_tool(text, context) do
+      "get_home_goal_context, then execute_home_plan" ->
+        ["get_home_goal_context", "execute_home_plan"]
+
+      tool ->
+        [tool]
+    end
+  end
+
+  defp tool_names_for_domain(_domain, _text, _context), do: ["sql_query"]
 
   defp current_time_context do
     utc_now = DateTime.utc_now()

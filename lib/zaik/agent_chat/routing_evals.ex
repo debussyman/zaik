@@ -47,11 +47,35 @@ defmodule Zaik.AgentChat.RoutingEvals do
         expected_domain: :home_control,
         prompt_must_include: [
           "DOMAIN: home control",
-          "execute_home_plan",
-          "lily_bedtime_with_ac",
+          "get_home_goal_context, then execute_home_plan",
+          "goal_id: lily_bedtime",
           "above AC"
         ],
         prompt_must_not_include: []
+      },
+      %{
+        name: "declarative_bedtime_paraphrase_routes_semantic_goal",
+        kind: :domain,
+        prompt: "It's Lily's bedtime.",
+        expected_domain: :home_control,
+        prompt_must_include: [
+          "get_home_goal_context, then execute_home_plan",
+          "goal_id: lily_bedtime",
+          "COPY_EXACT_VALUE_FROM_GOAL_CONTEXT_RESULT"
+        ],
+        prompt_must_not_include: ["Required action tool: control_device"]
+      },
+      %{
+        name: "sleep_airflow_paraphrase_routes_semantic_goal",
+        kind: :domain,
+        prompt: "Please get Lily ready for sleep while keeping the AC airflow clear.",
+        expected_domain: :home_control,
+        prompt_must_include: [
+          "get_home_goal_context, then execute_home_plan",
+          "goal_id: lily_bedtime",
+          "above AC"
+        ],
+        prompt_must_not_include: ["Required action tool: control_device"]
       },
       %{
         name: "open_blinds_routes_home_control",
@@ -291,6 +315,20 @@ defmodule Zaik.AgentChat.RoutingEvals do
     name: lily_bedtime_with_ac
     domain: home
     risk: low
+    schema_version: 1
+    goal_id: lily_bedtime
+    scope: lily_bedroom
+    risk_ceiling: low
+    missing_data_policy: block
+    required_observations:
+      - environment.solar_phase
+      - history.temperature_f
+      - capability.cover
+      - presets.cover
+    preferences:
+      - preserve cooling airflow
+    constraints:
+      - use above AC preset for the right blind
     allowed_tools:
       - get_home_state
       - execute_home_plan
@@ -298,6 +336,7 @@ defmodule Zaik.AgentChat.RoutingEvals do
     triggers:
       - Lily bedtime with AC
       - set up Lily's room for bedtime with AC
+      - Lily ready for sleep with clear AC airflow
     ---
 
     When the user asks to set up Lily's room for bedtime with AC:

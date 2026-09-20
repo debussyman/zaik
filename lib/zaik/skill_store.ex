@@ -45,7 +45,7 @@ defmodule Zaik.SkillStore do
 
     list(opts)
     |> Enum.map(&{score_skill(&1, normalized), &1})
-    |> Enum.filter(fn {score, _skill} -> score > 0 end)
+    |> Enum.filter(fn {score, skill} -> score >= minimum_relevance_score(skill) end)
     |> Enum.sort_by(fn {score, skill} -> {-score, String.downcase(skill.name)} end)
     |> Enum.take(cfg.max_relevant)
     |> Enum.map(fn {_score, skill} -> skill end)
@@ -227,11 +227,30 @@ defmodule Zaik.SkillStore do
     |> String.trim()
   end
 
+  defp minimum_relevance_score(%{contract: contract}) when is_map(contract), do: 2
+  defp minimum_relevance_score(_skill), do: 1
+
   defp score_skill(skill, normalized_text) do
+    contract = skill.contract || %{}
+
+    searchable =
+      [
+        skill.name,
+        skill.domain,
+        skill.body,
+        Map.get(contract, :goal_id),
+        Map.get(contract, :scope)
+      ] ++
+        skill.triggers ++
+        Map.get(contract, :preferences, []) ++ Map.get(contract, :constraints, [])
+
     skill_terms =
-      [skill.name, skill.domain | skill.triggers]
-      |> Enum.concat(String.split(skill.body, ~r/[^A-Za-z0-9']+/, trim: true))
-      |> Enum.map(&normalize/1)
+      searchable
+      |> Enum.reject(&is_nil/1)
+      |> Enum.flat_map(fn value ->
+        normalized = normalize(value)
+        [normalized | String.split(normalized, " ", trim: true)]
+      end)
       |> Enum.reject(&(&1 == "" or byte_size(&1) < 3 or stop_word?(&1)))
       |> Enum.uniq()
 

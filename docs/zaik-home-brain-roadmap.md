@@ -223,8 +223,10 @@ natural-language invocation.
 
 - [x] Version the skill schema with goal ID, scope, required observations,
   preferences, constraints, allowed tools, risk ceiling, and missing-data policy.
-- [ ] Keep semantic goal recognition model-driven; do not add phrase-specific
-  command branches for expressions such as "It's Lily's bedtime."
+- [x] Keep semantic goal recognition model-driven; do not add phrase-specific
+  command branches for expressions such as "It's Lily's bedtime." Versioned
+  skill retrieval requires multiple semantic matches and supplies context; the
+  model must select `get_home_goal_context` and the evidence-bound plan workflow.
 - [x] Add a deterministic `GoalContextBuilder` that loads a matched semantic
   goal skill and gathers environment, history, capabilities, occupancy, and
   scoped presets before planning.
@@ -258,7 +260,7 @@ household preference:
 
 Acceptance:
 
-- "It's Lily's bedtime" and diverse paraphrases resolve to the same semantic
+- [x] "It's Lily's bedtime" and diverse paraphrases resolve to the same semantic
   goal and independently gathered context.
 - Missing or stale context cannot be presented as observed fact.
 - Already-satisfied targets produce zero unnecessary side effects.
