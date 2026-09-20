@@ -110,6 +110,7 @@ defmodule Zaik.Home.Policies.BedtimePrivacy do
         desired_state: desired_state,
         evidence: %{
           snapshot_id: value(context, :snapshot_id),
+          confidence_source: "explicit_operator_mode",
           mode_id: mode.id,
           mode: mode.mode,
           mode_owner: mode.owner,

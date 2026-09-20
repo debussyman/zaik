@@ -106,6 +106,7 @@ defmodule Zaik.Home.Policies.SolarHeatAvoidance do
         desired_state: desired_state,
         evidence: %{
           snapshot_id: value(context, :snapshot_id),
+          confidence_source: "temperature_history_sample_count_and_freshness",
           temperature_f: temperature_f,
           illuminance_lux: illuminance,
           phase: if(holding?, do: "holding", else: "activation"),

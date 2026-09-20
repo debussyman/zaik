@@ -61,7 +61,7 @@ flowchart TD
 
 The production and mirror worlds share capability, policy, plan, verifier, ledger, preset, retry, arbitration, budget, conflict-lock, and SQL semantics. Only their bindings differ: production uses real observations and configured executors; mirror runs use temporary databases and virtual devices.
 
-See [`docs/architecture.md`](docs/architecture.md), [`docs/module-map.md`](docs/module-map.md), and the active [`home brain roadmap`](docs/zaik-home-brain-roadmap.md).
+See [`docs/architecture.md`](docs/architecture.md), [`docs/module-map.md`](docs/module-map.md), the [`home-world contract conventions`](docs/home-world-contract.md), and the active [`home brain roadmap`](docs/zaik-home-brain-roadmap.md).
 
 ## Why Elixir and OTP?
 

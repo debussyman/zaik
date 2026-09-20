@@ -62,19 +62,21 @@ defmodule Zaik.Home.Autonomy.DesiredStateStore do
     decision_id = to_string(value(decision, :id))
 
     reply =
-      Enum.reduce_while(selected, {:ok, []}, fn desired, {:ok, stored} ->
-        case put_desired(state.conn, desired, decision, decision_id, now) do
-          {:ok, row} -> {:cont, {:ok, [row | stored]}}
-          {:error, reason} -> {:halt, {:error, reason}}
-        end
-      end)
-      |> case do
-        {:ok, rows} ->
-          prune(state.conn, state.max_rows)
-          {:ok, Enum.reverse(rows)}
+      with :ok <- validate_selected(selected, decision) do
+        Enum.reduce_while(selected, {:ok, []}, fn desired, {:ok, stored} ->
+          case put_desired(state.conn, desired, decision, decision_id, now) do
+            {:ok, row} -> {:cont, {:ok, [row | stored]}}
+            {:error, reason} -> {:halt, {:error, reason}}
+          end
+        end)
+        |> case do
+          {:ok, rows} ->
+            prune(state.conn, state.max_rows)
+            {:ok, Enum.reverse(rows)}
 
-        error ->
-          error
+          error ->
+            error
+        end
       end
 
     {:reply, reply, state}
@@ -122,35 +124,81 @@ defmodule Zaik.Home.Autonomy.DesiredStateStore do
   def terminate(_reason, state), do: Sqlite3.close(state.conn)
 
   def migrate(conn) do
-    Sqlite3.execute(conn, """
-    PRAGMA journal_mode = WAL;
-    PRAGMA synchronous = NORMAL;
+    with :ok <-
+           Sqlite3.execute(conn, """
+           PRAGMA journal_mode = WAL;
+           PRAGMA synchronous = NORMAL;
 
-    CREATE TABLE IF NOT EXISTS home_desired_states (
-      id TEXT PRIMARY KEY,
-      decision_id TEXT NOT NULL,
-      snapshot_id TEXT NOT NULL,
-      scope TEXT NOT NULL,
-      entity_id TEXT NOT NULL,
-      device TEXT NOT NULL,
-      capability TEXT NOT NULL,
-      target_json TEXT NOT NULL,
-      source_id TEXT NOT NULL,
-      source_version TEXT NOT NULL,
-      priority_class TEXT NOT NULL,
-      priority INTEGER NOT NULL,
-      confidence REAL NOT NULL,
-      evidence_json TEXT NOT NULL,
-      policy_fingerprint TEXT NOT NULL,
-      status TEXT NOT NULL,
-      created_at TEXT NOT NULL,
-      expires_at TEXT NOT NULL,
-      superseded_at TEXT
-    );
+           CREATE TABLE IF NOT EXISTS home_desired_states (
+             id TEXT PRIMARY KEY,
+             decision_id TEXT NOT NULL,
+             snapshot_id TEXT NOT NULL,
+             scope TEXT NOT NULL,
+             entity_id TEXT NOT NULL,
+             device TEXT NOT NULL,
+             capability TEXT NOT NULL,
+             target_json TEXT NOT NULL,
+             source_id TEXT NOT NULL,
+             source_version TEXT NOT NULL,
+             priority_class TEXT NOT NULL,
+             priority INTEGER NOT NULL,
+             confidence REAL NOT NULL,
+             evidence_json TEXT NOT NULL,
+             reason TEXT NOT NULL,
+             policy_fingerprint TEXT NOT NULL,
+             status TEXT NOT NULL,
+             created_at TEXT NOT NULL,
+             expires_at TEXT NOT NULL,
+             superseded_at TEXT
+           );
 
-    CREATE INDEX IF NOT EXISTS home_desired_states_active_idx
-      ON home_desired_states(scope, entity_id, capability, status, expires_at);
-    """)
+           CREATE INDEX IF NOT EXISTS home_desired_states_active_idx
+             ON home_desired_states(scope, entity_id, capability, status, expires_at);
+           """) do
+      ensure_reason_column(conn)
+    end
+  end
+
+  defp validate_selected(selected, decision) do
+    snapshot_id = value(decision, :snapshot_id)
+
+    cond do
+      not non_empty_string?(snapshot_id) ->
+        {:error, :missing_decision_snapshot_id}
+
+      true ->
+        selected
+        |> Enum.with_index()
+        |> Enum.reduce_while(:ok, fn {desired, index}, :ok ->
+          evidence = value(desired, :evidence)
+          confidence = value(desired, :confidence)
+
+          reason =
+            cond do
+              not is_map(evidence) ->
+                :missing_evidence
+
+              value(evidence, :snapshot_id) != snapshot_id ->
+                :evidence_snapshot_mismatch
+
+              not non_empty_string?(value(evidence, :confidence_source)) ->
+                :missing_confidence_source
+
+              not is_number(confidence) or confidence < 0 or confidence > 1 ->
+                :invalid_confidence
+
+              not non_empty_string?(value(desired, :reason)) ->
+                :missing_reason
+
+              true ->
+                nil
+            end
+
+          if reason,
+            do: {:halt, {:error, {:invalid_desired_state_provenance, index, reason}}},
+            else: {:cont, :ok}
+        end)
+    end
   end
 
   defp put_desired(conn, desired, decision, decision_id, now) do
@@ -175,13 +223,14 @@ defmodule Zaik.Home.Autonomy.DesiredStateStore do
              INSERT INTO home_desired_states (
                id, decision_id, snapshot_id, scope, entity_id, device, capability,
                target_json, source_id, source_version, priority_class, priority,
-               confidence, evidence_json, policy_fingerprint, status, created_at, expires_at
-             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
+               confidence, evidence_json, reason, policy_fingerprint, status, created_at, expires_at
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
              ON CONFLICT(id) DO UPDATE SET
                decision_id = excluded.decision_id,
                snapshot_id = excluded.snapshot_id,
                confidence = excluded.confidence,
                evidence_json = excluded.evidence_json,
+               reason = excluded.reason,
                policy_fingerprint = excluded.policy_fingerprint,
                status = 'active',
                created_at = CASE
@@ -208,6 +257,7 @@ defmodule Zaik.Home.Autonomy.DesiredStateStore do
                value(desired, :priority),
                value(desired, :confidence),
                Jason.encode!(value(desired, :evidence) || %{}),
+               to_string(value(desired, :reason)),
                to_string(value(decision, :policy_fingerprint)),
                created_at,
                to_string(value(desired, :expires_at))
@@ -246,7 +296,7 @@ defmodule Zaik.Home.Autonomy.DesiredStateStore do
     """
     SELECT id, decision_id, snapshot_id, scope, entity_id, device, capability,
            target_json, source_id, source_version, priority_class, priority,
-           confidence, evidence_json, policy_fingerprint, status, created_at,
+           confidence, evidence_json, reason, policy_fingerprint, status, created_at,
            expires_at, superseded_at
     FROM home_desired_states #{suffix}
     """
@@ -267,6 +317,7 @@ defmodule Zaik.Home.Autonomy.DesiredStateStore do
          priority,
          confidence,
          evidence,
+         reason,
          policy_fingerprint,
          status,
          created_at,
@@ -288,12 +339,26 @@ defmodule Zaik.Home.Autonomy.DesiredStateStore do
       priority: priority,
       confidence: confidence,
       evidence: Jason.decode!(evidence),
+      reason: reason,
       policy_fingerprint: policy_fingerprint,
       status: status,
       created_at: created_at,
       expires_at: expires_at,
       superseded_at: superseded_at
     }
+  end
+
+  defp ensure_reason_column(conn) do
+    columns = query(conn, "PRAGMA table_info(home_desired_states)", [])
+
+    if Enum.any?(columns, fn row -> Enum.at(row, 1) == "reason" end) do
+      :ok
+    else
+      Sqlite3.execute(
+        conn,
+        "ALTER TABLE home_desired_states ADD COLUMN reason TEXT NOT NULL DEFAULT 'legacy_unrecorded'"
+      )
+    end
   end
 
   defp prune(_conn, max) when not is_integer(max) or max < 1, do: :ok
@@ -334,6 +399,8 @@ defmodule Zaik.Home.Autonomy.DesiredStateStore do
       end
     end
   end
+
+  defp non_empty_string?(value), do: is_binary(value) and String.trim(value) != ""
 
   defp bounded_limit(limit) when is_integer(limit), do: max(1, min(limit, 200))
   defp bounded_limit(_limit), do: 50

@@ -88,7 +88,7 @@ defmodule Zaik.Home.ArbitratorTest do
           target: target
         }
       ],
-      evidence: %{snapshot_id: "snapshot"},
+      evidence: %{snapshot_id: "snapshot", confidence_source: "test_fixture"},
       reason: policy_id,
       created_at: if(ttl > 0, do: now, else: DateTime.add(now, -120, :second)),
       expires_at: DateTime.add(now, ttl, :second)

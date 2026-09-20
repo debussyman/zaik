@@ -52,7 +52,7 @@ defmodule Zaik.Home.GoalCandidate do
            Zaik.Home.Priority.validate(value(attrs, :priority_class), priority),
          {:ok, confidence} <- confidence(value(attrs, :confidence)),
          {:ok, desired_state} <- desired_state(value(attrs, :desired_state), capability_opts),
-         evidence when is_map(evidence) <- value(attrs, :evidence),
+         {:ok, evidence} <- evidence(value(attrs, :evidence)),
          {:ok, created_at} <- datetime(value(attrs, :created_at), :invalid_created_at),
          {:ok, expires_at} <- datetime(value(attrs, :expires_at), :invalid_expires_at),
          :ok <- expiry_order(created_at, expires_at) do
@@ -81,7 +81,6 @@ defmodule Zaik.Home.GoalCandidate do
          })
        )}
     else
-      nil -> {:error, :missing_evidence}
       {:error, reason} -> {:error, reason}
       _ -> {:error, :invalid_evidence}
     end
@@ -131,6 +130,25 @@ defmodule Zaik.Home.GoalCandidate do
   end
 
   defp desired_action(_action, _opts), do: {:error, :invalid_action}
+
+  defp evidence(evidence) when is_map(evidence) do
+    with {:ok, snapshot_id} <- required_string(evidence, :snapshot_id),
+         {:ok, confidence_source} <- required_string(evidence, :confidence_source) do
+      {:ok,
+       evidence
+       |> Map.delete("snapshot_id")
+       |> Map.delete("confidence_source")
+       |> Map.put(:snapshot_id, snapshot_id)
+       |> Map.put(:confidence_source, confidence_source)}
+    else
+      {:error, {:missing, :snapshot_id}} -> {:error, :missing_evidence_snapshot_id}
+      {:error, {:missing, :confidence_source}} -> {:error, :missing_confidence_source}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp evidence(nil), do: {:error, :missing_evidence}
+  defp evidence(_evidence), do: {:error, :invalid_evidence}
 
   defp priority(value) when is_integer(value) and value in 0..100, do: {:ok, value}
   defp priority(_value), do: {:error, :invalid_priority}

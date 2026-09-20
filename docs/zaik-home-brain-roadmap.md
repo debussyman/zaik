@@ -131,14 +131,13 @@ From the open-source reorganization plan:
 
 Goal: remove remaining ambiguity before autonomous decisions depend on it.
 
-- [ ] Define a versioned home-world contract covering entity identity, areas,
+- [x] Define a versioned home-world contract covering entity identity, areas,
   capability state, desired state, freshness, confidence, and provenance.
-  Schema version 4 now covers canonical entity fields, source/receive timestamps,
+  Schema version 5 covers canonical entity fields, source/receive timestamps,
   explicit freshness classes, exact-fact snapshot identity, versioned entity
   resolution, ordering/missing-state semantics, runtime-discovered capability
-  state and target schemas, and the typed adapter-calibration boundary;
-  desired-state, confidence, and richer provenance remain before this item is
-  complete.
+  state and target schemas, inert desired states, calibrated confidence
+  provenance, and the typed adapter-calibration boundary.
 - [x] Persist per-entity/per-capability adapter calibration where physical
   orientation or protocol semantics differ; do not rely on one global cover
   assumption for future adapters. The initial supported kind is a typed linear
@@ -166,8 +165,8 @@ Goal: remove remaining ambiguity before autonomous decisions depend on it.
   observations. Bootstrap recovery remains available for reasoning but is never
   freshness-eligible, and receipt time cannot substitute for source observation
   time.
-- [ ] Document household units and conventions, including the current cover
-  scale (`0=open`, `100=closed`).
+- [x] Document household units and conventions, including the current cover
+  scale (`0=open`, `100=closed`). See `docs/home-world-contract.md`.
 
 Acceptance:
 

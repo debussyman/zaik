@@ -23,6 +23,8 @@ defmodule Zaik.Home.DesiredStateStoreTest do
 
     assert first.status == "active"
     assert first.priority_class == "daylight_energy"
+    assert first.reason == "test desired state"
+    assert first.evidence["confidence_source"] == "test_fixture"
 
     assert {:ok, [second]} =
              Zaik.Home.Autonomy.DesiredStateStore.record(
@@ -102,6 +104,21 @@ defmodule Zaik.Home.DesiredStateStoreTest do
     assert restarted.created_at == DateTime.to_iso8601(restarted_at)
   end
 
+  test "rejects desired-state provenance that does not match the decision snapshot", context do
+    invalid =
+      "invalid"
+      |> decision(0, context.now)
+      |> put_in(
+        [:arbitration, :selected, Access.at(0), :evidence, :snapshot_id],
+        "different-snapshot"
+      )
+
+    assert {:error, {:invalid_desired_state_provenance, 0, :evidence_snapshot_mismatch}} =
+             Zaik.Home.Autonomy.DesiredStateStore.record(invalid, context.store)
+
+    assert Zaik.Home.Autonomy.DesiredStateStore.recent(10, context.store) == []
+  end
+
   defp decision(id, position, now) do
     %{
       id: "decision-#{id}",
@@ -122,7 +139,11 @@ defmodule Zaik.Home.DesiredStateStoreTest do
             priority_class: :daylight_energy,
             priority: 40,
             confidence: 0.8,
-            evidence: %{snapshot_id: "snapshot-#{id}"},
+            evidence: %{
+              snapshot_id: "snapshot-#{id}",
+              confidence_source: "test_fixture"
+            },
+            reason: "test desired state",
             expires_at: DateTime.add(now, 60, :second) |> DateTime.to_iso8601()
           }
         ]

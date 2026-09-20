@@ -7,7 +7,7 @@ defmodule Zaik.Home.WorldContract do
   schemas only—never current household state or private device identity.
   """
 
-  @schema_version 4
+  @schema_version 5
 
   def schema_version, do: @schema_version
 
@@ -73,6 +73,43 @@ defmodule Zaik.Home.WorldContract do
         id: "sha256 over canonical contract fingerprint and ordered public entities",
         excludes: ["generated_at"],
         purpose: "stable identity for the exact canonical observation facts consumed"
+      },
+      desired_state_schema: %{
+        authority: "inert semantic target; never adapter payload or execution authorization",
+        required: [
+          "candidate_id",
+          "entity_id",
+          "device",
+          "capability",
+          "target",
+          "policy_id",
+          "policy_version",
+          "priority_class",
+          "priority",
+          "confidence",
+          "evidence",
+          "reason",
+          "expires_at"
+        ],
+        target_validation: "runtime capability descriptor",
+        expiry: "must be later than candidate creation"
+      },
+      confidence_schema: %{
+        range: %{minimum: 0.0, maximum: 1.0},
+        precision: 3,
+        required_provenance: ["evidence.snapshot_id", "evidence.confidence_source"],
+        authority: "ranking within a fixed priority class only"
+      },
+      provenance_schema: %{
+        observation: ["source", "observation.classification", "observed_at", "received_at"],
+        desired_state: [
+          "policy_id",
+          "policy_version",
+          "candidate_id",
+          "evidence.snapshot_id",
+          "evidence.confidence_source"
+        ],
+        calibration: ["calibrated_by", "reason", "evidence_fingerprint", "revision"]
       },
       calibration_schema: %{
         schema_version: 1,

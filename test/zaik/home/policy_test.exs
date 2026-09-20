@@ -202,7 +202,7 @@ defmodule Zaik.Home.PolicyTest do
       desired_state: [
         %{entity_id: "blind", device: "Blind", capability: "cover", target: %{"position" => 0}}
       ],
-      evidence: %{},
+      evidence: %{snapshot_id: "snapshot-test", confidence_source: "test_fixture"},
       reason: "test",
       created_at: now,
       expires_at: DateTime.add(now, 60, :second)
@@ -212,6 +212,17 @@ defmodule Zaik.Home.PolicyTest do
 
     assert {:error, :invalid_confidence} =
              Zaik.Home.GoalCandidate.new(Map.delete(attrs, :confidence))
+
+    valid_confidence = %{attrs | confidence: 0.8}
+
+    assert {:error, :missing_evidence_snapshot_id} =
+             Zaik.Home.GoalCandidate.new(%{valid_confidence | evidence: %{}})
+
+    assert {:error, :missing_confidence_source} =
+             Zaik.Home.GoalCandidate.new(%{
+               valid_confidence
+               | evidence: %{snapshot_id: "snapshot-test"}
+             })
   end
 
   test "candidate validation rejects unknown capabilities", %{clock: clock} do
@@ -233,7 +244,7 @@ defmodule Zaik.Home.PolicyTest do
                    target: %{"state" => "ON"}
                  }
                ],
-               evidence: %{},
+               evidence: %{snapshot_id: "snapshot-test", confidence_source: "test_fixture"},
                reason: "invalid",
                created_at: now,
                expires_at: DateTime.add(now, 60, :second)
