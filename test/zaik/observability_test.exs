@@ -7,11 +7,13 @@ defmodule Zaik.ObservabilityTest do
              queue: %{size: queue_size},
              tasks: tasks,
              dispatcher: %{alive?: true},
+             telemetry_writes: %{status: telemetry_write_status},
              agents: %{registered_count: registered_count},
              sessions: %{recent: sessions}
            } = Zaik.snapshot()
 
     assert status in [:ok, :degraded]
+    assert telemetry_write_status in [:ok, :degraded]
     assert is_integer(queue_size)
     assert is_integer(registered_count)
     assert is_list(sessions)

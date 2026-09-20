@@ -19,6 +19,7 @@ defmodule Zaik.Application do
   def children do
     [
       Zaik.Clock,
+      Zaik.TelemetryWriteMonitor,
       domain_child(:operations, telemetry_store_child()),
       {Task.Supervisor, name: Zaik.Tools.TaskSupervisor},
       domain_child(:operations, Zaik.TaskStore),

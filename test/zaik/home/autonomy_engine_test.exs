@@ -164,6 +164,34 @@ defmodule Zaik.Home.AutonomyEngineTest do
     }
   end
 
+  test "decision persistence failures are returned and operationally observable", context do
+    {:ok, monitor} = start_supervised({Zaik.TelemetryWriteMonitor, name: nil})
+
+    assert {:error, {:decision_not_recorded, _reason}} =
+             Zaik.Home.Autonomy.Engine.evaluate(
+               "lily",
+               [
+                 clock: {Zaik.Home.Mirror.Clock, context.clock},
+                 device_store: context.devices,
+                 history_store: context.history,
+                 decision_store: :missing_decision_store,
+                 telemetry_write_monitor: monitor,
+                 environment_config: %{utc_offset_minutes: 0},
+                 policy_opts: [maximum_temperature_f: 76.0]
+               ],
+               context.engine
+             )
+
+    assert %{
+             status: :degraded,
+             unresolved: [%{category: :autonomy_decision, failures: 1}],
+             recent: [%{metadata: %{decision_id: decision_id, decision_status: decision_status}}]
+           } = Zaik.TelemetryWriteMonitor.status(monitor)
+
+    assert String.starts_with?(decision_id, "decision_")
+    assert decision_status in ["blocked", "proposed", "satisfied", "no_candidates"]
+  end
+
   test "shadow evaluation records candidates and unresolved actions without executing", context do
     assert {:ok, decision} =
              Zaik.Home.Autonomy.Engine.evaluate(

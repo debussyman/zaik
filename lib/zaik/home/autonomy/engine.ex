@@ -273,7 +273,13 @@ defmodule Zaik.Home.Autonomy.Engine do
       {%{task: task} = entry, running} ->
         Task.shutdown(task, :brutal_kill)
         failure = evaluation_timeout_decision(entry, state)
-        _ = record_decision(failure, Map.get(state.config, :decision_store))
+
+        _ =
+          record_decision(
+            failure,
+            Map.get(state.config, :decision_store),
+            Map.get(state.config, :telemetry_write_monitor, Zaik.TelemetryWriteMonitor)
+          )
 
         {:noreply,
          %{
@@ -516,12 +522,19 @@ defmodule Zaik.Home.Autonomy.Engine do
           Map.get(cfg, :desired_state_store, Zaik.Home.Autonomy.DesiredStateStore)
         )
 
+      telemetry_monitor =
+        Keyword.get(opts, :telemetry_write_monitor, Zaik.TelemetryWriteMonitor)
+
       with :ok <- record_desired_states(decision, desired_store),
-           :ok <- record_decision(decision, Keyword.get(opts, :decision_store)) do
+           :ok <- record_decision(decision, Keyword.get(opts, :decision_store), telemetry_monitor) do
         {:ok, decision}
       else
-        {:error, {:desired_state_not_recorded, _} = reason} -> {:error, reason}
-        {:error, reason} -> {:error, {:decision_not_recorded, reason}}
+        {:error, {:desired_state_not_recorded, _} = reason} ->
+          report_decision_write(decision, {:error, reason}, telemetry_monitor)
+          {:error, reason}
+
+        {:error, reason} ->
+          {:error, {:decision_not_recorded, reason}}
       end
     end
   end
@@ -760,21 +773,47 @@ defmodule Zaik.Home.Autonomy.Engine do
     :exit, reason -> {:error, {:desired_state_not_recorded, reason}}
   end
 
-  defp record_decision(decision, nil) do
+  defp record_decision(decision, nil, monitor) do
     if process_available?(Zaik.Home.Autonomy.DecisionStore) do
-      record_decision(decision, Zaik.Home.Autonomy.DecisionStore)
+      record_decision(decision, Zaik.Home.Autonomy.DecisionStore, monitor)
     else
-      :ok
+      result = {:error, :decision_store_unavailable}
+      report_decision_write(decision, result, monitor)
+      result
     end
   end
 
-  defp record_decision(decision, store) do
-    case Zaik.Home.Autonomy.DecisionStore.record(decision, store) do
-      {:ok, _stored} -> :ok
-      {:error, reason} -> {:error, reason}
-    end
+  defp record_decision(decision, store, monitor) do
+    result =
+      case Zaik.Home.Autonomy.DecisionStore.record(decision, store) do
+        {:ok, _stored} -> :ok
+        {:error, reason} -> {:error, reason}
+      end
+
+    report_decision_write(decision, result, monitor)
+    result
   catch
-    :exit, reason -> {:error, reason}
+    :exit, reason ->
+      result = {:error, decision_store_exit(reason)}
+      report_decision_write(decision, result, monitor)
+      result
+  end
+
+  defp decision_store_exit({:noproc, _details}), do: :decision_store_unavailable
+  defp decision_store_exit({:timeout, _details}), do: :decision_store_timeout
+  defp decision_store_exit(_reason), do: :decision_store_exit
+
+  defp report_decision_write(decision, result, monitor) do
+    Zaik.TelemetryWriteMonitor.report(
+      :autonomy_decision,
+      result,
+      %{
+        decision_id: to_string(Map.get(decision, :id) || Map.get(decision, "id") || "unknown"),
+        decision_status:
+          to_string(Map.get(decision, :status) || Map.get(decision, "status") || "unknown")
+      },
+      monitor
+    )
   end
 
   defp decision_status([], _reconciliation), do: "no_candidates"

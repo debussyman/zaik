@@ -25,6 +25,8 @@ Local-first state and history:
 - operational SQLite telemetry for tasks, messages, LLM calls, proposals, and agent traces
 - domain-specific SQLite stores such as home telemetry history
 
+`Zaik.TelemetryWriteMonitor` is always supervised independently of the optional telemetry domain. Required AgentChat-run and autonomy-decision writes synchronously report success or failure to it. Failed writes emit bounded error logs, retain a bounded in-memory diagnostic window, mark harness health degraded, and remain visible through `Zaik.telemetry_write_health/0` until that category writes successfully. The monitor stores trace or decision IDs and status only, never prompts or household context.
+
 ### Brain and tools
 
 Normal free-form chat uses one house-agent brain:

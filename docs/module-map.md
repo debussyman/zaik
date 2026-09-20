@@ -56,6 +56,7 @@ Local-first memory and telemetry stores.
 | `Zaik.MemoryStore` | JSONL conversational memory. | `Zaik.Memory.Store` |
 | `Zaik.ContextBuilder` | Builds prompt/runtime context from session memory. | `Zaik.Memory.ContextBuilder` |
 | `Zaik.TelemetryStore` | SQLite operational telemetry and public views. | `Zaik.Storage.TelemetryStore` |
+| `Zaik.TelemetryWriteMonitor` | Supervised bounded health state for required trace writes that could not become durable. | Keep independent from the failed store; add operator delivery without storing private payloads. |
 
 ## Brain and tool loop
 

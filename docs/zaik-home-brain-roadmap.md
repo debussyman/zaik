@@ -150,8 +150,10 @@ Goal: remove remaining ambiguity before autonomous decisions depend on it.
   skills, and presets, with metamorphic lookup invariants. Current and historical
   reads resolve through the same ID/name/area/alias matcher; room context,
   policies, goal skills, and preset flows inherit that world boundary.
-- [ ] Guarantee that every AgentChat attempt and autonomy decision receives a
-  durable trace or an observable telemetry-write failure.
+- [x] Guarantee that every AgentChat attempt and autonomy decision receives a
+  durable trace or an observable telemetry-write failure. Required writes report
+  synchronously to an independently supervised bounded health monitor; failures
+  emit bounded logs and degrade harness health until the category recovers.
 - [x] Record stable observation-snapshot IDs so a decision can identify exactly
   which facts it used. World IDs hash the contract fingerprint and ordered public
   entity facts while excluding generation time; room/autonomy decisions already
@@ -173,7 +175,7 @@ Acceptance:
   mirror oracle.
 - [x] Adding capability, time-window, plural, or question words to a lookup does
   not change the resolved entity set.
-- [ ] Missing decision traces fail tests and surface operational alerts.
+- [x] Missing decision traces fail tests and surface operational health alerts.
 
 ## Milestone 1: Derived room and environment context
 

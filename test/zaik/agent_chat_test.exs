@@ -825,6 +825,35 @@ defmodule Zaik.AgentChatTest do
     defp control_correction?(_message), do: false
   end
 
+  defmodule RaisingClient do
+    def chat(_prompt, _opts), do: raise("model process crashed")
+  end
+
+  test "records an error trace when an AgentChat attempt raises" do
+    {:ok, telemetry} =
+      start_supervised({Zaik.TelemetryStore, name: nil, db_path: ":memory:"})
+
+    {:ok, monitor} = start_supervised({Zaik.TelemetryWriteMonitor, name: nil})
+
+    assert {:error, {:agent_chat_exception, "RuntimeError"}} =
+             Zaik.AgentChat.respond(
+               "Will this attempt be traced?",
+               %{telemetry_store: telemetry, telemetry_write_monitor: monitor},
+               client: RaisingClient,
+               config: %{enabled: true, fallback_enabled: false}
+             )
+
+    assert {:ok, %{rows: [%{"status" => "error"}], row_count: 1}} =
+             Zaik.TelemetryStore.query(
+               telemetry,
+               "SELECT status FROM zaik_agent_chat_runs WHERE prompt = ?",
+               ["Will this attempt be traced?"],
+               []
+             )
+
+    assert %{status: :ok, unresolved: []} = Zaik.TelemetryWriteMonitor.status(monitor)
+  end
+
   test "loops through a read-only SQL tool call and returns final answer" do
     assert {:ok, answer} =
              Zaik.AgentChat.respond(
@@ -882,6 +911,33 @@ defmodule Zaik.AgentChatTest do
                "SELECT id FROM zaik_agent_chat_runs WHERE prompt = ?",
                [prompt]
              )
+  end
+
+  test "surfaces an observable failure when the required run trace is not durable" do
+    {:ok, telemetry} =
+      start_supervised({Zaik.TelemetryStore, name: nil, enabled: false, db_path: ":memory:"})
+
+    {:ok, monitor} = start_supervised({Zaik.TelemetryWriteMonitor, name: nil})
+
+    assert {:ok, _answer} =
+             Zaik.AgentChat.respond(
+               "Was Lily's room warm recently?",
+               %{telemetry_store: telemetry, telemetry_write_monitor: monitor},
+               client: FakeClient,
+               sql_tool: FakeSQLTool,
+               config: %{enabled: true, fallback_enabled: false, max_tool_calls: 3}
+             )
+
+    assert %{
+             status: :degraded,
+             unresolved: [
+               %{
+                 category: :agent_chat_trace,
+                 last_failure: "telemetry_write_ignored",
+                 failures: 1
+               }
+             ]
+           } = Zaik.TelemetryWriteMonitor.status(monitor)
   end
 
   test "finalizes from successful SQL instead of following stored-message tool drift" do

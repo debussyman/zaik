@@ -59,6 +59,9 @@ defmodule Zaik do
   """
   def task_summary, do: Zaik.Observability.task_summary()
 
+  @doc "Return unresolved required telemetry-write failures and recent diagnostics."
+  def telemetry_write_health, do: Zaik.TelemetryWriteMonitor.status()
+
   @doc """
   Return latest known home devices.
   """

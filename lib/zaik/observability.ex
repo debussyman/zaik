@@ -17,6 +17,7 @@ defmodule Zaik.Observability do
       tasks: task_summary(),
       dispatcher: dispatcher_summary(),
       watchdog: watchdog_summary(),
+      telemetry_writes: telemetry_write_summary(),
       agents: agent_summary(),
       sessions: session_summary(limit: 5)
     }
@@ -24,12 +25,14 @@ defmodule Zaik.Observability do
 
   def health do
     dispatcher = dispatcher_summary()
+    telemetry_writes = telemetry_write_summary()
 
     status =
       cond do
         not process_alive?(Zaik.TaskStore) -> :degraded
         not process_alive?(Zaik.TaskQueue) -> :degraded
         not dispatcher.alive? -> :degraded
+        telemetry_writes.status != :ok -> :degraded
         true -> :ok
       end
 
@@ -38,8 +41,23 @@ defmodule Zaik.Observability do
       task_store_alive?: process_alive?(Zaik.TaskStore),
       task_queue_alive?: process_alive?(Zaik.TaskQueue),
       dispatcher_alive?: dispatcher.alive?,
-      session_store_alive?: process_alive?(Zaik.SessionStore)
+      session_store_alive?: process_alive?(Zaik.SessionStore),
+      telemetry_write_status: telemetry_writes.status,
+      telemetry_write_unresolved: telemetry_writes.unresolved
     }
+  end
+
+  def telemetry_write_summary do
+    if process_alive?(Zaik.TelemetryWriteMonitor) do
+      safe_call(fn -> Zaik.TelemetryWriteMonitor.status() end, %{
+        status: :unavailable,
+        unresolved: [],
+        failure_count: 0,
+        recent: []
+      })
+    else
+      %{status: :unavailable, unresolved: [], failure_count: 0, recent: []}
+    end
   end
 
   def task_summary do

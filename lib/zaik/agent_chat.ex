@@ -80,6 +80,27 @@ defmodule Zaik.AgentChat do
   defp respond_with_fallback(client, sql_tool, control_tool, messages, cfg, text, context) do
     started_mono = System.monotonic_time(:millisecond)
     started_at = DateTime.utc_now()
+
+    try do
+      do_respond_with_fallback(client, sql_tool, control_tool, messages, cfg, text, context)
+    rescue
+      error ->
+        result = {:error, {:agent_chat_exception, inspect(error.__struct__)}}
+        attempt = failed_attempt(cfg.model, result, started_mono)
+        record_run_trace(text, context, cfg, attempt, nil, result, started_at, started_mono)
+        result
+    catch
+      kind, reason ->
+        result = {:error, {:agent_chat_exit, kind, bounded_reason(reason)}}
+        attempt = failed_attempt(cfg.model, result, started_mono)
+        record_run_trace(text, context, cfg, attempt, nil, result, started_at, started_mono)
+        result
+    end
+  end
+
+  defp do_respond_with_fallback(client, sql_tool, control_tool, messages, cfg, text, context) do
+    started_mono = System.monotonic_time(:millisecond)
+    started_at = DateTime.utc_now()
     primary = run_attempt(client, sql_tool, control_tool, messages, cfg, context)
 
     {public_result, fallback} =
@@ -129,6 +150,18 @@ defmodule Zaik.AgentChat do
 
     public_result
   end
+
+  defp failed_attempt(model, result, started_mono) do
+    %{
+      model: model,
+      result: result,
+      tool_calls: [],
+      duration_ms: System.monotonic_time(:millisecond) - started_mono
+    }
+  end
+
+  defp bounded_reason(reason),
+    do: reason |> inspect(limit: 5, printable_limit: 120) |> String.slice(0, 200)
 
   defp fallback_available?(cfg) do
     cfg.fallback_enabled and is_binary(cfg.fallback_model) and cfg.fallback_model != "" and
@@ -880,10 +913,12 @@ defmodule Zaik.AgentChat do
          started_mono
        ) do
     final_attempt = fallback || primary
+    trace_id = "agent_chat_" <> Base.encode16(:crypto.strong_rand_bytes(12), case: :lower)
 
     trace_context = trace_context(context)
 
     attrs = %{
+      id: trace_id,
       prompt: text,
       context: trace_context,
       channel: Map.get(trace_context, :channel),
@@ -922,14 +957,42 @@ defmodule Zaik.AgentChat do
       }
     }
 
-    case Map.get(context, :telemetry_store) || Map.get(context, "telemetry_store") do
-      server when is_pid(server) -> Zaik.TelemetryStore.record_agent_chat_run(server, attrs)
-      _other -> Zaik.TelemetryStore.safe_record_agent_chat_run(attrs)
-    end
+    write_result =
+      case Map.get(context, :telemetry_store) || Map.get(context, "telemetry_store") do
+        server when is_pid(server) -> Zaik.TelemetryStore.record_agent_chat_run(server, attrs)
+        _other -> Zaik.TelemetryStore.safe_record_agent_chat_run(attrs)
+      end
+
+    report_trace_write(context, write_result, trace_id, result_status(public_result))
   rescue
-    _error -> :ignored
+    error ->
+      report_trace_write(
+        context,
+        {:error, {:trace_exception, Exception.message(error)}},
+        Map.get(context, :message_id) || "unassigned",
+        result_status(public_result)
+      )
   catch
-    :exit, _reason -> :ignored
+    :exit, reason ->
+      report_trace_write(
+        context,
+        {:error, {:trace_exit, reason}},
+        Map.get(context, :message_id) || "unassigned",
+        result_status(public_result)
+      )
+  end
+
+  defp report_trace_write(context, result, trace_id, result_status) do
+    monitor =
+      Map.get(context, :telemetry_write_monitor) || Map.get(context, "telemetry_write_monitor") ||
+        Zaik.TelemetryWriteMonitor
+
+    Zaik.TelemetryWriteMonitor.report(
+      :agent_chat_trace,
+      result,
+      %{trace_id: to_string(trace_id), result_status: to_string(result_status)},
+      monitor
+    )
   end
 
   defp trace_context(context) when is_map(context) do

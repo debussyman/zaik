@@ -15,7 +15,7 @@ Zaik is not a collection of prompt-triggered routines. It is an agent harness wh
 
 ## What makes Zaik different?
 
-- **Local-first by construction** — local LLM providers, SQLite telemetry, filesystem session memory, and local MQTT.
+- **Local-first by construction** — local LLM providers, SQLite telemetry, filesystem session memory, and local MQTT. Required AgentChat and autonomy writes also report through a supervised health monitor, so a missing durable trace becomes an explicit degraded condition instead of a silent omission.
 - **One house brain** — Telegram and optional Signal ingress normalize into one bounded `Zaik.AgentChat` tool loop.
 - **Typed world model** — models see entities, capabilities, room context, history, occupancy, modes, presets, and evidence under a versioned runtime-discovered contract—not raw MQTT topics. One versioned resolver keeps current-state, history, policy, skill, and preset entity sets stable when prompts add capability, plural, time-window, or question words. Snapshots carry stable fact IDs and explicitly distinguish fresh source observations from recovery-only bootstrap state. Per-entity adapter calibration is separately persisted with independent evidence, operator identity, semantic fingerprints, and append-only revisions.
 - **Deterministic control plane** — Elixir validates every target, preset, policy, permission, risk ceiling, and evidence fingerprint.
